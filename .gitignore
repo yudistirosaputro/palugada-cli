@@ -1,0 +1,8 @@
+# Rust build artifacts
+/target
+
+# macOS
+.DS_Store
+
+# Design doc — kept locally, not committed
+PRD-unified-palugada.md
