@@ -1,0 +1,23 @@
+# Example per-project config — copy to <your-repo>/.palugada/config.yaml
+# Tokens are NOT here; only the auth-profile *name* (resolved from
+# ~/.palugada/secrets.yaml). Safe to commit this file.
+
+project: ttsecuritas
+profile: android-mvvm
+auth_profile: tuntun-corp
+
+integrations:
+  issue_tracker:
+    provider: jira                 # implemented
+    base_url: "https://project.tuntun.co.id/rest/api/2"
+  wiki:
+    provider: confluence           # implemented
+    base_url: "https://wiki.tuntun.co.id/rest/api/content"
+  git_host:
+    provider: gitlab               # implemented (also: github)
+    base_url: "https://gitlab.tuntun.co.id"
+
+  # Declared for completeness; connectors land in the next slice:
+  # design: { provider: figma }
+  # ci:     { provider: jenkins, base_url: "https://jkmini.tuntun.co.id:9443" }
+  # chat:   { provider: dingtalk }

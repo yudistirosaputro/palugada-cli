@@ -1,0 +1,27 @@
+schema_version: "1.0"
+id: android-mvvm
+title: "Android · Kotlin · MVVM (Hilt + Coroutines)"
+description: >
+  Modern Android conventions: MVVM with a repository layer, Hilt DI,
+  Coroutines + Flow, and a sealed UiState. The UI layer is the team's
+  choice (Jetpack Compose or XML/ViewBinding) — the profile mandates
+  neither. Positive, current best-practice patterns only; no legacy or
+  migration content.
+languages: [kotlin]
+
+# Fact families the indexer extracts for this stack. The extractor rule
+# files (tree-sitter .scm / regex .yaml) are authored separately — see
+# PRD §4.3 and migration Phase 3. Listed here so the engine knows the shape.
+fact_families:
+  - { id: viewmodel,  symbol: true }
+  - { id: repository, symbol: true }
+  - { id: service,    symbol: true }
+  - { id: route,      symbol: false }
+  - { id: i18n,       symbol: false }
+
+# Retrieval flows the agent skill files invoke via `palugada brief <flow> <target>`.
+flows:
+  bugfix:   [code.recent, symbol.find, convention(errorhandling), convention(testing)]
+  feature:  [prd.context, recipe(feature), module.info, convention(architecture)]
+  refactor: [module.info, convention(architecture), convention(style), recipe(refactor)]
+  review:   [diff.scan, convention(by-file-kind)]

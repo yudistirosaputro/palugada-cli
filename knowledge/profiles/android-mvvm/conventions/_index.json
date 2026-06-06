@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "topics": [
+    {
+      "id": "architecture",
+      "title": "Architecture",
+      "file": "architecture.md",
+      "description": "MVVM with a repository layer, Hilt DI, Coroutines + Flow, and a sealed UiState. UI-toolkit agnostic.",
+      "tags": ["mvvm", "architecture", "hilt", "flow", "stateflow", "repository"],
+      "sections": [
+        { "id": "overview",  "title": "MVVM Overview",             "tokens": 170 },
+        { "id": "layers",    "title": "Layers & Responsibilities", "tokens": 210 },
+        { "id": "uistate",   "title": "Sealed UiState",            "tokens": 190 },
+        { "id": "data-flow", "title": "Unidirectional Data Flow",  "tokens": 230 }
+      ],
+      "related": ["di", "networking", "concurrency", "testing"]
+    }
+  ]
+}

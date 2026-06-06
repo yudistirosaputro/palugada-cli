@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "recipes": [
+    {
+      "id": "feature",
+      "title": "Scaffold a new feature",
+      "description": "End-to-end recipe for a new screen/feature — data source, repository, sealed UiState, ViewModel, and UI.",
+      "file": "feature.md",
+      "convention_refs": [
+        { "topic": "architecture", "section": "layers" },
+        { "topic": "architecture", "section": "uistate" },
+        { "topic": "architecture", "section": "data-flow" }
+      ],
+      "related_recipes": ["viewmodel", "repository"],
+      "tags": ["feature", "scaffold", "mvvm"]
+    }
+  ]
+}
