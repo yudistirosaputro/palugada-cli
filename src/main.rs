@@ -60,6 +60,11 @@ enum Commands {
         #[command(subcommand)]
         action: DesignCmd,
     },
+    /// Work with the project's CI.
+    Ci {
+        #[command(subcommand)]
+        action: CiCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -106,6 +111,12 @@ enum DesignCmd {
     File { key: String },
 }
 
+#[derive(Subcommand)]
+enum CiCmd {
+    /// Show a job's last build status: `palugada ci status <JOB>`.
+    Status { job: String },
+}
+
 fn main() {
     let cli = Cli::parse();
     if let Err(e) = run(cli) {
@@ -123,6 +134,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
         Commands::Design { action } => cmd_design(action, project, cli.insecure),
+        Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
     }
 }
 
@@ -186,6 +198,9 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             }
             if pc.integrations.design.is_some() {
                 report("design", clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify()));
+            }
+            if pc.integrations.ci.is_some() {
+                report("ci", clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify()));
             }
             Ok(())
         }
@@ -307,6 +322,21 @@ fn cmd_design(action: DesignCmd, project: Option<&str>, insecure: bool) -> Resul
             let f = design.get_file(&key)?;
             println!("{} (key {})", f.name, f.key);
             println!("version: {}   last modified: {}", f.version, f.last_modified);
+            Ok(())
+        }
+    }
+}
+
+fn cmd_ci(action: CiCmd, project: Option<&str>, insecure: bool) -> Result<(), String> {
+    match action {
+        CiCmd::Status { job } => {
+            let global = GlobalConfig::load_or_default()?;
+            let secrets = Secrets::load_or_default()?;
+            let (_name, pc, auth) = resolve_project(&global, &secrets, project)?;
+            let ci = clients::ci_provider(&pc, &auth, insecure)?;
+            let b = ci.job_status(&job)?;
+            let state = if b.building { "building".to_string() } else { b.result.clone() };
+            println!("{} #{} — {}", b.job, b.number, state);
             Ok(())
         }
     }

@@ -9,6 +9,7 @@ pub mod confluence;
 pub mod figma;
 pub mod github;
 pub mod gitlab;
+pub mod jenkins;
 pub mod jira;
 
 use crate::config::{AuthProfile, ProjectConfig};
@@ -47,6 +48,14 @@ pub struct DesignFile {
     pub version: String,
 }
 
+#[derive(Debug, Default)]
+pub struct CiBuild {
+    pub job: String,
+    pub number: u64,
+    pub result: String,
+    pub building: bool,
+}
+
 // ── Capability traits ───────────────────────────────────────────────────
 
 pub trait IssueTracker {
@@ -67,6 +76,11 @@ pub trait GitHost {
 
 pub trait DesignSource {
     fn get_file(&self, key: &str) -> Result<DesignFile, String>;
+    fn verify(&self) -> Result<String, String>;
+}
+
+pub trait CiProvider {
+    fn job_status(&self, job: &str) -> Result<CiBuild, String>;
     fn verify(&self) -> Result<String, String>;
 }
 
@@ -138,5 +152,26 @@ pub fn design_source(
     match p.provider.as_str() {
         "figma" => Ok(Box::new(figma::Figma::new(&p.base_url, &auth.figma_token, insecure))),
         other => Err(format!("unsupported design provider: '{other}' (supported: figma)")),
+    }
+}
+
+pub fn ci_provider(
+    pc: &ProjectConfig,
+    auth: &AuthProfile,
+    insecure: bool,
+) -> Result<Box<dyn CiProvider>, String> {
+    let p = pc
+        .integrations
+        .ci
+        .as_ref()
+        .ok_or("no ci configured for this project")?;
+    match p.provider.as_str() {
+        "jenkins" => Ok(Box::new(jenkins::Jenkins::new(
+            &p.base_url,
+            &auth.jenkins_user,
+            &auth.jenkins_token,
+            insecure,
+        ))),
+        other => Err(format!("unsupported ci provider: '{other}' (supported: jenkins)")),
     }
 }
