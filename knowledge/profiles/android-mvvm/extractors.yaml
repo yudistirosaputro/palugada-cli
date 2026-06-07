@@ -1,0 +1,31 @@
+# Declarative extraction rules for the android-mvvm profile.
+# The indexer walks a project's files and, for each family, runs `regex` over
+# files whose extension is in `ext` (and whose path contains `path_contains`,
+# if set), capturing the named group `name`. Pure-regex MVP — tune as needed;
+# heavier parsing (tree-sitter) can replace a rule later without engine changes.
+
+schema_version: "1.0"
+
+ignore_dirs: [".git", "build", ".gradle", ".idea", "node_modules", ".palugada", "target"]
+
+families:
+  - id: viewmodel
+    ext: [kt]
+    regex: 'class\s+(?P<name>\w+)[^\n]*\bViewModel\b'
+
+  - id: repository
+    ext: [kt]
+    regex: 'class\s+(?P<name>\w+RepositoryImpl)\b'
+
+  - id: service
+    ext: [kt]
+    regex: 'interface\s+(?P<name>\w+Service)\b'
+
+  - id: route
+    ext: [kt]
+    regex: '@Route\s*\(\s*path\s*=\s*"(?P<name>[^"]+)"'
+
+  - id: i18n
+    ext: [xml]
+    path_contains: "values"
+    regex: '<string\s+name="(?P<name>[^"]+)"'

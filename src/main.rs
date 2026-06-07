@@ -7,6 +7,7 @@
 mod clients;
 mod config;
 mod http;
+mod indexer;
 mod knowledge;
 mod scaffold;
 
@@ -92,6 +93,19 @@ enum Commands {
         /// Profile override.
         #[arg(long)]
         profile: Option<String>,
+    },
+    /// Index the project's code into <repo>/.palugada/index/ (local, per-dev).
+    Index {
+        /// Repo to index (default: active project's repo, else current dir).
+        #[arg(long)]
+        repo: Option<String>,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Search indexed project symbols by name: `symbol <query>`.
+    Symbol {
+        query: String,
     },
     /// Manage the project registry.
     Project {
@@ -193,6 +207,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Query { topic, brief, list, profile } => cmd_query(topic, brief, list, profile, project),
         Commands::ForTask { task, list, profile } => cmd_for(task, list, profile, project),
         Commands::Search { query, profile } => cmd_search(query, profile, project),
+        Commands::Index { repo, profile } => cmd_index(repo, profile, project),
+        Commands::Symbol { query } => cmd_symbol(query, project),
         Commands::Project { action } => cmd_project(action),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
@@ -288,6 +304,50 @@ fn resolve_profile(
         return Ok(only);
     }
     Err("no profile resolved — pass --profile <id>, set defaults.profile in ~/.palugada.yaml, or run `palugada init` in a project".to_string())
+}
+
+// ── index: indexer + symbol lookup ─────────────────────────────────────────
+
+fn cmd_index(repo: Option<String>, profile: Option<String>, project: Option<&str>) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let kn = knowledge::knowledge_dir(&global)?;
+    let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
+    let repo_path = resolve_repo(&global, project, repo)?;
+    indexer::run(std::path::Path::new(&repo_path), &kn, &prof)
+}
+
+fn cmd_symbol(query: String, project: Option<&str>) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let repo_path = resolve_repo(&global, project, None)?;
+    indexer::symbol_search(std::path::Path::new(&repo_path), &query)
+}
+
+/// Resolve the repo to operate on: explicit `--repo` → the (active/overridden)
+/// registered project's `repo_path` → the current directory.
+fn resolve_repo(
+    global: &GlobalConfig,
+    project: Option<&str>,
+    repo_flag: Option<String>,
+) -> Result<String, String> {
+    if let Some(r) = repo_flag {
+        if !r.is_empty() {
+            return Ok(r);
+        }
+    }
+    let name = project
+        .map(str::to_string)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| global.projects.active.clone());
+    if !name.is_empty() {
+        if let Some(e) = global.projects.registered.get(&name) {
+            if !e.repo_path.is_empty() {
+                return Ok(e.repo_path.clone());
+            }
+        }
+    }
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("can't determine current dir: {e}"))
 }
 
 // ── config ───────────────────────────────────────────────────────────────
