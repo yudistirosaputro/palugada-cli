@@ -7,6 +7,7 @@
 mod clients;
 mod config;
 mod http;
+mod scaffold;
 
 use clap::{Parser, Subcommand};
 use config::{
@@ -30,6 +31,27 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Scaffold palugada into a project (offline): config + agent files.
+    Init {
+        /// Repo path (default: current directory).
+        #[arg(long, default_value = ".")]
+        repo: String,
+        /// Project name (default: repo directory name).
+        #[arg(long)]
+        name: Option<String>,
+        /// Stack profile to bind (default: auto-detect).
+        #[arg(long)]
+        profile: Option<String>,
+        /// Auth-profile in ~/.palugada/secrets.yaml (default: "default").
+        #[arg(long)]
+        auth: Option<String>,
+        /// Comma-separated agent targets: claude,codex,gemini,cursor.
+        #[arg(long, default_value = "claude")]
+        agents: String,
+        /// Overwrite existing files.
+        #[arg(long)]
+        force: bool,
+    },
     /// Manage global config and credentials.
     Config {
         #[command(subcommand)]
@@ -128,6 +150,9 @@ fn main() {
 fn run(cli: Cli) -> Result<(), String> {
     let project = cli.project.as_deref();
     match cli.command {
+        Commands::Init { repo, name, profile, auth, agents, force } => {
+            cmd_init(repo, name, profile, auth, agents, force)
+        }
         Commands::Config { action } => cmd_config(action, project, cli.insecure),
         Commands::Project { action } => cmd_project(action),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
@@ -136,6 +161,24 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Design { action } => cmd_design(action, project, cli.insecure),
         Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
     }
+}
+
+// ── init ─────────────────────────────────────────────────────────────────
+
+fn cmd_init(
+    repo: String,
+    name: Option<String>,
+    profile: Option<String>,
+    auth: Option<String>,
+    agents: String,
+    force: bool,
+) -> Result<(), String> {
+    let agents: Vec<String> = agents
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    scaffold::run(scaffold::InitOptions { repo, name, profile, auth, agents, force })
 }
 
 // ── config ───────────────────────────────────────────────────────────────
