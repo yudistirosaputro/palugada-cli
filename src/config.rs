@@ -23,6 +23,8 @@ pub struct GlobalConfig {
     #[serde(default = "default_schema")]
     pub schema_version: String,
     #[serde(default)]
+    pub engine: EngineSection,
+    #[serde(default)]
     pub defaults: Defaults,
     #[serde(default)]
     pub projects: Projects,
@@ -32,10 +34,19 @@ impl Default for GlobalConfig {
     fn default() -> Self {
         GlobalConfig {
             schema_version: default_schema(),
+            engine: EngineSection::default(),
             defaults: Defaults::default(),
             projects: Projects::default(),
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct EngineSection {
+    /// Path to the `knowledge/` directory (the one containing `profiles/`).
+    /// Auto-detected by `palugada config init` when run from the repo.
+    #[serde(default)]
+    pub knowledge_path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

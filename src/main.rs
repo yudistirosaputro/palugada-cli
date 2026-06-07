@@ -7,6 +7,7 @@
 mod clients;
 mod config;
 mod http;
+mod knowledge;
 mod scaffold;
 
 use clap::{Parser, Subcommand};
@@ -56,6 +57,41 @@ enum Commands {
     Config {
         #[command(subcommand)]
         action: ConfigCmd,
+    },
+    /// Read a convention from the active profile: `q <topic>[.N]`.
+    #[command(name = "q")]
+    Query {
+        /// Topic id, optionally `.N` for one section (e.g. `architecture.2`).
+        topic: Option<String>,
+        /// Brief: show the section outline only.
+        #[arg(short, long)]
+        brief: bool,
+        /// List all topics.
+        #[arg(long)]
+        list: bool,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Read a recipe from the active profile: `for <task>`.
+    #[command(name = "for")]
+    ForTask {
+        /// Recipe id (e.g. `feature`).
+        task: Option<String>,
+        /// List all recipes.
+        #[arg(long)]
+        list: bool,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    /// Search conventions + recipes by keyword: `s <kw>`.
+    #[command(name = "s")]
+    Search {
+        query: String,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Manage the project registry.
     Project {
@@ -154,6 +190,9 @@ fn run(cli: Cli) -> Result<(), String> {
             cmd_init(repo, name, profile, auth, agents, force)
         }
         Commands::Config { action } => cmd_config(action, project, cli.insecure),
+        Commands::Query { topic, brief, list, profile } => cmd_query(topic, brief, list, profile, project),
+        Commands::ForTask { task, list, profile } => cmd_for(task, list, profile, project),
+        Commands::Search { query, profile } => cmd_search(query, profile, project),
         Commands::Project { action } => cmd_project(action),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
@@ -181,12 +220,87 @@ fn cmd_init(
     scaffold::run(scaffold::InitOptions { repo, name, profile, auth, agents, force })
 }
 
+// ── knowledge: q / for / s ─────────────────────────────────────────────────
+
+fn cmd_query(
+    topic: Option<String>,
+    brief: bool,
+    list: bool,
+    profile: Option<String>,
+    project: Option<&str>,
+) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let kn = knowledge::knowledge_dir(&global)?;
+    let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
+    if list {
+        return knowledge::list_topics(&kn, &prof);
+    }
+    let topic = topic.ok_or("specify a topic (e.g. `palugada q architecture`) or use --list")?;
+    knowledge::query(&kn, &prof, &topic, brief)
+}
+
+fn cmd_for(
+    task: Option<String>,
+    list: bool,
+    profile: Option<String>,
+    project: Option<&str>,
+) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let kn = knowledge::knowledge_dir(&global)?;
+    let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
+    if list {
+        return knowledge::list_recipes(&kn, &prof);
+    }
+    let task = task.ok_or("specify a recipe (e.g. `palugada for feature`) or use --list")?;
+    knowledge::recipe(&kn, &prof, &task)
+}
+
+fn cmd_search(query: String, profile: Option<String>, project: Option<&str>) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let kn = knowledge::knowledge_dir(&global)?;
+    let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
+    knowledge::search(&kn, &prof, &query)
+}
+
+/// Resolve which profile to read: explicit flag → active project's profile →
+/// global default → the sole bundled profile.
+fn resolve_profile(
+    global: &GlobalConfig,
+    project: Option<&str>,
+    profile_flag: Option<&str>,
+    kn: &std::path::Path,
+) -> Result<String, String> {
+    if let Some(p) = profile_flag {
+        if !p.is_empty() {
+            return Ok(p.to_string());
+        }
+    }
+    let secrets = Secrets::load_or_default()?;
+    if let Ok((_, pc, _)) = resolve_project(global, &secrets, project) {
+        if !pc.profile.is_empty() {
+            return Ok(pc.profile);
+        }
+    }
+    if !global.defaults.profile.is_empty() {
+        return Ok(global.defaults.profile.clone());
+    }
+    if let Some(only) = knowledge::only_profile(kn) {
+        return Ok(only);
+    }
+    Err("no profile resolved — pass --profile <id>, set defaults.profile in ~/.palugada.yaml, or run `palugada init` in a project".to_string())
+}
+
 // ── config ───────────────────────────────────────────────────────────────
 
 fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Result<(), String> {
     match action {
         ConfigCmd::Init => {
-            let global = GlobalConfig::load_or_default()?;
+            let mut global = GlobalConfig::load_or_default()?;
+            if global.engine.knowledge_path.is_empty() {
+                if let Some(kn) = knowledge::detect_knowledge_dir() {
+                    global.engine.knowledge_path = kn.to_string_lossy().to_string();
+                }
+            }
             global.save()?;
             let mut secrets = Secrets::load_or_default()?;
             secrets.auth_profiles.entry("default".to_string()).or_default();
