@@ -6,6 +6,7 @@
 //! same `palugada issue view X` work whether the project is on Jira or GitHub.
 
 pub mod confluence;
+pub mod figma;
 pub mod github;
 pub mod gitlab;
 pub mod jira;
@@ -38,6 +39,14 @@ pub struct GitUser {
     pub host: String,
 }
 
+#[derive(Debug, Default)]
+pub struct DesignFile {
+    pub key: String,
+    pub name: String,
+    pub last_modified: String,
+    pub version: String,
+}
+
 // ── Capability traits ───────────────────────────────────────────────────
 
 pub trait IssueTracker {
@@ -53,6 +62,11 @@ pub trait DocSource {
 
 pub trait GitHost {
     fn whoami(&self) -> Result<GitUser, String>;
+    fn verify(&self) -> Result<String, String>;
+}
+
+pub trait DesignSource {
+    fn get_file(&self, key: &str) -> Result<DesignFile, String>;
     fn verify(&self) -> Result<String, String>;
 }
 
@@ -108,5 +122,21 @@ pub fn git_host(
         "gitlab" => Ok(Box::new(gitlab::GitLab::new(&p.base_url, &auth.git_token, insecure))),
         "github" => Ok(Box::new(github::GitHub::new(&p.base_url, &auth.git_token, insecure))),
         other => Err(format!("unsupported git_host provider: '{other}' (supported: gitlab, github)")),
+    }
+}
+
+pub fn design_source(
+    pc: &ProjectConfig,
+    auth: &AuthProfile,
+    insecure: bool,
+) -> Result<Box<dyn DesignSource>, String> {
+    let p = pc
+        .integrations
+        .design
+        .as_ref()
+        .ok_or("no design configured for this project")?;
+    match p.provider.as_str() {
+        "figma" => Ok(Box::new(figma::Figma::new(&p.base_url, &auth.figma_token, insecure))),
+        other => Err(format!("unsupported design provider: '{other}' (supported: figma)")),
     }
 }

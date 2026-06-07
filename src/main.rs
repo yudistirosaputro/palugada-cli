@@ -55,6 +55,11 @@ enum Commands {
         #[command(subcommand)]
         action: GitCmd,
     },
+    /// Work with the project's design source.
+    Design {
+        #[command(subcommand)]
+        action: DesignCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -95,6 +100,12 @@ enum GitCmd {
     Whoami,
 }
 
+#[derive(Subcommand)]
+enum DesignCmd {
+    /// Fetch a design file's metadata: `palugada design file <FILE_KEY>`.
+    File { key: String },
+}
+
 fn main() {
     let cli = Cli::parse();
     if let Err(e) = run(cli) {
@@ -111,6 +122,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
+        Commands::Design { action } => cmd_design(action, project, cli.insecure),
     }
 }
 
@@ -171,6 +183,9 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             }
             if pc.integrations.git_host.is_some() {
                 report("git", clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify()));
+            }
+            if pc.integrations.design.is_some() {
+                report("design", clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify()));
             }
             Ok(())
         }
@@ -277,6 +292,21 @@ fn cmd_git(action: GitCmd, project: Option<&str>, insecure: bool) -> Result<(), 
             let git = clients::git_host(&pc, &auth, insecure)?;
             let u = git.whoami()?;
             println!("{} ({}) @ {}", u.username, u.name, u.host);
+            Ok(())
+        }
+    }
+}
+
+fn cmd_design(action: DesignCmd, project: Option<&str>, insecure: bool) -> Result<(), String> {
+    match action {
+        DesignCmd::File { key } => {
+            let global = GlobalConfig::load_or_default()?;
+            let secrets = Secrets::load_or_default()?;
+            let (_name, pc, auth) = resolve_project(&global, &secrets, project)?;
+            let design = clients::design_source(&pc, &auth, insecure)?;
+            let f = design.get_file(&key)?;
+            println!("{} (key {})", f.name, f.key);
+            println!("version: {}   last modified: {}", f.version, f.last_modified);
             Ok(())
         }
     }
