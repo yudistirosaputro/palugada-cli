@@ -131,9 +131,6 @@ pub struct AuthProfile {
     /// GitLab/GitHub personal access token for PR/MR + user APIs.
     #[serde(default)]
     pub git_token: String,
-    /// Chat webhook (DingTalk/Slack/Teams).
-    #[serde(default)]
-    pub chat_webhook: String,
 }
 
 impl Secrets {
@@ -195,8 +192,6 @@ pub struct Integrations {
     pub ci: Option<Provider>,
     #[serde(default)]
     pub git_host: Option<Provider>,
-    #[serde(default)]
-    pub chat: Option<Provider>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
