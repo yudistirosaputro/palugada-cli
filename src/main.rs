@@ -4,6 +4,7 @@
 //! registry, and Jira / Confluence / Git host commands. Knowledge commands
 //! (`q`, `for`, `brief`, the indexer) come on top of this base.
 
+mod brief;
 mod clients;
 mod config;
 mod http;
@@ -107,6 +108,23 @@ enum Commands {
     Symbol {
         query: String,
     },
+    /// Assemble a budgeted context pack for a flow: `brief <flow> [target]`.
+    Brief {
+        /// Flow id (e.g. bugfix, feature, refactor, review).
+        flow: String,
+        /// Target: a file, symbol, ticket, or area (flow-dependent).
+        #[arg(default_value = "")]
+        target: String,
+        /// Token budget for the pack.
+        #[arg(long, default_value_t = 2000)]
+        budget: usize,
+        /// Emit JSON instead of text.
+        #[arg(long)]
+        json: bool,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Manage the project registry.
     Project {
         #[command(subcommand)]
@@ -209,6 +227,9 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Search { query, profile } => cmd_search(query, profile, project),
         Commands::Index { repo, profile } => cmd_index(repo, profile, project),
         Commands::Symbol { query } => cmd_symbol(query, project),
+        Commands::Brief { flow, target, budget, json, profile } => {
+            cmd_brief(flow, target, budget, json, profile, project)
+        }
         Commands::Project { action } => cmd_project(action),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
@@ -348,6 +369,28 @@ fn resolve_repo(
     std::env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .map_err(|e| format!("can't determine current dir: {e}"))
+}
+
+// ── brief: flow context packs ──────────────────────────────────────────────
+
+fn cmd_brief(
+    flow: String,
+    target: String,
+    budget: usize,
+    json: bool,
+    profile: Option<String>,
+    project: Option<&str>,
+) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let kn = knowledge::knowledge_dir(&global)?;
+    let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
+    let repo = resolve_repo(&global, project, None)?;
+    brief::run(
+        &kn,
+        std::path::Path::new(&repo),
+        &prof,
+        &brief::BriefOptions { flow, target, budget, json },
+    )
 }
 
 // ── config ───────────────────────────────────────────────────────────────
