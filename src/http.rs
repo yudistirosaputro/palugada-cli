@@ -1,6 +1,5 @@
-//! Thin synchronous HTTP helper over `ureq`, mirroring the idiom used by the
-//! existing tuntun-android client (Bearer/header auth, optional `--insecure`
-//! TLS for self-signed corporate certs).
+//! Thin synchronous HTTP helper over `ureq`: Bearer/header auth, with an
+//! optional `--insecure` mode for self-signed corporate TLS certs.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +74,7 @@ fn describe_ureq(e: ureq::Error) -> String {
 }
 
 /// TLS verifier that accepts any certificate — only used with `--insecure`.
-/// (Copied from the proven tuntun-android implementation; rustls 0.23.)
+/// (Standard rustls 0.23 dangerous-verifier pattern.)
 #[derive(Debug)]
 struct NoVerify;
 

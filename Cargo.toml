@@ -1,5 +1,5 @@
 # palugada — project-agnostic dev knowledge & connector CLI.
-# Standalone workspace (not part of the tuntun-android-cli workspace).
+# Standalone Cargo workspace.
 [workspace]
 
 [package]
