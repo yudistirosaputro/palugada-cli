@@ -145,6 +145,8 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
     }
 
     // Write index artifacts — clear first so stale per-kind files are removed.
+    // Non-atomic rebuild: a concurrent read during re-index sees "no index" briefly.
+    // Acceptable for a local single-developer CLI; switch to write-to-temp + rename if that changes.
     let out = repo.join(".palugada").join("index");
     if out.exists() {
         fs::remove_dir_all(&out).map_err(|e| format!("clear {}: {e}", out.display()))?;

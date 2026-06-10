@@ -294,9 +294,11 @@ pub fn topics_matching_tags(
     let Ok(idx) = read_conv_index(kn, profile) else {
         return Vec::new();
     };
+    let keys_lower: std::collections::BTreeSet<String> =
+        keys.iter().map(|k| k.to_lowercase()).collect();
     idx.topics
         .iter()
-        .filter(|t| t.tags.iter().any(|tag| keys.contains(&tag.to_lowercase())))
+        .filter(|t| t.tags.iter().any(|tag| keys_lower.contains(&tag.to_lowercase())))
         .map(|t| (t.id.clone(), t.description.clone()))
         .collect()
 }
@@ -403,13 +405,18 @@ mod tests {
             conv.join("_index.json"),
             r#"{"topics":[
                 {"id":"style","description":"kotlin style","tags":["kt","style"]},
-                {"id":"css","description":"css rules","tags":["css"]}
+                {"id":"css","description":"css rules","tags":["css"]},
+                {"id":"mixed","description":"mixed case topic","tags":["KT","Style"]}
             ]}"#,
         )
         .unwrap();
         let mut keys = std::collections::BTreeSet::new();
         keys.insert("kt".to_string());
         let hits = topics_matching_tags(kn.path(), "p", &keys);
-        assert_eq!(hits, vec![("style".to_string(), "kotlin style".to_string())]);
+        // Both "style" (tags: ["kt","style"]) and "mixed" (tags: ["KT","Style"]) must match.
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().any(|(id, _)| id == "style"));
+        assert!(hits.iter().any(|(id, _)| id == "mixed"),
+            "mixed-case tag 'KT' should match lowercase key 'kt'");
     }
 }
