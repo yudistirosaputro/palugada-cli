@@ -13,9 +13,7 @@ mod knowledge;
 mod scaffold;
 
 use clap::{Parser, Subcommand};
-use config::{
-    mask_secret, resolve_project, GlobalConfig, ProjectEntry, Secrets,
-};
+use config::{mask_secret, resolve_project, GlobalConfig, ProjectEntry, Secrets};
 
 #[derive(Parser)]
 #[command(name = "palugada", version, about = "Project-agnostic dev knowledge & connector CLI")]
@@ -175,6 +173,8 @@ enum ProjectCmd {
     List,
     /// Set the active project.
     Use { name: String },
+    /// Remove a project from the registry (files on disk are untouched).
+    Remove { name: String },
 }
 
 #[derive(Subcommand)]
@@ -302,8 +302,8 @@ fn cmd_search(query: String, profile: Option<String>, project: Option<&str>) -> 
     knowledge::search(&kn, &prof, &query)
 }
 
-/// Resolve which profile to read: explicit flag → active project's profile →
-/// global default → the sole bundled profile.
+/// Resolve which profile to read: explicit flag → the resolved project's
+/// profile (cwd-aware; parse errors surface) → global default → sole profile.
 fn resolve_profile(
     global: &GlobalConfig,
     project: Option<&str>,
@@ -315,10 +315,18 @@ fn resolve_profile(
             return Ok(p.to_string());
         }
     }
-    let secrets = Secrets::load_or_default()?;
-    if let Ok((_, pc, _)) = resolve_project(global, &secrets, project) {
-        if !pc.profile.is_empty() {
-            return Ok(pc.profile);
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let name = if project.is_some() {
+        Some(config::resolve_project_name(global, project, &cwd)?)
+    } else {
+        config::resolve_project_name(global, None, &cwd).ok()
+    };
+    if let Some(name) = name {
+        if let Some(entry) = global.projects.registered.get(&name) {
+            let pc = config::ProjectConfig::load_from(&entry.repo_path)?;
+            if !pc.profile.is_empty() {
+                return Ok(pc.profile);
+            }
         }
     }
     if !global.defaults.profile.is_empty() {
@@ -336,42 +344,16 @@ fn cmd_index(repo: Option<String>, profile: Option<String>, project: Option<&str
     let global = GlobalConfig::load_or_default()?;
     let kn = knowledge::knowledge_dir(&global)?;
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
-    let repo_path = resolve_repo(&global, project, repo)?;
-    indexer::run(std::path::Path::new(&repo_path), &kn, &prof)
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let repo_path = config::resolve_repo(&global, project, repo, &cwd)?;
+    indexer::run(&repo_path, &kn, &prof)
 }
 
 fn cmd_symbol(query: String, project: Option<&str>) -> Result<(), String> {
     let global = GlobalConfig::load_or_default()?;
-    let repo_path = resolve_repo(&global, project, None)?;
-    indexer::symbol_search(std::path::Path::new(&repo_path), &query)
-}
-
-/// Resolve the repo to operate on: explicit `--repo` → the (active/overridden)
-/// registered project's `repo_path` → the current directory.
-fn resolve_repo(
-    global: &GlobalConfig,
-    project: Option<&str>,
-    repo_flag: Option<String>,
-) -> Result<String, String> {
-    if let Some(r) = repo_flag {
-        if !r.is_empty() {
-            return Ok(r);
-        }
-    }
-    let name = project
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| global.projects.active.clone());
-    if !name.is_empty() {
-        if let Some(e) = global.projects.registered.get(&name) {
-            if !e.repo_path.is_empty() {
-                return Ok(e.repo_path.clone());
-            }
-        }
-    }
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| format!("can't determine current dir: {e}"))
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let repo_path = config::resolve_repo(&global, project, None, &cwd)?;
+    indexer::symbol_search(&repo_path, &query)
 }
 
 // ── brief: flow context packs ──────────────────────────────────────────────
@@ -387,13 +369,9 @@ fn cmd_brief(
     let global = GlobalConfig::load_or_default()?;
     let kn = knowledge::knowledge_dir(&global)?;
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
-    let repo = resolve_repo(&global, project, None)?;
-    brief::run(
-        &kn,
-        std::path::Path::new(&repo),
-        &prof,
-        &brief::BriefOptions { flow, target, budget, json },
-    )
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json })
 }
 
 // ── config ───────────────────────────────────────────────────────────────
@@ -483,7 +461,20 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
     match action {
         ProjectCmd::Add { name, repo_path } => {
             let mut global = GlobalConfig::load_or_default()?;
-            let repo = repo_path.trim_end_matches('/').to_string();
+            let repo = std::fs::canonicalize(config::expand_home(&repo_path))
+                .map_err(|e| format!("repo path not found ({repo_path}): {e}"))?;
+            if !repo.is_dir() {
+                return Err(format!("not a directory: {}", repo.display()));
+            }
+            let repo = repo.to_string_lossy().to_string();
+            if let Some(existing) = global.projects.registered.get(&name) {
+                if existing.repo_path != repo {
+                    eprintln!(
+                        "warning: project '{name}' was registered at {} — overwriting with {repo}",
+                        existing.repo_path
+                    );
+                }
+            }
             let workspace = format!("{repo}/.palugada");
             global
                 .projects
@@ -498,6 +489,18 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
             if became_active {
                 println!("(set as the active project)");
             }
+            Ok(())
+        }
+        ProjectCmd::Remove { name } => {
+            let mut global = GlobalConfig::load_or_default()?;
+            if global.projects.registered.remove(&name).is_none() {
+                return Err(format!("project '{name}' is not registered"));
+            }
+            if global.projects.active == name {
+                global.projects.active.clear();
+            }
+            global.save()?;
+            println!("Removed '{name}'.");
             Ok(())
         }
         ProjectCmd::List => {

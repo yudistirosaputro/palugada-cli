@@ -248,21 +248,43 @@ impl ProjectConfig {
 // Resolution helpers
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Resolve the target project: explicit `--project`, else the registry's
-/// `active`. Returns its per-project config plus the referenced auth-profile.
+/// Resolve the target project name (PRD §5.4): explicit `--project` (must be
+/// registered) → the registered project whose repo contains `cwd` → the
+/// registry's `active`.
+pub fn resolve_project_name(
+    global: &GlobalConfig,
+    project_override: Option<&str>,
+    cwd: &Path,
+) -> Result<String, String> {
+    if let Some(name) = project_override.filter(|s| !s.is_empty()) {
+        if !global.projects.registered.contains_key(name) {
+            let known: Vec<&str> = global.projects.registered.keys().map(String::as_str).collect();
+            return Err(format!(
+                "project '{name}' is not registered — known projects: {}",
+                if known.is_empty() { "(none)".to_string() } else { known.join(", ") }
+            ));
+        }
+        return Ok(name.to_string());
+    }
+    for (name, entry) in &global.projects.registered {
+        if !entry.repo_path.is_empty() && cwd.starts_with(expand_home(&entry.repo_path)) {
+            return Ok(name.clone());
+        }
+    }
+    if !global.projects.active.is_empty() {
+        return Ok(global.projects.active.clone());
+    }
+    Err("no active project — run `palugada project use <name>`, pass --project, or cd into a registered repo".into())
+}
+
+/// Resolve the target project's config plus the referenced auth-profile.
 pub fn resolve_project(
     global: &GlobalConfig,
     secrets: &Secrets,
     project_override: Option<&str>,
 ) -> Result<(String, ProjectConfig, AuthProfile), String> {
-    let name = project_override
-        .map(str::to_string)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| global.projects.active.clone());
-
-    if name.is_empty() {
-        return Err("no active project — run `palugada project use <name>` or pass --project".into());
-    }
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let name = resolve_project_name(global, project_override, &cwd)?;
     let entry = global
         .projects
         .registered
@@ -270,12 +292,48 @@ pub fn resolve_project(
         .ok_or_else(|| format!("project '{name}' is not registered — run `palugada project add {name} <repo_path>`"))?;
 
     let pc = ProjectConfig::load_from(&entry.repo_path)?;
-    let auth = secrets
-        .auth_profiles
-        .get(&pc.auth_profile)
-        .cloned()
-        .unwrap_or_default();
+    let auth = if pc.auth_profile.is_empty() {
+        AuthProfile::default()
+    } else {
+        secrets.auth_profiles.get(&pc.auth_profile).cloned().ok_or_else(|| {
+            let known: Vec<&str> = secrets.auth_profiles.keys().map(String::as_str).collect();
+            format!(
+                "auth profile '{}' (referenced by project '{name}') not found in {} — known profiles: {}",
+                pc.auth_profile,
+                Secrets::default_path().display(),
+                if known.is_empty() { "(none)".to_string() } else { known.join(", ") }
+            )
+        })?
+    };
     Ok((name, pc, auth))
+}
+
+/// Resolve the repo to operate on: explicit `--repo` → explicit `--project`
+/// (must be registered) → cwd inside a registered repo → active project → cwd.
+pub fn resolve_repo(
+    global: &GlobalConfig,
+    project_override: Option<&str>,
+    repo_flag: Option<String>,
+    cwd: &Path,
+) -> Result<PathBuf, String> {
+    if let Some(r) = repo_flag {
+        if !r.is_empty() {
+            return Ok(expand_home(&r));
+        }
+    }
+    match resolve_project_name(global, project_override, cwd) {
+        Ok(name) => {
+            if let Some(e) = global.projects.registered.get(&name) {
+                if !e.repo_path.is_empty() {
+                    return Ok(expand_home(&e.repo_path));
+                }
+            }
+            Ok(cwd.to_path_buf())
+        }
+        // explicit --project typo must surface; "no active project" falls back to cwd
+        Err(e) if project_override.is_some() => Err(e),
+        Err(_) => Ok(cwd.to_path_buf()),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -308,6 +366,71 @@ pub fn mask_secret(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn global_with(name: &str, repo: &Path) -> GlobalConfig {
+        let mut g = GlobalConfig::default();
+        g.projects.registered.insert(
+            name.to_string(),
+            ProjectEntry { repo_path: repo.to_string_lossy().to_string(), workspace: String::new() },
+        );
+        g
+    }
+
+    #[test]
+    fn resolve_project_name_prefers_cwd_over_active() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let mut g = global_with("aaa", a.path());
+        g.projects.registered.insert(
+            "bbb".into(),
+            ProjectEntry { repo_path: b.path().to_string_lossy().to_string(), workspace: String::new() },
+        );
+        g.projects.active = "aaa".to_string();
+        // cwd inside repo B → project bbb wins over active aaa
+        let sub = b.path().join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert_eq!(resolve_project_name(&g, None, &sub).unwrap(), "bbb");
+        // explicit --project always wins
+        assert_eq!(resolve_project_name(&g, Some("aaa"), &sub).unwrap(), "aaa");
+        // typo'd --project is a hard error naming known projects
+        let err = resolve_project_name(&g, Some("nope"), &sub).unwrap_err();
+        assert!(err.contains("nope") && err.contains("aaa"), "{err}");
+        // no cwd match → active
+        let other = tempfile::tempdir().unwrap();
+        assert_eq!(resolve_project_name(&g, None, other.path()).unwrap(), "aaa");
+    }
+
+    #[test]
+    fn resolve_repo_expands_tilde_and_errors_on_unknown_project() {
+        let a = tempfile::tempdir().unwrap();
+        let g = global_with("aaa", a.path());
+        let cwd = tempfile::tempdir().unwrap();
+        // unknown --project: hard error (old code silently fell back to cwd)
+        assert!(resolve_repo(&g, Some("nope"), None, cwd.path()).is_err());
+        // --repo flag wins and expands ~
+        let r = resolve_repo(&g, None, Some("~/somewhere".into()), cwd.path()).unwrap();
+        assert_eq!(r, home_dir().join("somewhere"));
+        // fallback: plain cwd
+        let r = resolve_repo(&g, None, None, cwd.path()).unwrap();
+        assert_eq!(r, cwd.path().to_path_buf());
+    }
+
+    #[test]
+    fn resolve_project_errors_on_unknown_auth_profile() {
+        let repo = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join(".palugada")).unwrap();
+        std::fs::write(
+            repo.path().join(".palugada").join("config.yaml"),
+            "project: aaa\nprofile: generic\nauth_profile: typo\n",
+        )
+        .unwrap();
+        let mut g = global_with("aaa", repo.path());
+        g.projects.active = "aaa".to_string();
+        let mut secrets = Secrets::default();
+        secrets.auth_profiles.insert("default".into(), AuthProfile::default());
+        let err = resolve_project(&g, &secrets, Some("aaa")).unwrap_err();
+        assert!(err.contains("typo") && err.contains("default"), "{err}");
+    }
 
     #[test]
     fn mask_secret_hides_everything_and_is_utf8_safe() {
