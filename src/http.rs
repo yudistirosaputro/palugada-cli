@@ -1,4 +1,4 @@
-//! Thin synchronous HTTP helper over `ureq`: Bearer/header auth, with an
+//! Thin synchronous HTTP helper over `ureq`: arbitrary header auth, with an
 //! optional `--insecure` mode for self-signed corporate TLS certs.
 
 use std::sync::Arc;

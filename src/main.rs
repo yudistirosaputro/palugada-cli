@@ -422,6 +422,7 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
                 println!("    figma_token:   {}", mask_secret(&a.figma_token));
                 println!("    git_token:     {}", mask_secret(&a.git_token));
                 println!("    jenkins_token: {}", mask_secret(&a.jenkins_token));
+                println!("    jenkins_user:  {}", if a.jenkins_user.is_empty() { "(unset)".into() } else { a.jenkins_user.clone() });
             }
             Ok(())
         }

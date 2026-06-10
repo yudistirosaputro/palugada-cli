@@ -62,6 +62,9 @@ impl CiProvider for Jenkins {
         if self.base_url.is_empty() {
             return Err("jenkins base_url is empty in the project config".into());
         }
+        if job.is_empty() {
+            return Err("job name must not be empty".into());
+        }
         let url = format!("{}/job/{}/lastBuild/api/json", self.base_url, job_path(job));
         let r: BuildResp = self.http.get_json(&url, &self.headers())?;
         let building = r.building.unwrap_or(false);
@@ -94,6 +97,7 @@ mod tests {
 
     #[test]
     fn job_path_handles_folders_and_encoding() {
+        assert_eq!(job_path(""), "");
         assert_eq!(job_path("app"), "app");
         assert_eq!(job_path("folder/app"), "folder/job/app");
         assert_eq!(job_path("team a/app"), "team%20a/job/app");
