@@ -8,14 +8,16 @@ use serde::Deserialize;
 
 pub struct Confluence {
     base_url: String,
+    email: String,
     token: String,
     http: Http,
 }
 
 impl Confluence {
-    pub fn new(base_url: &str, token: &str, insecure: bool) -> Self {
+    pub fn new(base_url: &str, email: &str, token: &str, insecure: bool) -> Self {
         Confluence {
             base_url: base_url.trim_end_matches('/').to_string(),
+            email: email.to_string(),
             token: token.to_string(),
             http: Http::new(insecure),
         }
@@ -25,7 +27,7 @@ impl Confluence {
         if self.token.is_empty() {
             vec![]
         } else {
-            vec![("Authorization", format!("Bearer {}", self.token))]
+            vec![("Authorization", super::atlassian_auth(&self.email, &self.token))]
         }
     }
 }
@@ -49,10 +51,13 @@ struct Storage {
 
 impl DocSource for Confluence {
     fn get_page(&self, id: &str) -> Result<WikiPage, String> {
+        if self.base_url.is_empty() {
+            return Err("confluence base_url is empty in the project config (integrations.wiki.base_url)".into());
+        }
         if self.token.is_empty() {
             return Err("wiki_token is empty in the auth profile".into());
         }
-        let url = format!("{}/{}?expand=body.storage", self.base_url, id);
+        let url = format!("{}/{}?expand=body.storage", self.base_url, crate::http::encode_segment(id));
         let r: PageResp = self.http.get_json(&url, &self.headers())?;
         Ok(WikiPage {
             id: r.id,
@@ -66,6 +71,9 @@ impl DocSource for Confluence {
     }
 
     fn verify(&self) -> Result<String, String> {
+        if self.base_url.is_empty() {
+            return Err("confluence base_url is empty in the project config (integrations.wiki.base_url)".into());
+        }
         if self.token.is_empty() {
             return Err("wiki_token is empty".into());
         }

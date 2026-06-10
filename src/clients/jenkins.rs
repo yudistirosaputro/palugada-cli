@@ -47,12 +47,22 @@ struct MeResp {
     full_name: Option<String>,
 }
 
+/// Jenkins path for a possibly-foldered job: "a/b" → "a/job/b" (each segment
+/// percent-encoded). The caller wraps it as /job/<this>/...
+fn job_path(job: &str) -> String {
+    job.split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| crate::http::encode_segment(s))
+        .collect::<Vec<_>>()
+        .join("/job/")
+}
+
 impl CiProvider for Jenkins {
     fn job_status(&self, job: &str) -> Result<CiBuild, String> {
         if self.base_url.is_empty() {
             return Err("jenkins base_url is empty in the project config".into());
         }
-        let url = format!("{}/job/{}/lastBuild/api/json", self.base_url, job);
+        let url = format!("{}/job/{}/lastBuild/api/json", self.base_url, job_path(job));
         let r: BuildResp = self.http.get_json(&url, &self.headers())?;
         let building = r.building.unwrap_or(false);
         Ok(CiBuild {
@@ -75,5 +85,17 @@ impl CiProvider for Jenkins {
             "Jenkins OK — authenticated as {}",
             me.full_name.unwrap_or_else(|| "?".to_string())
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_path_handles_folders_and_encoding() {
+        assert_eq!(job_path("app"), "app");
+        assert_eq!(job_path("folder/app"), "folder/job/app");
+        assert_eq!(job_path("team a/app"), "team%20a/job/app");
     }
 }

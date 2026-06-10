@@ -130,6 +130,12 @@ pub struct AuthProfile {
     /// GitLab/GitHub personal access token for PR/MR + user APIs.
     #[serde(default)]
     pub git_token: String,
+    /// Atlassian Cloud: account email; when set, Jira/Confluence use
+    /// `Basic base64(email:token)` instead of `Bearer token`.
+    #[serde(default)]
+    pub jira_email: String,
+    #[serde(default)]
+    pub wiki_email: String,
 }
 
 impl Secrets {

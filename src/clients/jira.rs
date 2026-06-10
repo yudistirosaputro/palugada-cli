@@ -7,14 +7,16 @@ use serde::Deserialize;
 
 pub struct Jira {
     base_url: String,
+    email: String,
     token: String,
     http: Http,
 }
 
 impl Jira {
-    pub fn new(base_url: &str, token: &str, insecure: bool) -> Self {
+    pub fn new(base_url: &str, email: &str, token: &str, insecure: bool) -> Self {
         Jira {
             base_url: base_url.trim_end_matches('/').to_string(),
+            email: email.to_string(),
             token: token.to_string(),
             http: Http::new(insecure),
         }
@@ -24,7 +26,7 @@ impl Jira {
         if self.token.is_empty() {
             vec![]
         } else {
-            vec![("Authorization", format!("Bearer {}", self.token))]
+            vec![("Authorization", super::atlassian_auth(&self.email, &self.token))]
         }
     }
 }
@@ -64,10 +66,13 @@ struct Myself {
 
 impl IssueTracker for Jira {
     fn get_issue(&self, key: &str) -> Result<Issue, String> {
+        if self.base_url.is_empty() {
+            return Err("jira base_url is empty in the project config (integrations.issue_tracker.base_url)".into());
+        }
         if self.token.is_empty() {
             return Err("jira_token is empty in the auth profile".into());
         }
-        let url = format!("{}/issue/{}", self.base_url, key);
+        let url = format!("{}/issue/{}", self.base_url, crate::http::encode_segment(key));
         let r: IssueResp = self.http.get_json(&url, &self.headers())?;
         Ok(Issue {
             key: r.key,
@@ -84,6 +89,9 @@ impl IssueTracker for Jira {
     }
 
     fn verify(&self) -> Result<String, String> {
+        if self.base_url.is_empty() {
+            return Err("jira base_url is empty in the project config (integrations.issue_tracker.base_url)".into());
+        }
         if self.token.is_empty() {
             return Err("jira_token is empty".into());
         }

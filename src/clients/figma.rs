@@ -53,7 +53,7 @@ impl DesignSource for Figma {
         if self.token.is_empty() {
             return Err("figma_token is empty in the auth profile".into());
         }
-        let url = format!("{}/v1/files/{}", self.base_url, key);
+        let url = format!("{}/v1/files/{}", self.base_url, crate::http::encode_segment(key));
         let r: FileResp = self.http.get_json(&url, &self.headers())?;
         Ok(DesignFile {
             key: key.to_string(),

@@ -86,6 +86,20 @@ pub trait CiProvider {
 
 // ── Factories: build a connector from project config + auth profile ───────
 
+/// Authorization header value for Atlassian-style APIs: `email` present →
+/// Basic base64(email:token) (Atlassian Cloud API tokens), else Bearer
+/// (server / Data-Center PATs).
+pub fn atlassian_auth(email: &str, token: &str) -> String {
+    use base64::Engine as _;
+    if email.is_empty() {
+        format!("Bearer {token}")
+    } else {
+        let creds =
+            base64::engine::general_purpose::STANDARD.encode(format!("{email}:{token}"));
+        format!("Basic {creds}")
+    }
+}
+
 pub fn issue_tracker(
     pc: &ProjectConfig,
     auth: &AuthProfile,
@@ -97,7 +111,7 @@ pub fn issue_tracker(
         .as_ref()
         .ok_or("no issue_tracker configured for this project")?;
     match p.provider.as_str() {
-        "jira" => Ok(Box::new(jira::Jira::new(&p.base_url, &auth.jira_token, insecure))),
+        "jira" => Ok(Box::new(jira::Jira::new(&p.base_url, &auth.jira_email, &auth.jira_token, insecure))),
         other => Err(format!("unsupported issue_tracker provider: '{other}' (supported: jira)")),
     }
 }
@@ -115,6 +129,7 @@ pub fn doc_source(
     match p.provider.as_str() {
         "confluence" => Ok(Box::new(confluence::Confluence::new(
             &p.base_url,
+            &auth.wiki_email,
             &auth.wiki_token,
             insecure,
         ))),
@@ -173,5 +188,17 @@ pub fn ci_provider(
             insecure,
         ))),
         other => Err(format!("unsupported ci provider: '{other}' (supported: jenkins)")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atlassian_auth_picks_basic_when_email_present() {
+        assert_eq!(atlassian_auth("", "tok123"), "Bearer tok123");
+        // base64("me@x.co:tok123") = bWVAeC5jbzp0b2sxMjM=
+        assert_eq!(atlassian_auth("me@x.co", "tok123"), "Basic bWVAeC5jbzp0b2sxMjM=");
     }
 }

@@ -219,6 +219,9 @@ fn run(cli: Cli) -> Result<(), String> {
     if std::env::var("HOME").map(|h| h.is_empty()).unwrap_or(true) {
         return Err("HOME is not set — palugada needs it to locate ~/.palugada.yaml and ~/.palugada/secrets.yaml".into());
     }
+    if cli.insecure {
+        eprintln!("warning: --insecure accepts ANY TLS certificate for every host this run");
+    }
     let project = cli.project.as_deref();
     match cli.command {
         Commands::Init { repo, name, profile, auth, agents, force } => {
@@ -413,7 +416,9 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             for (name, a) in &secrets.auth_profiles {
                 println!("  {name}:");
                 println!("    jira_token:    {}", mask_secret(&a.jira_token));
+                println!("    jira_email:    {}", if a.jira_email.is_empty() { "(unset)".into() } else { a.jira_email.clone() });
                 println!("    wiki_token:    {}", mask_secret(&a.wiki_token));
+                println!("    wiki_email:    {}", if a.wiki_email.is_empty() { "(unset)".into() } else { a.wiki_email.clone() });
                 println!("    figma_token:   {}", mask_secret(&a.figma_token));
                 println!("    git_token:     {}", mask_secret(&a.git_token));
                 println!("    jenkins_token: {}", mask_secret(&a.jenkins_token));
