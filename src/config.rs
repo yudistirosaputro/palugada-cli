@@ -266,6 +266,8 @@ impl VerbSpec {
         }
     }
 
+    /// Returns the configured timeout in seconds.
+    /// `0` means no timeout (capped at 24h in the executor).
     pub fn timeout_secs(&self) -> u64 {
         match self {
             VerbSpec::Simple(_) => default_exec_timeout(),

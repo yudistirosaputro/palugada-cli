@@ -86,6 +86,7 @@ pub fn substitute(template: &str, args: &BTreeMap<String, String>) -> Result<Str
         })
         .to_string();
     if !missing.is_empty() {
+        missing.sort();
         missing.dedup();
         return Err(format!(
             "command `{template}` needs value(s) for: {} — pass them as `palugada exec <verb> {}`",
@@ -158,6 +159,7 @@ pub fn run_verb(
 }
 
 /// Run one shell command with output captured into `out_buf` (used by doctor).
+#[allow(dead_code)] // wired up by `palugada doctor`
 pub fn run_one_captured(
     cmd_str: &str,
     repo: &Path,
@@ -174,8 +176,18 @@ fn run_one(
     capture: bool,
     out_buf: &mut String,
 ) -> Result<i32, String> {
+    // timeout_secs == 0 means unlimited; cap at 24 h to avoid blocking forever.
+    let timeout = if timeout.is_zero() { Duration::from_secs(60 * 60 * 24) } else { timeout };
+    #[allow(unused_mut)]
     let mut cmd = Command::new("sh");
     cmd.arg("-c").arg(cmd_str).current_dir(repo);
+    // Put the child in its own process group so that killing the group on
+    // timeout also reaps any grandchildren (e.g. backgrounded `sleep 30`).
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        cmd.process_group(0);
+    }
     if capture {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     }
@@ -202,6 +214,13 @@ fn run_one(
         match child.try_wait().map_err(|e| format!("wait `{cmd_str}`: {e}"))? {
             Some(s) => break Some(s),
             None if start.elapsed() >= timeout => {
+                // Kill the whole process group so descendant processes that are
+                // still holding the stdout/stderr pipes are also terminated.
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                #[cfg(not(unix))]
                 let _ = child.kill();
                 let _ = child.wait();
                 break None;
@@ -295,5 +314,53 @@ mod tests {
         let s = (1..=50).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
         let t = tail_lines(&s, 40);
         assert!(t.starts_with("11") && t.ends_with("50"));
+    }
+
+    /// Regression: duplicate placeholder keys in a template (`{x}` appears
+    /// twice) must be reported exactly once — `missing.sort(); missing.dedup()`
+    /// is required because `dedup` alone only removes adjacent duplicates.
+    #[test]
+    fn substitute_deduplicates_non_adjacent_missing_keys() {
+        let err = substitute("run {x} {y} {x}", &BTreeMap::new()).unwrap_err();
+        // Each key must appear exactly once in the key list.
+        assert!(err.contains("x") && err.contains("y"), "missing key list: {err}");
+        // The hint at the end must not contain a duplicate "x=<value>" entry.
+        assert!(
+            !err.contains("x=<value> y=<value> x"),
+            "duplicate key in hint: {err}"
+        );
+        // Count occurrences of "x=" to confirm dedup worked (should be exactly 1).
+        let count = err.matches("x=").count();
+        assert_eq!(count, 1, "expected 'x=' once in error, got {count}: {err}");
+    }
+
+    /// Regression: when a command backgrounds children that hold the pipes
+    /// (e.g. `echo started; sleep 30 & sleep 30`), killing only the `sh`
+    /// process left the capture threads blocked on `read_to_string`.  Now we
+    /// kill the whole process group so the timeout is actually honoured.
+    #[cfg(unix)]
+    #[test]
+    fn orphan_descendants_do_not_block_timeout() {
+        let repo = tempfile::tempdir().unwrap();
+        // The shell forks two long-running sleeps into the background and
+        // foreground; the whole group must be dead within the 1-second timeout.
+        let v = verbs(
+            "orphan: { cmd: \"echo started; sleep 30 & sleep 30\", timeout_secs: 1 }\n",
+        );
+        let args = BTreeMap::new();
+        let start = std::time::Instant::now();
+        let r = run_verb(
+            &v,
+            repo.path(),
+            &ExecRequest { verb: "orphan", args: &args, json: true },
+        )
+        .unwrap();
+        let elapsed_ms = start.elapsed().as_millis();
+        assert_eq!(r.exit_code, 124, "expected timeout exit_code 124, got {}", r.exit_code);
+        assert!(
+            elapsed_ms < 5000,
+            "orphan children blocked timeout: elapsed {}ms (expected < 5000ms)",
+            elapsed_ms
+        );
     }
 }
