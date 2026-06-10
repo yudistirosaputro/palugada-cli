@@ -159,7 +159,6 @@ enum Commands {
         /// Verb to run (e.g. build, test, run). Omit with --list.
         verb: Option<String>,
         /// Placeholder values, e.g. `apk=app/build/outputs/apk/debug/app.apk`.
-        #[arg(trailing_var_arg = true)]
         args: Vec<String>,
         /// List available verbs for this repo.
         #[arg(long)]
