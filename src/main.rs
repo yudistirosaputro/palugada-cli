@@ -7,6 +7,7 @@
 mod brief;
 mod clients;
 mod config;
+mod exec;
 mod http;
 mod indexer;
 mod knowledge;
@@ -153,6 +154,23 @@ enum Commands {
         #[command(subcommand)]
         action: CiCmd,
     },
+    /// Run a profile/project-defined exec verb: `exec <verb> [k=v ...]`.
+    Exec {
+        /// Verb to run (e.g. build, test, run). Omit with --list.
+        verb: Option<String>,
+        /// Placeholder values, e.g. `apk=app/build/outputs/apk/debug/app.apk`.
+        #[arg(trailing_var_arg = true)]
+        args: Vec<String>,
+        /// List available verbs for this repo.
+        #[arg(long)]
+        list: bool,
+        /// Emit a JSON outcome (captures output) instead of streaming.
+        #[arg(long)]
+        json: bool,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -242,6 +260,9 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
         Commands::Design { action } => cmd_design(action, project, cli.insecure),
         Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
+        Commands::Exec { verb, args, list, json, profile } => {
+            cmd_exec(verb, args, list, json, profile, project)
+        }
     }
 }
 
@@ -375,6 +396,71 @@ fn cmd_brief(
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo = config::resolve_repo(&global, project, None, &cwd)?;
     brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json })
+}
+
+// ── exec: profile-declared execution toolbelt ──────────────────────────────
+
+/// Profile resolution that never fails: exec must work even when the
+/// knowledge dir is missing (project-only `exec:` maps).
+fn resolve_profile_best_effort(
+    global: &GlobalConfig,
+    project: Option<&str>,
+    profile_flag: Option<&str>,
+    kn: Option<&std::path::Path>,
+) -> String {
+    match kn {
+        Some(kn) => resolve_profile(global, project, profile_flag, kn).unwrap_or_default(),
+        None => profile_flag.unwrap_or_default().to_string(),
+    }
+}
+
+fn cmd_exec(
+    verb: Option<String>,
+    args: Vec<String>,
+    list: bool,
+    json: bool,
+    profile: Option<String>,
+    project: Option<&str>,
+) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    let kn = knowledge::knowledge_dir(&global).ok();
+    let prof = resolve_profile_best_effort(&global, project, profile.as_deref(), kn.as_deref());
+    let verbs = exec::merged_verbs(kn.as_deref(), &prof, &repo)?;
+
+    if list {
+        if json {
+            let m: std::collections::BTreeMap<&String, serde_json::Value> = verbs
+                .iter()
+                .map(|(k, (spec, src))| {
+                    (k, serde_json::json!({ "source": src, "commands": spec.commands() }))
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?);
+        } else if verbs.is_empty() {
+            println!("(no exec verbs — add `exec:` to .palugada/config.yaml or bind a profile)");
+        } else {
+            for (v, (spec, src)) in &verbs {
+                println!("{:<12} [{src}] {}", v, spec.commands().join(" && "));
+            }
+        }
+        return Ok(());
+    }
+
+    let verb = verb.ok_or("specify a verb (e.g. `palugada exec build`) or use --list")?;
+    let kv = exec::parse_kv_args(&args)?;
+    let outcome = exec::run_verb(&verbs, &repo, &exec::ExecRequest { verb: &verb, args: &kv, json })?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&outcome).map_err(|e| e.to_string())?);
+    } else {
+        println!("\n[{}] exit {} in {}ms", outcome.verb, outcome.exit_code, outcome.duration_ms);
+    }
+    if outcome.exit_code != 0 {
+        // agents branch on this: palugada's exit code IS the child's
+        std::process::exit(outcome.exit_code);
+    }
+    Ok(())
 }
 
 // ── config ───────────────────────────────────────────────────────────────
