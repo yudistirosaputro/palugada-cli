@@ -284,6 +284,23 @@ pub fn search(kn: &Path, profile: &str, kw: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Convention topics whose tags intersect `keys` (lowercased file extensions
+/// or family ids). Used by `brief`'s diff.scan to map changed files to rules.
+pub fn topics_matching_tags(
+    kn: &Path,
+    profile: &str,
+    keys: &std::collections::BTreeSet<String>,
+) -> Vec<(String, String)> {
+    let Ok(idx) = read_conv_index(kn, profile) else {
+        return Vec::new();
+    };
+    idx.topics
+        .iter()
+        .filter(|t| t.tags.iter().any(|tag| keys.contains(&tag.to_lowercase())))
+        .map(|t| (t.id.clone(), t.description.clone()))
+        .collect()
+}
+
 // ── markdown helpers ────────────────────────────────────────────────────
 
 struct Section {
@@ -333,17 +350,26 @@ fn frontmatter_field(raw: &str, key: &str) -> Option<String> {
 }
 
 /// Split a markdown body into `## ` sections (anchors stripped from titles).
+/// Lines inside ``` fences are body text, never headers.
 fn sections(body: &str) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
     let mut cur: Option<Section> = None;
+    let mut in_fence = false;
     for line in body.lines() {
-        if let Some(rest) = line.strip_prefix("## ") {
-            if let Some(s) = cur.take() {
-                out.push(s);
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        }
+        if !in_fence {
+            if let Some(rest) = line.strip_prefix("## ") {
+                if let Some(s) = cur.take() {
+                    out.push(s);
+                }
+                let title = rest.split("{#").next().unwrap_or(rest).trim().to_string();
+                cur = Some(Section { title, body: String::new() });
+                continue;
             }
-            let title = rest.split("{#").next().unwrap_or(rest).trim().to_string();
-            cur = Some(Section { title, body: String::new() });
-        } else if let Some(s) = cur.as_mut() {
+        }
+        if let Some(s) = cur.as_mut() {
             s.body.push_str(line);
             s.body.push('\n');
         }
@@ -352,4 +378,38 @@ fn sections(body: &str) -> Vec<Section> {
         out.push(s);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sections_ignores_headers_inside_code_fences() {
+        let body = "## One\ntext\n```sh\n## not a header\n```\nmore\n## Two\nend\n";
+        let secs = sections(body);
+        assert_eq!(secs.len(), 2, "{:?}", secs.iter().map(|s| &s.title).collect::<Vec<_>>());
+        assert_eq!(secs[0].title, "One");
+        assert!(secs[0].body.contains("## not a header"));
+        assert_eq!(secs[1].title, "Two");
+    }
+
+    #[test]
+    fn topics_matching_tags_filters_by_intersection() {
+        let kn = tempfile::tempdir().unwrap();
+        let conv = kn.path().join("profiles").join("p").join("conventions");
+        std::fs::create_dir_all(&conv).unwrap();
+        std::fs::write(
+            conv.join("_index.json"),
+            r#"{"topics":[
+                {"id":"style","description":"kotlin style","tags":["kt","style"]},
+                {"id":"css","description":"css rules","tags":["css"]}
+            ]}"#,
+        )
+        .unwrap();
+        let mut keys = std::collections::BTreeSet::new();
+        keys.insert("kt".to_string());
+        let hits = topics_matching_tags(kn.path(), "p", &keys);
+        assert_eq!(hits, vec![("style".to_string(), "kotlin style".to_string())]);
+    }
 }
