@@ -216,6 +216,9 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
+    if std::env::var("HOME").map(|h| h.is_empty()).unwrap_or(true) {
+        return Err("HOME is not set — palugada needs it to locate ~/.palugada.yaml and ~/.palugada/secrets.yaml".into());
+    }
     let project = cli.project.as_deref();
     match cli.command {
         Commands::Init { repo, name, profile, auth, agents, force } => {
@@ -409,7 +412,7 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             secrets.auth_profiles.entry("default".to_string()).or_default();
             secrets.save()?;
             println!(
-                "Wrote {} and {} (chmod 0600).",
+                "Wrote {} and {} (secrets chmod 0600).",
                 GlobalConfig::default_path().display(),
                 Secrets::default_path().display()
             );

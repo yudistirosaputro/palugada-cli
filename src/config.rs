@@ -141,25 +141,42 @@ impl Secrets {
         Self::dir().join("secrets.yaml")
     }
 
-    pub fn load_or_default() -> Result<Secrets, String> {
-        let p = Self::default_path();
+    pub fn load_from_path(p: &Path) -> Result<Secrets, String> {
         if !p.exists() {
             return Ok(Secrets::default());
         }
-        let data = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
+        let data = fs::read_to_string(p).map_err(|e| format!("read {}: {e}", p.display()))?;
         serde_yaml::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))
     }
 
-    /// Write the secrets file with 0600 permissions (creates ~/.palugada/).
-    pub fn save(&self) -> Result<(), String> {
-        let dir = Self::dir();
-        fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-        let p = Self::default_path();
+    pub fn load_or_default() -> Result<Secrets, String> {
+        Self::load_from_path(&Self::default_path())
+    }
+
+    /// Write the secrets file, created 0600 so tokens are never world-readable.
+    pub fn save_to_path(&self, p: &Path) -> Result<(), String> {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        if let Some(dir) = p.parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+        }
         let data = serde_yaml::to_string(self).map_err(|e| e.to_string())?;
-        fs::write(&p, data).map_err(|e| format!("write {}: {e}", p.display()))?;
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o600))
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(p)
+            .map_err(|e| format!("open {}: {e}", p.display()))?;
+        f.write_all(data.as_bytes())
+            .map_err(|e| format!("write {}: {e}", p.display()))?;
+        fs::set_permissions(p, fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("chmod {}: {e}", p.display()))?;
         Ok(())
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        self.save_to_path(&Self::default_path())
     }
 }
 
@@ -268,20 +285,60 @@ pub fn home_dir() -> PathBuf {
 }
 
 pub fn expand_home(s: &str) -> PathBuf {
-    if let Some(stripped) = s.strip_prefix("~/") {
+    if s == "~" {
+        home_dir()
+    } else if let Some(stripped) = s.strip_prefix("~/") {
         home_dir().join(stripped)
     } else {
         Path::new(s).to_path_buf()
     }
 }
 
-/// Mask a secret for display, keeping the first/last 2 chars.
+/// Mask a secret for display. Reveals nothing but presence and length.
 pub fn mask_secret(s: &str) -> String {
     if s.is_empty() {
         "(unset)".to_string()
-    } else if s.len() <= 4 {
-        "*".repeat(s.len())
     } else {
-        format!("{}{}{}", &s[..2], "*".repeat(s.len() - 4), &s[s.len() - 2..])
+        format!("**** ({} chars)", s.chars().count())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mask_secret_hides_everything_and_is_utf8_safe() {
+        assert_eq!(mask_secret(""), "(unset)");
+        let m = mask_secret("abcd1234");
+        assert!(!m.contains("ab") && !m.contains("34"), "no leading/trailing chars: {m}");
+        // multi-byte secret must not panic (old code sliced bytes)
+        let m = mask_secret("ключключключ");
+        assert!(m.starts_with("****"), "{m}");
+    }
+
+    #[test]
+    fn expand_home_handles_bare_tilde() {
+        assert_eq!(expand_home("~"), home_dir());
+        assert_eq!(expand_home("~/x"), home_dir().join("x"));
+        assert_eq!(expand_home("/abs/path"), Path::new("/abs/path").to_path_buf());
+    }
+
+    #[test]
+    fn secrets_save_is_0600_and_round_trips() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("nested").join("secrets.yaml");
+        let mut s = Secrets::default();
+        s.auth_profiles.insert("default".into(), AuthProfile { jira_token: "t".into(), ..Default::default() });
+        s.save_to_path(&p).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mode was {mode:o}");
+        let loaded = Secrets::load_from_path(&p).unwrap();
+        assert_eq!(loaded.auth_profiles["default"].jira_token, "t");
+        // re-save over an existing file keeps 0600
+        s.save_to_path(&p).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
