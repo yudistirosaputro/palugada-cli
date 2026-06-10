@@ -154,6 +154,12 @@ enum Commands {
         #[command(subcommand)]
         action: CiCmd,
     },
+    /// Check tool + connector readiness for the current repo.
+    Doctor {
+        /// Emit JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Run a profile/project-defined exec verb: `exec <verb> [k=v ...]`.
     Exec {
         /// Verb to run (e.g. build, test, run). Omit with --list.
@@ -259,6 +265,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
         Commands::Design { action } => cmd_design(action, project, cli.insecure),
         Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
+        Commands::Doctor { json } => cmd_doctor(json, project, cli.insecure),
         Commands::Exec { verb, args, list, json, profile } => {
             cmd_exec(verb, args, list, json, profile, project)
         }
@@ -458,6 +465,119 @@ fn cmd_exec(
     if outcome.exit_code != 0 {
         // agents branch on this: palugada's exit code IS the child's
         std::process::exit(outcome.exit_code);
+    }
+    Ok(())
+}
+
+// ── doctor ────────────────────────────────────────────────────────────────
+
+fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), String> {
+    #[derive(serde::Serialize)]
+    struct Check {
+        name: String,
+        kind: String, // "tool" | "connector"
+        ok: bool,
+        detail: String,
+    }
+
+    let global = GlobalConfig::load_or_default()?;
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    let kn = knowledge::knowledge_dir(&global).ok();
+    let prof = resolve_profile_best_effort(&global, project, None, kn.as_deref());
+    let mut checks: Vec<Check> = Vec::new();
+
+    // 1. tool checks: each command of the merged `doctor` verb
+    let verbs = exec::merged_verbs(kn.as_deref(), &prof, &repo).unwrap_or_default();
+    match verbs.get("doctor") {
+        Some((spec, _)) => {
+            for cmd_str in spec.commands() {
+                let mut buf = String::new();
+                let code = exec::run_one_captured(
+                    &cmd_str,
+                    &repo,
+                    std::time::Duration::from_secs(60),
+                    &mut buf,
+                );
+                let first = buf.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+                checks.push(Check {
+                    name: cmd_str.clone(),
+                    kind: "tool".into(),
+                    ok: matches!(code, Ok(0)),
+                    detail: first,
+                });
+            }
+        }
+        None => checks.push(Check {
+            name: "doctor verb".into(),
+            kind: "tool".into(),
+            ok: true,
+            detail: "(no `doctor` verb defined — tool checks skipped)".into(),
+        }),
+    }
+
+    // 2. connector checks (only what's configured; skipped without a project)
+    let secrets = Secrets::load_or_default().unwrap_or_default();
+    match resolve_project(&global, &secrets, project) {
+        Ok((_n, pc, auth)) => {
+            let mut conns: Vec<(&str, Result<String, String>)> = Vec::new();
+            if pc.integrations.issue_tracker.is_some() {
+                conns.push(("issue", clients::issue_tracker(&pc, &auth, insecure).and_then(|c| c.verify())));
+            }
+            if pc.integrations.wiki.is_some() {
+                conns.push(("wiki", clients::doc_source(&pc, &auth, insecure).and_then(|c| c.verify())));
+            }
+            if pc.integrations.git_host.is_some() {
+                conns.push(("git", clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify())));
+            }
+            if pc.integrations.design.is_some() {
+                conns.push(("design", clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify())));
+            }
+            if pc.integrations.ci.is_some() {
+                conns.push(("ci", clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify())));
+            }
+            for (tag, r) in conns {
+                checks.push(Check {
+                    name: tag.into(),
+                    kind: "connector".into(),
+                    ok: r.is_ok(),
+                    detail: r.unwrap_or_else(|e| e),
+                });
+            }
+        }
+        Err(_) => checks.push(Check {
+            name: "project".into(),
+            kind: "connector".into(),
+            ok: true,
+            detail: "(no project configured — connector checks skipped)".into(),
+        }),
+    }
+
+    let failed = checks.iter().filter(|c| !c.ok).count();
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "ok": failed == 0, "checks": checks }))
+                .map_err(|e| e.to_string())?
+        );
+    } else {
+        println!(
+            "palugada doctor — repo {} (profile: {})",
+            repo.display(),
+            if prof.is_empty() { "—" } else { prof.as_str() }
+        );
+        for c in &checks {
+            println!(
+                "  [{}] {:<9} {} — {}",
+                if c.ok { "PASS" } else { "FAIL" },
+                c.kind,
+                c.name,
+                c.detail
+            );
+        }
+    }
+    if failed > 0 {
+        return Err(format!("{failed} check(s) failed"));
     }
     Ok(())
 }

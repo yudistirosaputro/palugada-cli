@@ -159,7 +159,6 @@ pub fn run_verb(
 }
 
 /// Run one shell command with output captured into `out_buf` (used by doctor).
-#[allow(dead_code)] // wired up by `palugada doctor`
 pub fn run_one_captured(
     cmd_str: &str,
     repo: &Path,
