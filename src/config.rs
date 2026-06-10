@@ -412,7 +412,14 @@ pub fn resolve_repo(
 // ─────────────────────────────────────────────────────────────────────────
 
 pub fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+    for var in ["HOME", "USERPROFILE"] {
+        if let Ok(h) = std::env::var(var) {
+            if !h.is_empty() {
+                return PathBuf::from(h);
+            }
+        }
+    }
+    PathBuf::from(".")
 }
 
 pub fn expand_home(s: &str) -> PathBuf {

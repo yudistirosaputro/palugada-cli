@@ -34,6 +34,11 @@ from inside the palugada repo auto-detects it)"
 /// looking for a directory that contains `knowledge/profiles`.
 pub fn detect_knowledge_dir() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
+        // Resolve symlinks first: a launcher symlinked onto PATH (install.sh's
+        // ~/.local/bin/palugada -> ~/.local/share/palugada/palugada, or
+        // Homebrew/Scoop's bin shim) reports the symlink path on macOS, so we
+        // must canonicalize to the real binary to find the adjacent knowledge/.
+        let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
         if let Some(found) = walk_up(&exe) {
             return Some(found);
         }

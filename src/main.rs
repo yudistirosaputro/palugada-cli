@@ -239,8 +239,11 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
-    if std::env::var("HOME").map(|h| h.is_empty()).unwrap_or(true) {
-        return Err("HOME is not set — palugada needs it to locate ~/.palugada.yaml and ~/.palugada/secrets.yaml".into());
+    let have_home = ["HOME", "USERPROFILE"]
+        .iter()
+        .any(|v| std::env::var(v).map(|h| !h.is_empty()).unwrap_or(false));
+    if !have_home {
+        return Err("neither HOME nor USERPROFILE is set — palugada needs one to locate ~/.palugada.yaml and ~/.palugada/secrets.yaml".into());
     }
     if cli.insecure {
         eprintln!("warning: --insecure accepts ANY TLS certificate for every host this run");
