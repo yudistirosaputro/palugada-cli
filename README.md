@@ -1,5 +1,7 @@
 # palugada
 
+[![CI](https://github.com/yudistirosaputro/palugada-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/yudistirosaputro/palugada-cli/actions/workflows/ci.yml)
+
 Project-agnostic developer knowledge & connector CLI — one binary that gives
 any project:
 
@@ -30,7 +32,60 @@ any project:
 | Check CI / git identity | `palugada ci status <JOB>`, `palugada git whoami` |
 | Verify every configured connection | `palugada config verify` |
 
-## Build
+## Install
+
+### Quick install (prebuilt — no clone, no Rust toolchain)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yudistirosaputro/palugada-cli/main/install.sh | sh
+```
+
+This downloads the right prebuilt archive for your OS/arch from the
+[Releases](https://github.com/yudistirosaputro/palugada-cli/releases) page,
+installs the binary to `~/.local/bin`, and keeps the bundled `knowledge/`
+profiles next to it so `q` / `for` / `s` / `brief` work immediately.
+
+### Package managers
+
+```bash
+# npm (any OS with Node) — installs the right native binary automatically
+npm install -g palugada-cli        # or run ad-hoc: npx palugada-cli q --list
+
+# Homebrew (macOS / Linux)
+brew install yudistirosaputro/tap/palugada
+
+# Scoop (Windows)
+scoop bucket add palugada https://github.com/yudistirosaputro/scoop-bucket
+scoop install palugada
+```
+
+All three bundle the `knowledge/` profiles and wire them up automatically, so
+`q` / `for` / `s` / `brief` work right after install. Publishing each channel is
+opt-in — see [docs/PUBLISHING.md](docs/PUBLISHING.md).
+
+### Manual download
+
+Grab an archive for your platform from the
+[latest release](https://github.com/yudistirosaputro/palugada-cli/releases/latest)
+and extract it — the binary and its `knowledge/` dir ship together:
+
+```bash
+# example: macOS Apple Silicon
+mkdir -p ~/.local/share/palugada
+curl -fsSL -o p.tar.gz \
+  https://github.com/yudistirosaputro/palugada-cli/releases/latest/download/palugada-aarch64-apple-darwin.tar.gz
+tar xzf p.tar.gz -C ~/.local/share/palugada
+ln -sf ~/.local/share/palugada/palugada ~/.local/bin/palugada   # if ~/.local/bin is on PATH
+palugada --help
+```
+
+Archives are published for Linux x86_64, macOS arm64, macOS x86_64, and Windows
+x86_64. **Keep the binary next to its `knowledge/` dir** — it locates the bundled
+profiles by walking up from its own path (symlinks onto `PATH` are resolved). If
+you move the bare binary elsewhere, point `PALUGADA_KNOWLEDGE` at the bundled
+`knowledge/` directory.
+
+## Build (from source)
 
 Prerequisite: a stable Rust toolchain. If you don't have one yet:
 
@@ -105,6 +160,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada project add <name> <repo_path>` | register a project |
 | `palugada project list` | list registered projects (`*` = active) |
 | `palugada project use <name>` | set the active project |
+| `palugada project remove <name>` | unregister a project (files on disk untouched) |
 | `palugada q <topic>[.N]` | read a convention from the active profile (`-b` outline, `--list`) |
 | `palugada for <task>` | read a recipe from the active profile (`--list`) |
 | `palugada s <kw>` | search conventions + recipes by keyword |
@@ -116,9 +172,13 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada git whoami` | authenticated git-host user (GitLab/GitHub) |
 | `palugada design file <KEY>` | a design file's metadata (Figma) |
 | `palugada ci status <JOB>` | last build status of a CI job (Jenkins) |
+| `palugada exec <verb> [k=v…]` | run a profile/project-declared shell verb (`--list`, `--json`) |
+| `palugada doctor` | check tool + connector readiness (`--json`); non-zero exit on failure |
 
 Global flags: `--project <name>` (override active), `--insecure` (accept
-self-signed TLS for corporate hosts).
+self-signed TLS for corporate hosts), `--version`. Every invocation needs a home
+directory — `HOME`, or `%USERPROFILE%` on Windows — to locate `~/.palugada.yaml`
+and `~/.palugada/secrets.yaml`.
 
 ## Using the knowledge layer
 
@@ -145,13 +205,43 @@ palugada brief bugfix path/to/File.kt   # recent commits + symbols + errorhandli
 palugada brief feature TICKET-123 --budget 1500 --json
 ```
 
+## Running tasks & diagnostics (`exec`, `doctor`)
+
+`exec` runs named **verbs** — shell command sequences declared under `exec:` in
+the active profile and/or `<repo>/.palugada/config.yaml`. The project's map
+overrides the profile's per verb. `{key}` placeholders are filled from `k=v` args.
+
+```bash
+palugada exec --list                       # verbs available in this repo
+palugada exec build                        # run the `build` verb
+palugada exec install apk=app/out.apk      # fill {apk} from the k=v arg
+palugada exec test --json                  # capture a JSON outcome instead of streaming
+```
+
+Each verb may set `timeout_secs` (default 600; `0` = unlimited). palugada exits
+with the child's exit code (a timeout exits 124 and kills the whole process
+group), so agents and CI can branch on it.
+
+`doctor` checks repo readiness: it runs the `doctor` verb (tool checks) and, when
+a project + connectors resolve, verifies each connector. It exits non-zero if any
+check fails; `--json` emits `{ok, checks[]}`.
+
+```bash
+palugada doctor
+palugada doctor --json
+```
+
 ## `~/.palugada/secrets.yaml` (example — never commit)
 
 ```yaml
 auth_profiles:
   default:
-    jira_token:    "PASTE_JIRA_BEARER_TOKEN"
-    wiki_token:    "PASTE_CONFLUENCE_BEARER_TOKEN"
+    # Atlassian Cloud: set the *_email fields to use Basic auth (email + API
+    # token). Leave them empty for Server/Data Center, which uses a Bearer PAT.
+    jira_email:    "you@example.com"
+    jira_token:    "PASTE_JIRA_API_TOKEN_OR_PAT"
+    wiki_email:    "you@example.com"
+    wiki_token:    "PASTE_CONFLUENCE_API_TOKEN_OR_PAT"
     git_token:     "PASTE_GIT_PAT"
     figma_token:   "PASTE_FIGMA_TOKEN"
     jenkins_user:  "your-username"
@@ -161,9 +251,10 @@ auth_profiles:
 ## `<repo>/.palugada/config.yaml` (example)
 
 See [`examples/project.config.example.yaml`](examples/project.config.example.yaml).
-The provider for each integration is swappable (`jira`/`github_issues`,
-`confluence`/`notion`, `gitlab`/`github`); only the providers in the table above
-are implemented today.
+Each integration names a provider. Implemented today: issue tracker `jira`;
+wiki `confluence`; git host `gitlab` or `github`; design `figma`; CI `jenkins`.
+Other providers (GitHub Issues, Notion, …) are roadmap only — selecting one is a
+hard error.
 
 ## Layout
 
@@ -176,6 +267,7 @@ src/
 ├── knowledge.rs       `q` / `for` / `s` — read conventions/recipes from a profile
 ├── indexer.rs         `index` / `symbol` — scan code → <repo>/.palugada/index/
 ├── brief.rs           `brief` — budgeted flow context packs
+├── exec.rs            `exec` / `doctor` — profile/project shell verbs + JSON outcome
 └── clients/
     ├── mod.rs         capability traits (IssueTracker/DocSource/GitHost/DesignSource/CiProvider) + factories
     ├── jira.rs        IssueTracker (Jira REST v2)

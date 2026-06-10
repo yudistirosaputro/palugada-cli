@@ -1,0 +1,39 @@
+{
+  "name": "palugada-cli",
+  "version": "0.0.0",
+  "description": "Project-agnostic developer knowledge & connector CLI — one binary for stack conventions, task recipes, code indexing, and Jira/Confluence/GitLab/GitHub/Figma/Jenkins connectors.",
+  "bin": {
+    "palugada": "bin/palugada.js"
+  },
+  "files": [
+    "bin/palugada.js",
+    "README.md"
+  ],
+  "optionalDependencies": {
+    "palugada-cli-linux-x64": "0.0.0",
+    "palugada-cli-darwin-arm64": "0.0.0",
+    "palugada-cli-darwin-x64": "0.0.0",
+    "palugada-cli-win32-x64": "0.0.0"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "homepage": "https://github.com/yudistirosaputro/palugada-cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yudistirosaputro/palugada-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yudistirosaputro/palugada-cli/issues"
+  },
+  "keywords": [
+    "palugada",
+    "cli",
+    "android",
+    "mvvm",
+    "jira",
+    "confluence",
+    "connectors",
+    "developer-tools"
+  ]
+}

@@ -6,3 +6,8 @@
 
 # Design doc — kept locally, not committed
 PRD-unified-palugada.md
+
+# npm packaging build output
+npm/.staging/
+npm/dist/
+node_modules/

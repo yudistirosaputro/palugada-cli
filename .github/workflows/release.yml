@@ -1,0 +1,205 @@
+name: Release
+
+# Build self-contained archives (binary + bundled knowledge/) for each platform
+# and attach them to the GitHub Release for the pushed tag, so users can download
+# and run palugada without cloning the repo or installing a Rust toolchain.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Stage the binary next to the knowledge/ profiles so the extracted archive
+      # works out of the box: palugada finds knowledge/ by walking up from its
+      # own location (see src/knowledge.rs).
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          stage="palugada-${{ matrix.target }}"
+          mkdir -p "$stage"
+          cp "target/${{ matrix.target }}/release/palugada" "$stage/"
+          cp -R knowledge examples README.md "$stage/"
+          tar czf "palugada-${{ matrix.target }}.tar.gz" -C "$stage" .
+          shasum -a 256 "palugada-${{ matrix.target }}.tar.gz" > "palugada-${{ matrix.target }}.tar.gz.sha256"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "palugada-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/palugada.exe" $stage/
+          Copy-Item -Recurse knowledge,examples $stage/
+          Copy-Item README.md $stage/
+          Compress-Archive -Path "$stage/*" -DestinationPath "palugada-${{ matrix.target }}.zip" -Force
+          (Get-FileHash "palugada-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower() + "  palugada-${{ matrix.target }}.zip" | Out-File -Encoding ascii "palugada-${{ matrix.target }}.zip.sha256"
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: |
+            palugada-${{ matrix.target }}.tar.gz
+            palugada-${{ matrix.target }}.tar.gz.sha256
+            palugada-${{ matrix.target }}.zip
+            palugada-${{ matrix.target }}.zip.sha256
+          fail_on_unmatched_files: false
+
+  # ── Publish to package managers ─────────────────────────────────────────────
+  # Each job below downloads the just-attached release archives and republishes
+  # them. They are gated on a secret, so they skip cleanly until you opt in.
+  # See docs/PUBLISHING.md for the one-time setup.
+
+  npm:
+    name: publish to npm
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Gate on NPM_TOKEN
+        id: gate
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "NPM_TOKEN not set — skipping npm publish."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download release archives
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          mkdir -p dl dist
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p 'palugada-*.tar.gz' -p 'palugada-*.zip' -D dl
+          for f in dl/*.tar.gz; do n="$(basename "$f" .tar.gz)"; mkdir -p "dist/$n"; tar xzf "$f" -C "dist/$n"; done
+          for f in dl/*.zip;    do n="$(basename "$f" .zip)";    mkdir -p "dist/$n"; unzip -q "$f" -d "dist/$n"; done
+      - name: Assemble & publish
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"; ver="${tag#v}"
+          node npm/build-npm.mjs "$ver" dist
+          for d in npm/.staging/palugada-cli-*/; do (cd "$d" && npm publish --access public); done
+          (cd npm/.staging/palugada-cli && npm publish --access public)
+
+  homebrew:
+    name: update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Render formula & push to tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then echo "HOMEBREW_TAP_TOKEN not set — skipping."; exit 0; fi
+          tag="${{ github.event.inputs.tag || github.ref_name }}"; ver="${tag#v}"
+          mkdir -p dl
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            -p 'palugada-aarch64-apple-darwin.tar.gz' \
+            -p 'palugada-x86_64-apple-darwin.tar.gz' \
+            -p 'palugada-x86_64-unknown-linux-gnu.tar.gz' -D dl
+          sha() { sha256sum "dl/palugada-$1.tar.gz" | awk '{print $1}'; }
+          sed -e "s|@VERSION@|$ver|g" \
+              -e "s|@SHA_DARWIN_ARM64@|$(sha aarch64-apple-darwin)|" \
+              -e "s|@SHA_DARWIN_X64@|$(sha x86_64-apple-darwin)|" \
+              -e "s|@SHA_LINUX_X64@|$(sha x86_64-unknown-linux-gnu)|" \
+              packaging/homebrew/palugada.rb > palugada.rb
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${owner}/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp palugada.rb tap/Formula/palugada.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/palugada.rb
+          git commit -m "palugada ${ver}" || { echo "no change"; exit 0; }
+          git push
+
+  scoop:
+    name: update Scoop bucket
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Render manifest & push to bucket
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+        run: |
+          if [ -z "$BUCKET_TOKEN" ]; then echo "SCOOP_BUCKET_TOKEN not set — skipping."; exit 0; fi
+          tag="${{ github.event.inputs.tag || github.ref_name }}"; ver="${tag#v}"
+          mkdir -p dl
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p 'palugada-x86_64-pc-windows-msvc.zip' -D dl
+          sha="$(sha256sum dl/palugada-x86_64-pc-windows-msvc.zip | awk '{print $1}')"
+          sed -e "s|@VERSION@|$ver|g" -e "s|@SHA_WIN_X64@|$sha|" packaging/scoop/palugada.json > palugada.json
+          python3 -c "import json; json.load(open('palugada.json'))"
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          git clone "https://x-access-token:${BUCKET_TOKEN}@github.com/${owner}/scoop-bucket.git" bucket
+          mkdir -p bucket/bucket
+          cp palugada.json bucket/bucket/palugada.json
+          cd bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/palugada.json
+          git commit -m "palugada ${ver}" || { echo "no change"; exit 0; }
+          git push

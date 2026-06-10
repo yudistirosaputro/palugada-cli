@@ -1,0 +1,23 @@
+{
+    "version": "@VERSION@",
+    "description": "Project-agnostic developer knowledge & connector CLI",
+    "homepage": "https://github.com/yudistirosaputro/palugada-cli",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/yudistirosaputro/palugada-cli/releases/download/v@VERSION@/palugada-x86_64-pc-windows-msvc.zip",
+            "hash": "@SHA_WIN_X64@"
+        }
+    },
+    "bin": "palugada.exe",
+    "env_set": {
+        "PALUGADA_KNOWLEDGE": "$dir\\knowledge"
+    },
+    "checkver": "github",
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/yudistirosaputro/palugada-cli/releases/download/v$version/palugada-x86_64-pc-windows-msvc.zip"
+            }
+        }
+    }
+}
