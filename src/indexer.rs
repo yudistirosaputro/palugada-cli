@@ -67,6 +67,16 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
 
     let mut families: Vec<CompiledFamily> = Vec::new();
     for f in &cfg.families {
+        let id_ok = !f.id.is_empty()
+            && f.id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+        if !id_ok {
+            return Err(format!(
+                "family id '{}' is invalid — use only [a-z0-9_-] (ids become index file names)",
+                f.id
+            ));
+        }
         let re = Regex::new(&f.regex)
             .map_err(|e| format!("family '{}': invalid regex: {e}", f.id))?;
         families.push(CompiledFamily {
@@ -134,8 +144,11 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
         }
     }
 
-    // Write index artifacts.
+    // Write index artifacts — clear first so stale per-kind files are removed.
     let out = repo.join(".palugada").join("index");
+    if out.exists() {
+        fs::remove_dir_all(&out).map_err(|e| format!("clear {}: {e}", out.display()))?;
+    }
     fs::create_dir_all(&out).map_err(|e| format!("create {}: {e}", out.display()))?;
 
     write_json(&out.join("symbols.json"), &symbols)?;
@@ -228,4 +241,44 @@ fn git_sha(repo: &Path) -> String {
             }
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a throwaway knowledge dir with one profile + extractors.yaml.
+    fn fixture(extractors_yaml: &str) -> (tempfile::TempDir, tempfile::TempDir) {
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(&prof).unwrap();
+        fs::write(prof.join("extractors.yaml"), extractors_yaml).unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        (kn, repo)
+    }
+
+    #[test]
+    fn rejects_path_traversal_family_id() {
+        let (kn, repo) = fixture(
+            "families:\n  - id: \"../evil\"\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        );
+        let err = run(repo.path(), kn.path(), "p").unwrap_err();
+        assert!(err.contains("../evil"), "{err}");
+    }
+
+    #[test]
+    fn reindex_clears_stale_family_files() {
+        let (kn, repo) = fixture(
+            "families:\n  - id: viewmodel\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)ViewModel'\n",
+        );
+        fs::write(repo.path().join("A.kt"), "class LoginViewModel {}").unwrap();
+        run(repo.path(), kn.path(), "p").unwrap();
+        let idx = repo.path().join(".palugada").join("index");
+        assert!(idx.join("viewmodel.json").exists());
+        // family disappears from the code → its file must disappear from the index
+        fs::write(repo.path().join("A.kt"), "class Login {}").unwrap();
+        run(repo.path(), kn.path(), "p").unwrap();
+        assert!(!idx.join("viewmodel.json").exists(), "stale viewmodel.json survived re-index");
+        assert!(idx.join("symbols.json").exists());
+    }
 }
