@@ -11,7 +11,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -154,6 +153,8 @@ impl Secrets {
     }
 
     /// Write the secrets file, created 0600 so tokens are never world-readable.
+    /// Uses an atomic write (write to sibling .tmp, then rename) to eliminate
+    /// the brief world-readable window on re-save.
     pub fn save_to_path(&self, p: &Path) -> Result<(), String> {
         use std::io::Write as _;
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -161,17 +162,18 @@ impl Secrets {
             fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
         }
         let data = serde_yaml::to_string(self).map_err(|e| e.to_string())?;
+        let tmp = p.with_extension("tmp");
         let mut f = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(p)
-            .map_err(|e| format!("open {}: {e}", p.display()))?;
+            .open(&tmp)
+            .map_err(|e| format!("open {}: {e}", tmp.display()))?;
         f.write_all(data.as_bytes())
-            .map_err(|e| format!("write {}: {e}", p.display()))?;
-        fs::set_permissions(p, fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod {}: {e}", p.display()))?;
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        drop(f);
+        fs::rename(&tmp, p).map_err(|e| format!("rename {}: {e}", tmp.display()))?;
         Ok(())
     }
 
@@ -312,6 +314,8 @@ mod tests {
         assert_eq!(mask_secret(""), "(unset)");
         let m = mask_secret("abcd1234");
         assert!(!m.contains("ab") && !m.contains("34"), "no leading/trailing chars: {m}");
+        assert!(m.starts_with("****"), "should start with ****: {m}");
+        assert!(m.contains("8 chars"), "should contain char count: {m}");
         // multi-byte secret must not panic (old code sliced bytes)
         let m = mask_secret("ключключключ");
         assert!(m.starts_with("****"), "{m}");
@@ -322,12 +326,13 @@ mod tests {
         assert_eq!(expand_home("~"), home_dir());
         assert_eq!(expand_home("~/x"), home_dir().join("x"));
         assert_eq!(expand_home("/abs/path"), Path::new("/abs/path").to_path_buf());
+        assert_eq!(expand_home("~foo"), Path::new("~foo").to_path_buf());
     }
 
     #[test]
     fn secrets_save_is_0600_and_round_trips() {
         use std::os::unix::fs::PermissionsExt as _;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir creation failed");
         let p = dir.path().join("nested").join("secrets.yaml");
         let mut s = Secrets::default();
         s.auth_profiles.insert("default".into(), AuthProfile { jira_token: "t".into(), ..Default::default() });
