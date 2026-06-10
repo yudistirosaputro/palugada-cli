@@ -77,7 +77,8 @@ Every channel keeps `knowledge/` next to the binary:
 - **npm** — the JS launcher sets `PALUGADA_KNOWLEDGE` to the bundled dir; Scoop
   sets it via `env_set`.
 
-## TODO before first publish
+## License metadata
 
-- Add a `LICENSE` file and set the `license` field in the npm packages, the
-  Homebrew formula, and the Scoop manifest accordingly (currently omitted).
+palugada is MIT-licensed (`LICENSE`). The `license` field is set to `MIT` in
+`Cargo.toml`, the npm packages (`npm/build-npm.mjs` + `npm/palugada-cli`), the
+Homebrew formula, and the Scoop manifest.

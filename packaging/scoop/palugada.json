@@ -2,6 +2,7 @@
     "version": "@VERSION@",
     "description": "Project-agnostic developer knowledge & connector CLI",
     "homepage": "https://github.com/yudistirosaputro/palugada-cli",
+    "license": "MIT",
     "architecture": {
         "64bit": {
             "url": "https://github.com/yudistirosaputro/palugada-cli/releases/download/v@VERSION@/palugada-x86_64-pc-windows-msvc.zip",

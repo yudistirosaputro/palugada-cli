@@ -53,6 +53,7 @@ for (const t of TARGETS) {
         version,
         description: `palugada prebuilt binary for ${t.os}-${t.cpu}`,
         homepage: 'https://github.com/yudistirosaputro/palugada-cli',
+        license: 'MIT',
         os: [t.os],
         cpu: [t.cpu],
         files: [t.exe, 'knowledge'],

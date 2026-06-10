@@ -4,6 +4,7 @@
 class Palugada < Formula
   desc "Project-agnostic developer knowledge & connector CLI"
   homepage "https://github.com/yudistirosaputro/palugada-cli"
+  license "MIT"
   version "@VERSION@"
 
   on_macos do

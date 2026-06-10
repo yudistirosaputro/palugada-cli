@@ -295,3 +295,13 @@ Done so far: connectors (Jira / Confluence / Figma / Jenkins / GitLab / GitHub),
 `palugada init` (offline multi-agent scaffolding), knowledge reads
 (`q` / `for` / `s`), the project indexer (`index` + `symbol`), and flow context
 packs (`brief` — the `bugfix` flow is fully wired end-to-end).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the local build/test workflow, coding
+conventions, and how to add a connector or knowledge profile. Maintainers: see
+[docs/PUBLISHING.md](docs/PUBLISHING.md) for releases.
+
+## License
+
+[MIT](LICENSE) © 2026 Yudistiro Saputro.
