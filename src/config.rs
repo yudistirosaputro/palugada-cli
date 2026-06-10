@@ -203,6 +203,9 @@ pub struct ProjectConfig {
     pub auth_profile: String,
     #[serde(default)]
     pub integrations: Integrations,
+    /// Per-repo exec verbs; override/extend the profile's `exec:` map.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exec: BTreeMap<String, VerbSpec>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -225,6 +228,50 @@ pub struct Provider {
     pub provider: String,
     #[serde(default)]
     pub base_url: String,
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Exec verbs — `exec:` maps in profile.yaml and per-project config
+// ─────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum CmdSpec {
+    One(String),
+    Many(Vec<String>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum VerbSpec {
+    Simple(String),
+    Full {
+        cmd: CmdSpec,
+        #[serde(default = "default_exec_timeout")]
+        timeout_secs: u64,
+    },
+}
+
+pub fn default_exec_timeout() -> u64 {
+    600
+}
+
+impl VerbSpec {
+    /// The shell commands to run, in order (stop on first failure).
+    pub fn commands(&self) -> Vec<String> {
+        match self {
+            VerbSpec::Simple(s) => vec![s.clone()],
+            VerbSpec::Full { cmd: CmdSpec::One(s), .. } => vec![s.clone()],
+            VerbSpec::Full { cmd: CmdSpec::Many(v), .. } => v.clone(),
+        }
+    }
+
+    pub fn timeout_secs(&self) -> u64 {
+        match self {
+            VerbSpec::Simple(_) => default_exec_timeout(),
+            VerbSpec::Full { timeout_secs, .. } => *timeout_secs,
+        }
+    }
 }
 
 impl ProjectConfig {
@@ -509,6 +556,29 @@ mod tests {
         // multi-byte secret must not panic (old code sliced bytes)
         let m = mask_secret("ключключключ");
         assert!(m.starts_with("****"), "{m}");
+    }
+
+    #[test]
+    fn verbspec_parses_string_table_and_list_forms() {
+        let yaml = r#"
+build: "./gradlew assembleDebug"
+test: { cmd: "./gradlew test", timeout_secs: 900 }
+doctor: { cmd: ["android -V", "adb version"] }
+"#;
+        let m: std::collections::BTreeMap<String, VerbSpec> = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(m["build"].commands(), vec!["./gradlew assembleDebug"]);
+        assert_eq!(m["build"].timeout_secs(), 600);
+        assert_eq!(m["test"].timeout_secs(), 900);
+        assert_eq!(m["doctor"].commands(), vec!["android -V", "adb version"]);
+    }
+
+    #[test]
+    fn project_config_round_trips_exec_map() {
+        let mut pc = ProjectConfig::default();
+        pc.exec.insert("build".into(), VerbSpec::Simple("make".into()));
+        let yaml = serde_yaml::to_string(&pc).unwrap();
+        let back: ProjectConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(back.exec["build"].commands(), vec!["make"]);
     }
 
     #[test]
