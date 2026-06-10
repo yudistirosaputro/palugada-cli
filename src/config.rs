@@ -266,13 +266,29 @@ pub fn resolve_project_name(
         }
         return Ok(name.to_string());
     }
-    for (name, entry) in &global.projects.registered {
-        if !entry.repo_path.is_empty() && cwd.starts_with(expand_home(&entry.repo_path)) {
-            return Ok(name.clone());
-        }
+    let cwd_canon = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let best = global
+        .projects
+        .registered
+        .iter()
+        .filter(|(_, e)| !e.repo_path.is_empty())
+        .filter_map(|(name, e)| {
+            let p = std::fs::canonicalize(expand_home(&e.repo_path))
+                .unwrap_or_else(|_| expand_home(&e.repo_path));
+            cwd_canon.starts_with(&p).then(|| (name, p.components().count()))
+        })
+        .max_by_key(|(_, depth)| *depth);
+    if let Some((name, _)) = best {
+        return Ok(name.clone());
     }
     if !global.projects.active.is_empty() {
-        return Ok(global.projects.active.clone());
+        let name = &global.projects.active;
+        if global.projects.registered.contains_key(name) {
+            return Ok(name.clone());
+        }
+        return Err(format!(
+            "project '{name}' (active) is not in the registry — run `palugada project use <name>` to pick another or `palugada project add` to re-register"
+        ));
     }
     Err("no active project — run `palugada project use <name>`, pass --project, or cd into a registered repo".into())
 }
@@ -331,7 +347,7 @@ pub fn resolve_repo(
             Ok(cwd.to_path_buf())
         }
         // explicit --project typo must surface; "no active project" falls back to cwd
-        Err(e) if project_override.is_some() => Err(e),
+        Err(e) if project_override.filter(|s| !s.is_empty()).is_some() => Err(e),
         Err(_) => Ok(cwd.to_path_buf()),
     }
 }
@@ -395,9 +411,54 @@ mod tests {
         // typo'd --project is a hard error naming known projects
         let err = resolve_project_name(&g, Some("nope"), &sub).unwrap_err();
         assert!(err.contains("nope") && err.contains("aaa"), "{err}");
+        assert!(err.contains("bbb"), "{err}");
         // no cwd match → active
         let other = tempfile::tempdir().unwrap();
         assert_eq!(resolve_project_name(&g, None, other.path()).unwrap(), "aaa");
+    }
+
+    #[test]
+    fn nested_repo_resolves_to_most_specific() {
+        // "aaa-outer" < "zzz-inner" alphabetically; alphabetical (BTreeMap) order
+        // would visit "aaa-outer" first and return it for a deep cwd — this test
+        // proves the longest-match logic overrides key order.
+        let outer = tempfile::tempdir().unwrap();
+        let inner_path = outer.path().join("sub").join("inner");
+        std::fs::create_dir_all(&inner_path).unwrap();
+
+        let outer_canon = std::fs::canonicalize(outer.path()).unwrap();
+        let inner_canon = std::fs::canonicalize(&inner_path).unwrap();
+
+        let mut g = GlobalConfig::default();
+        g.projects.registered.insert(
+            "aaa-outer".into(),
+            ProjectEntry { repo_path: outer_canon.to_string_lossy().to_string(), workspace: String::new() },
+        );
+        g.projects.registered.insert(
+            "zzz-inner".into(),
+            ProjectEntry { repo_path: inner_canon.to_string_lossy().to_string(), workspace: String::new() },
+        );
+
+        // cwd deep inside inner: must resolve to "zzz-inner", not "aaa-outer"
+        let deep = inner_canon.join("src").join("module");
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(resolve_project_name(&g, None, &deep).unwrap(), "zzz-inner");
+
+        // cwd directly inside outer (but not inner): must resolve to "aaa-outer"
+        let outer_sub = outer_canon.join("other");
+        std::fs::create_dir_all(&outer_sub).unwrap();
+        assert_eq!(resolve_project_name(&g, None, &outer_sub).unwrap(), "aaa-outer");
+    }
+
+    #[test]
+    fn resolve_repo_returns_registered_path_when_cwd_inside() {
+        let a = tempfile::tempdir().unwrap();
+        let a_canon = std::fs::canonicalize(a.path()).unwrap();
+        let g = global_with("myproj", &a_canon);
+        let sub = a_canon.join("deep").join("dir");
+        std::fs::create_dir_all(&sub).unwrap();
+        let result = resolve_repo(&g, None, None, &sub).unwrap();
+        assert_eq!(result, a_canon, "resolve_repo should return the registered canonicalized path");
     }
 
     #[test]

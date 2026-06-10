@@ -467,15 +467,24 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
                 return Err(format!("not a directory: {}", repo.display()));
             }
             let repo = repo.to_string_lossy().to_string();
-            if let Some(existing) = global.projects.registered.get(&name) {
+            let default_workspace = format!("{repo}/.palugada");
+            let workspace = if let Some(existing) = global.projects.registered.get(&name) {
                 if existing.repo_path != repo {
                     eprintln!(
                         "warning: project '{name}' was registered at {} — overwriting with {repo}",
                         existing.repo_path
                     );
                 }
-            }
-            let workspace = format!("{repo}/.palugada");
+                // Preserve a customised workspace; only reset if it was the default for the OLD repo
+                let old_default = format!("{}/.palugada", existing.repo_path);
+                if existing.workspace.is_empty() || existing.workspace == old_default {
+                    default_workspace
+                } else {
+                    existing.workspace.clone()
+                }
+            } else {
+                default_workspace
+            };
             global
                 .projects
                 .registered
