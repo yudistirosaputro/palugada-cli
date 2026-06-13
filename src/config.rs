@@ -232,6 +232,9 @@ pub struct Provider {
     pub provider: String,
     #[serde(default)]
     pub base_url: String,
+    /// "owner/name" — used by github_issues (and future github_actions).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub repo: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -569,6 +572,18 @@ mod tests {
         // multi-byte secret must not panic (old code sliced bytes)
         let m = mask_secret("ключключключ");
         assert!(m.starts_with("****"), "{m}");
+    }
+
+    #[test]
+    fn provider_parses_repo_field() {
+        let p: Provider = serde_yaml::from_str(
+            "provider: github_issues\nbase_url: https://api.github.com\nrepo: octocat/hello\n",
+        ).unwrap();
+        assert_eq!(p.provider, "github_issues");
+        assert_eq!(p.repo, "octocat/hello");
+        // repo is optional — absent → empty
+        let q: Provider = serde_yaml::from_str("provider: jira\n").unwrap();
+        assert_eq!(q.repo, "");
     }
 
     #[test]
