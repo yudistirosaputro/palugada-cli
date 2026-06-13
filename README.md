@@ -177,6 +177,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada design file <KEY>` | a design file's metadata (Figma) |
 | `palugada ci status <JOB>` | last build status of a CI job (Jenkins) |
 | `palugada notify <msg>` | send a message to the project's chat (Slack webhook) |
+| `palugada prd fetch/list/cat/search` | personal corpus of fetched tickets in `~/.palugada/personal/` |
 | `palugada exec <verb> [k=v…]` | run a profile/project-declared shell verb (`--list`, `--json`) |
 | `palugada doctor` | check tool + connector readiness (`--json`); non-zero exit on failure |
 

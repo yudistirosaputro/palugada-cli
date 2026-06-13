@@ -11,6 +11,7 @@ mod exec;
 mod http;
 mod indexer;
 mod knowledge;
+mod personal;
 mod scaffold;
 
 use clap::{Parser, Subcommand};
@@ -174,6 +175,11 @@ enum Commands {
         /// The message text to send.
         message: String,
     },
+    /// Personal corpus of fetched tickets (`~/.palugada/personal/`).
+    Prd {
+        #[command(subcommand)]
+        action: PrdCmd,
+    },
     /// Check tool + connector readiness for the current repo.
     Doctor {
         /// Emit JSON.
@@ -245,6 +251,18 @@ enum PrCmd {
 }
 
 #[derive(Subcommand)]
+enum PrdCmd {
+    /// Fetch an issue into the corpus: `prd fetch PROJ-123`.
+    Fetch { key: String },
+    /// List saved corpus docs.
+    List,
+    /// Print a saved corpus doc: `prd cat PROJ-123`.
+    Cat { name: String },
+    /// Keyword search across the corpus: `prd search <kw>`.
+    Search { query: String },
+}
+
+#[derive(Subcommand)]
 enum DesignCmd {
     /// Fetch a design file's metadata: `palugada design file <FILE_KEY>`.
     File { key: String },
@@ -297,6 +315,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Design { action } => cmd_design(action, project, cli.insecure),
         Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
         Commands::Notify { message } => cmd_notify(message, project, cli.insecure),
+        Commands::Prd { action } => cmd_prd(action, project, cli.insecure),
         Commands::Doctor { json } => cmd_doctor(json, project, cli.insecure),
         Commands::Exec { verb, args, list, json, profile } => {
             cmd_exec(verb, args, list, json, profile, project)
@@ -877,6 +896,47 @@ fn cmd_pr(action: PrCmd, project: Option<&str>, insecure: bool) -> Result<(), St
                 if !c.url.is_empty() {
                     println!("        {}", c.url);
                 }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn cmd_prd(action: PrdCmd, project: Option<&str>, insecure: bool) -> Result<(), String> {
+    let dir = personal::dir();
+    match action {
+        PrdCmd::Fetch { key } => {
+            let global = GlobalConfig::load_or_default()?;
+            let secrets = Secrets::load_or_default()?;
+            let (_name, pc, auth) = resolve_project(&global, &secrets, project)?;
+            let tracker = clients::issue_tracker(&pc, &auth, insecure)?;
+            let issue = tracker.get_issue(&key)?;
+            let ts = chrono::Utc::now().to_rfc3339();
+            let path = personal::save_issue(&dir, &issue, &ts)?;
+            println!("saved {} -> {}", issue.key, path.display());
+            Ok(())
+        }
+        PrdCmd::List => {
+            let names = personal::list(&dir)?;
+            if names.is_empty() {
+                println!("(corpus empty — {})", dir.display());
+            }
+            for n in names {
+                println!("  {n}");
+            }
+            Ok(())
+        }
+        PrdCmd::Cat { name } => {
+            println!("{}", personal::cat(&dir, &name)?.trim_end());
+            Ok(())
+        }
+        PrdCmd::Search { query } => {
+            let hits = personal::search(&dir, &query)?;
+            if hits.is_empty() {
+                println!("(no corpus matches '{query}')");
+            }
+            for (name, line) in hits {
+                println!("{:<20} {}", name, line);
             }
             Ok(())
         }
