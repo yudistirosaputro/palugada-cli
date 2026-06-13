@@ -173,6 +173,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada issue view <KEY>` | fetch an issue (Jira) |
 | `palugada wiki page <ID>` | fetch a page (Confluence) |
 | `palugada git whoami` | authenticated git-host user (GitLab/GitHub) |
+| `palugada pr recent <file>` | recent commits touching a file, from the git host (needs `repo`) |
 | `palugada design file <KEY>` | a design file's metadata (Figma) |
 | `palugada ci status <JOB>` | last build status of a CI job (Jenkins) |
 | `palugada notify <msg>` | send a message to the project's chat (Slack webhook) |

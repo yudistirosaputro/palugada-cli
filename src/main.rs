@@ -154,6 +154,11 @@ enum Commands {
         #[command(subcommand)]
         action: GitCmd,
     },
+    /// Work with the project's pull/merge requests.
+    Pr {
+        #[command(subcommand)]
+        action: PrCmd,
+    },
     /// Work with the project's design source.
     Design {
         #[command(subcommand)]
@@ -234,6 +239,12 @@ enum GitCmd {
 }
 
 #[derive(Subcommand)]
+enum PrCmd {
+    /// Recent commits touching a file, from the git host: `pr recent <file>`.
+    Recent { file: String },
+}
+
+#[derive(Subcommand)]
 enum DesignCmd {
     /// Fetch a design file's metadata: `palugada design file <FILE_KEY>`.
     File { key: String },
@@ -282,6 +293,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
+        Commands::Pr { action } => cmd_pr(action, project, cli.insecure),
         Commands::Design { action } => cmd_design(action, project, cli.insecure),
         Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
         Commands::Notify { message } => cmd_notify(message, project, cli.insecure),
@@ -842,6 +854,30 @@ fn cmd_git(action: GitCmd, project: Option<&str>, insecure: bool) -> Result<(), 
             let git = clients::git_host(&pc, &auth, insecure)?;
             let u = git.whoami()?;
             println!("{} ({}) @ {}", u.username, u.name, u.host);
+            Ok(())
+        }
+    }
+}
+
+fn cmd_pr(action: PrCmd, project: Option<&str>, insecure: bool) -> Result<(), String> {
+    match action {
+        PrCmd::Recent { file } => {
+            let global = GlobalConfig::load_or_default()?;
+            let secrets = Secrets::load_or_default()?;
+            let (_name, pc, auth) = resolve_project(&global, &secrets, project)?;
+            let git = clients::git_host(&pc, &auth, insecure)?;
+            let commits = git.recent_commits(&file, 10)?;
+            if commits.is_empty() {
+                println!("(no recent commits touching {file})");
+                return Ok(());
+            }
+            for c in &commits {
+                let short = &c.sha[..c.sha.len().min(8)];
+                println!("{short}  {}  ({})", c.title, c.author);
+                if !c.url.is_empty() {
+                    println!("        {}", c.url);
+                }
+            }
             Ok(())
         }
     }

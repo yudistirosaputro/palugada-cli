@@ -46,6 +46,19 @@ pub struct GitUser {
 }
 
 #[derive(Debug, Default)]
+pub struct CommitRef {
+    pub sha: String,
+    pub title: String,
+    pub author: String,
+    pub url: String,
+}
+
+/// First line of a commit message (its title).
+pub fn title_line(message: &str) -> String {
+    message.lines().next().unwrap_or("").trim().to_string()
+}
+
+#[derive(Debug, Default)]
 pub struct DesignFile {
     pub key: String,
     pub name: String,
@@ -76,6 +89,8 @@ pub trait DocSource {
 
 pub trait GitHost {
     fn whoami(&self) -> Result<GitUser, String>;
+    /// Recent commits touching `path`, newest first (host reverse-index).
+    fn recent_commits(&self, path: &str, limit: usize) -> Result<Vec<CommitRef>, String>;
     fn verify(&self) -> Result<String, String>;
 }
 
@@ -182,8 +197,8 @@ pub fn git_host(
         .as_ref()
         .ok_or("no git_host configured for this project")?;
     match p.provider.as_str() {
-        "gitlab" => Ok(Box::new(gitlab::GitLab::new(&p.base_url, &auth.git_token, insecure))),
-        "github" => Ok(Box::new(github::GitHub::new(&p.base_url, &auth.git_token, insecure))),
+        "gitlab" => Ok(Box::new(gitlab::GitLab::new(&p.base_url, &p.repo, &auth.git_token, insecure))),
+        "github" => Ok(Box::new(github::GitHub::new(&p.base_url, &p.repo, &auth.git_token, insecure))),
         other => Err(format!("unsupported git_host provider: '{other}' (supported: gitlab, github)")),
     }
 }
@@ -264,6 +279,13 @@ mod tests {
         assert_eq!(atlassian_auth("", "tok123"), "Bearer tok123");
         // base64("me@x.co:tok123") = bWVAeC5jbzp0b2sxMjM=
         assert_eq!(atlassian_auth("me@x.co", "tok123"), "Basic bWVAeC5jbzp0b2sxMjM=");
+    }
+
+    #[test]
+    fn title_line_takes_first_line() {
+        assert_eq!(title_line("feat: x\n\nbody"), "feat: x");
+        assert_eq!(title_line("only line"), "only line");
+        assert_eq!(title_line(""), "");
     }
 
     #[test]
