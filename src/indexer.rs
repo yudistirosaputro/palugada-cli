@@ -47,24 +47,14 @@ struct Manifest {
 }
 
 struct CompiledFamily {
-    id: String,
-    ext: Vec<String>,
-    path_contains: String,
-    re: Regex,
+    pub id: String,
+    pub ext: Vec<String>,
+    pub path_contains: String,
+    pub re: Regex,
 }
 
-pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
-    let ext_path = kn.join("profiles").join(profile).join("extractors.yaml");
-    let raw = fs::read_to_string(&ext_path).map_err(|e| {
-        format!("no extractors.yaml for profile '{profile}' ({}): {e}", ext_path.display())
-    })?;
-    let cfg: Extractors =
-        serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", ext_path.display()))?;
-
-    if cfg.families.is_empty() {
-        return Err(format!("profile '{profile}' declares no extraction families"));
-    }
-
+/// Compile every family's regex and validate its id (ids become index file names).
+pub(crate) fn compile_families(cfg: &Extractors) -> Result<Vec<CompiledFamily>, String> {
     let mut families: Vec<CompiledFamily> = Vec::new();
     for f in &cfg.families {
         let id_ok = !f.id.is_empty()
@@ -77,14 +67,38 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
                 f.id
             ));
         }
-        let re = Regex::new(&f.regex)
-            .map_err(|e| format!("family '{}': invalid regex: {e}", f.id))?;
+        let re = Regex::new(&f.regex).map_err(|e| format!("family '{}': invalid regex: {e}", f.id))?;
         families.push(CompiledFamily {
             id: f.id.clone(),
             ext: f.ext.clone(),
             path_contains: f.path_contains.clone(),
             re,
         });
+    }
+    Ok(families)
+}
+
+fn family_matches(f: &CompiledFamily, path_str: &str, ext: &str) -> bool {
+    (f.ext.is_empty() || f.ext.iter().any(|x| x == ext))
+        && (f.path_contains.is_empty() || path_str.contains(f.path_contains.as_str()))
+}
+
+/// Ids of every family whose ext/path_contains rules match `path_str`.
+pub fn families_for_path(path_str: &str, ext: &str, families: &[CompiledFamily]) -> Vec<String> {
+    families.iter().filter(|f| family_matches(f, path_str, ext)).map(|f| f.id.clone()).collect()
+}
+
+pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
+    let ext_path = kn.join("profiles").join(profile).join("extractors.yaml");
+    let raw = fs::read_to_string(&ext_path).map_err(|e| {
+        format!("no extractors.yaml for profile '{profile}' ({}): {e}", ext_path.display())
+    })?;
+    let cfg: Extractors =
+        serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", ext_path.display()))?;
+
+    let families = compile_families(&cfg)?;
+    if families.is_empty() {
+        return Err(format!("profile '{profile}' declares no extraction families"));
     }
 
     let ignore = cfg.ignore_dirs.clone();
@@ -108,13 +122,8 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
             .unwrap_or_default();
         let path_str = path.to_string_lossy();
 
-        let applicable: Vec<&CompiledFamily> = families
-            .iter()
-            .filter(|f| {
-                (f.ext.is_empty() || f.ext.iter().any(|x| x == &ext))
-                    && (f.path_contains.is_empty() || path_str.contains(f.path_contains.as_str()))
-            })
-            .collect();
+        let applicable: Vec<&CompiledFamily> =
+            families.iter().filter(|f| family_matches(f, &path_str, &ext)).collect();
         if applicable.is_empty() {
             continue;
         }
@@ -257,6 +266,18 @@ mod tests {
         fs::write(prof.join("extractors.yaml"), extractors_yaml).unwrap();
         let repo = tempfile::tempdir().unwrap();
         (kn, repo)
+    }
+
+    #[test]
+    fn families_for_path_matches_by_ext_and_path() {
+        let cfg: Extractors = serde_yaml::from_str(
+            "families:\n  - id: viewmodel\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n  - id: i18n\n    ext: [xml]\n    path_contains: values\n    regex: '<string\\s+name=\"(?P<name>[^\"]+)\"'\n",
+        ).unwrap();
+        let fams = compile_families(&cfg).unwrap();
+        assert_eq!(families_for_path("app/Login.kt", "kt", &fams), vec!["viewmodel".to_string()]);
+        assert_eq!(families_for_path("app/values/strings.xml", "xml", &fams), vec!["i18n".to_string()]);
+        // xml outside a values/ dir does not match i18n
+        assert!(families_for_path("app/other/x.xml", "xml", &fams).is_empty());
     }
 
     #[test]
