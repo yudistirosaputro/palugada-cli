@@ -130,6 +130,9 @@ pub struct AuthProfile {
     /// GitLab/GitHub personal access token for PR/MR + user APIs.
     #[serde(default)]
     pub git_token: String,
+    /// Chat webhook URL (Slack/Teams/DingTalk incoming webhook) for `notify`.
+    #[serde(default)]
+    pub chat_webhook: String,
     /// Atlassian Cloud: account email; when set, Jira/Confluence use
     /// `Basic base64(email:token)` instead of `Bearer token`.
     #[serde(default)]
@@ -224,6 +227,8 @@ pub struct Integrations {
     pub ci: Option<Provider>,
     #[serde(default)]
     pub git_host: Option<Provider>,
+    #[serde(default)]
+    pub chat: Option<Provider>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]

@@ -175,6 +175,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada git whoami` | authenticated git-host user (GitLab/GitHub) |
 | `palugada design file <KEY>` | a design file's metadata (Figma) |
 | `palugada ci status <JOB>` | last build status of a CI job (Jenkins) |
+| `palugada notify <msg>` | send a message to the project's chat (Slack webhook) |
 | `palugada exec <verb> [k=v…]` | run a profile/project-declared shell verb (`--list`, `--json`) |
 | `palugada doctor` | check tool + connector readiness (`--json`); non-zero exit on failure |
 
@@ -249,6 +250,7 @@ auth_profiles:
     figma_token:   "PASTE_FIGMA_TOKEN"
     jenkins_user:  "your-username"
     jenkins_token: "PASTE_JENKINS_API_TOKEN"
+    chat_webhook:  "https://hooks.slack.com/services/PASTE/WEBHOOK/URL"
 ```
 
 ## `<repo>/.palugada/config.yaml` (example)
@@ -256,8 +258,8 @@ auth_profiles:
 See [`examples/project.config.example.yaml`](examples/project.config.example.yaml).
 Each integration names a provider. Implemented today: issue tracker `jira` or
 `github_issues` (set `repo: owner/name`); wiki `confluence`; git host `gitlab`
-or `github`; design `figma`; CI `jenkins`. Other providers (Notion, Linear, …)
-are roadmap only — selecting one is a hard error.
+or `github`; design `figma`; CI `jenkins`; chat `slack`. Other providers (Notion,
+Linear, …) are roadmap only — selecting one is a hard error.
 
 ## Layout
 

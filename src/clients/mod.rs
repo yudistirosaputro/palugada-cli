@@ -12,6 +12,7 @@ pub mod github_issues;
 pub mod gitlab;
 pub mod jenkins;
 pub mod jira;
+pub mod slack;
 
 use crate::config::{AuthProfile, ProjectConfig};
 
@@ -82,6 +83,12 @@ pub trait DesignSource {
 
 pub trait CiProvider {
     fn job_status(&self, job: &str) -> Result<CiBuild, String>;
+    fn verify(&self) -> Result<String, String>;
+}
+
+pub trait ChatNotify {
+    /// Send a plain-text message; returns a short status on success.
+    fn notify(&self, message: &str) -> Result<String, String>;
     fn verify(&self) -> Result<String, String>;
 }
 
@@ -211,6 +218,22 @@ pub fn ci_provider(
             insecure,
         ))),
         other => Err(format!("unsupported ci provider: '{other}' (supported: jenkins)")),
+    }
+}
+
+pub fn chat_notify(
+    pc: &ProjectConfig,
+    auth: &AuthProfile,
+    insecure: bool,
+) -> Result<Box<dyn ChatNotify>, String> {
+    let p = pc
+        .integrations
+        .chat
+        .as_ref()
+        .ok_or("no chat configured for this project")?;
+    match p.provider.as_str() {
+        "slack" => Ok(Box::new(slack::Slack::new(&auth.chat_webhook, insecure))),
+        other => Err(format!("unsupported chat provider: '{other}' (supported: slack)")),
     }
 }
 

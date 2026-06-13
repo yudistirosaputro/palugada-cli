@@ -164,6 +164,11 @@ enum Commands {
         #[command(subcommand)]
         action: CiCmd,
     },
+    /// Send a message to the project's chat: `notify "build failed"`.
+    Notify {
+        /// The message text to send.
+        message: String,
+    },
     /// Check tool + connector readiness for the current repo.
     Doctor {
         /// Emit JSON.
@@ -279,6 +284,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
         Commands::Design { action } => cmd_design(action, project, cli.insecure),
         Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
+        Commands::Notify { message } => cmd_notify(message, project, cli.insecure),
         Commands::Doctor { json } => cmd_doctor(json, project, cli.insecure),
         Commands::Exec { verb, args, list, json, profile } => {
             cmd_exec(verb, args, list, json, profile, project)
@@ -572,6 +578,9 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
             if pc.integrations.ci.is_some() {
                 conns.push(("ci", clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify())));
             }
+            if pc.integrations.chat.is_some() {
+                conns.push(("chat", clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify())));
+            }
             for (tag, r) in conns {
                 checks.push(Check {
                     name: tag.into(),
@@ -664,6 +673,7 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
                 println!("    git_token:     {}", mask_secret(&a.git_token));
                 println!("    jenkins_token: {}", mask_secret(&a.jenkins_token));
                 println!("    jenkins_user:  {}", if a.jenkins_user.is_empty() { "(unset)".into() } else { a.jenkins_user.clone() });
+                println!("    chat_webhook:  {}", mask_secret(&a.chat_webhook));
             }
             Ok(())
         }
@@ -689,6 +699,9 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             }
             if pc.integrations.ci.is_some() {
                 report("ci", clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify()));
+            }
+            if pc.integrations.chat.is_some() {
+                report("chat", clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify()));
             }
             Ok(())
         }
@@ -862,4 +875,14 @@ fn cmd_ci(action: CiCmd, project: Option<&str>, insecure: bool) -> Result<(), St
             Ok(())
         }
     }
+}
+
+fn cmd_notify(message: String, project: Option<&str>, insecure: bool) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let secrets = Secrets::load_or_default()?;
+    let (_name, pc, auth) = resolve_project(&global, &secrets, project)?;
+    let chat = clients::chat_notify(&pc, &auth, insecure)?;
+    let status = chat.notify(&message)?;
+    println!("notify: {status}");
+    Ok(())
 }

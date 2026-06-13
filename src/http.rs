@@ -46,7 +46,7 @@ impl Http {
         for (k, v) in headers {
             req = req.set(k, v);
         }
-        let resp = req.call().map_err(|e| describe_ureq(url, e))?;
+        let resp = req.call().map_err(|e| describe_ureq("GET", url, e))?;
         resp.into_json::<T>()
             .map_err(|e| format!("failed to decode JSON from {url}: {e}"))
     }
@@ -57,21 +57,38 @@ impl Http {
         for (k, v) in headers {
             req = req.set(k, v);
         }
-        let resp = req.call().map_err(|e| describe_ureq(url, e))?;
+        let resp = req.call().map_err(|e| describe_ureq("GET", url, e))?;
+        resp.into_string()
+            .map_err(|e| format!("failed to read body from {url}: {e}"))
+    }
+
+    /// POST a JSON string body with arbitrary headers; return the raw response
+    /// body (some APIs return JSON, some — like Slack webhooks — return "ok").
+    pub fn post_json(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        body: &str,
+    ) -> Result<String, String> {
+        let mut req = self.agent.post(url).set("Content-Type", "application/json");
+        for (k, v) in headers {
+            req = req.set(k, v);
+        }
+        let resp = req.send_string(body).map_err(|e| describe_ureq("POST", url, e))?;
         resp.into_string()
             .map_err(|e| format!("failed to read body from {url}: {e}"))
     }
 }
 
-/// Turn a ureq error into a readable message, surfacing URL + HTTP status.
-fn describe_ureq(url: &str, e: ureq::Error) -> String {
+/// Turn a ureq error into a readable message, surfacing method + URL + status.
+fn describe_ureq(method: &str, url: &str, e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
             let snippet: String = body.chars().take(300).collect();
-            format!("GET {url} -> HTTP {code}: {snippet}")
+            format!("{method} {url} -> HTTP {code}: {snippet}")
         }
-        ureq::Error::Transport(t) => format!("GET {url}: transport error: {t}"),
+        ureq::Error::Transport(t) => format!("{method} {url}: transport error: {t}"),
     }
 }
 
