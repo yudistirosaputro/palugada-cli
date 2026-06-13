@@ -12,6 +12,7 @@ mod http;
 mod indexer;
 mod knowledge;
 mod personal;
+mod profile;
 mod scaffold;
 
 use clap::{Parser, Subcommand};
@@ -140,6 +141,11 @@ enum Commands {
         #[command(subcommand)]
         action: ProjectCmd,
     },
+    /// List, validate, or scaffold stack profiles.
+    Profile {
+        #[command(subcommand)]
+        action: ProfileCmd,
+    },
     /// Work with the project's issue tracker.
     Issue {
         #[command(subcommand)]
@@ -227,6 +233,16 @@ enum ProjectCmd {
 }
 
 #[derive(Subcommand)]
+enum ProfileCmd {
+    /// List bundled + locally-authored profiles.
+    List,
+    /// Lint a profile against the schema: `profile validate <id>`.
+    Validate { id: String },
+    /// Scaffold a new profile from a minimal template: `profile new <id>`.
+    New { id: String },
+}
+
+#[derive(Subcommand)]
 enum IssueCmd {
     /// View an issue by key: `palugada issue view PROJ-123`.
     View { key: String },
@@ -308,6 +324,7 @@ fn run(cli: Cli) -> Result<(), String> {
             cmd_brief(flow, target, budget, json, profile, project, cli.insecure)
         }
         Commands::Project { action } => cmd_project(action),
+        Commands::Profile { action } => cmd_profile(action),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
@@ -824,6 +841,48 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
             global.projects.active = name.clone();
             global.save()?;
             println!("Active project is now '{name}'.");
+            Ok(())
+        }
+    }
+}
+
+fn cmd_profile(action: ProfileCmd) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let kn = knowledge::knowledge_dir(&global)?;
+    match action {
+        ProfileCmd::List => {
+            let profs = profile::list(&kn)?;
+            if profs.is_empty() {
+                println!("(no profiles in {})", kn.join("profiles").display());
+            }
+            for (id, title) in profs {
+                println!("  {:<16} {}", id, title);
+            }
+            Ok(())
+        }
+        ProfileCmd::Validate { id } => {
+            let checks = profile::validate(&kn, &id);
+            let mut failed = 0;
+            for c in &checks {
+                if !c.ok {
+                    failed += 1;
+                }
+                println!("[{}] {:<18} {}", if c.ok { "ok  " } else { "FAIL" }, c.name, c.detail);
+            }
+            if failed > 0 {
+                Err(format!("{failed} check(s) failed for profile '{id}'"))
+            } else {
+                println!("profile '{id}' OK");
+                Ok(())
+            }
+        }
+        ProfileCmd::New { id } => {
+            let written = profile::scaffold_new(&kn, &id)?;
+            println!("scaffolded profile '{id}':");
+            for p in written {
+                println!("  {}", p.display());
+            }
+            println!("validate with:  palugada profile validate {id}");
             Ok(())
         }
     }
