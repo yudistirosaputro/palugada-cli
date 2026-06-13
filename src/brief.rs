@@ -6,15 +6,76 @@
 
 use crate::{indexer, knowledge};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
 #[derive(Deserialize, Default)]
-struct ProfileFlows {
+struct ProfileMeta {
     #[serde(default)]
     flows: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    review_map: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Default)]
+struct BriefContext {
+    touched_families: BTreeSet<String>,
+    diff_scanned: bool,
+}
+
+/// Group changed files by their fact family (unmatched → "(unclassified)") and
+/// collect the set of families touched.
+fn classify_files(
+    files: &[String],
+    families: &[indexer::CompiledFamily],
+) -> (BTreeMap<String, Vec<String>>, BTreeSet<String>) {
+    let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut touched: BTreeSet<String> = BTreeSet::new();
+    for f in files {
+        let ext = Path::new(f).extension().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        let ids = indexer::families_for_path(f, &ext, families);
+        if ids.is_empty() {
+            groups.entry("(unclassified)".to_string()).or_default().push(f.clone());
+        } else {
+            for id in ids {
+                touched.insert(id.clone());
+                groups.entry(id).or_default().push(f.clone());
+            }
+        }
+    }
+    (groups, touched)
+}
+
+/// Deduped, sorted convention topics for every touched family present in the map.
+fn mapped_topics(review_map: &BTreeMap<String, Vec<String>>, touched: &BTreeSet<String>) -> Vec<String> {
+    let mut topics: BTreeSet<String> = BTreeSet::new();
+    for fam in touched {
+        if let Some(ts) = review_map.get(fam) {
+            for t in ts {
+                topics.insert(t.clone());
+            }
+        }
+    }
+    topics.into_iter().collect()
+}
+
+/// `git -C <repo> diff --name-only <ref>` → changed file paths.
+fn git_changed_files(repo: &Path, gitref: &str) -> Result<Vec<String>, String> {
+    let out = Command::new("git")
+        .arg("-C").arg(repo)
+        .args(["diff", "--name-only", gitref])
+        .output()
+        .map_err(|e| format!("git diff: {e}"))?;
+    if !out.status.success() {
+        return Err("git diff failed".to_string());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .filter(|l| !l.is_empty())
+        .collect())
 }
 
 pub struct BriefOptions {
@@ -102,7 +163,7 @@ fn budget_packs(packs: &[Pack], budget: usize) -> Vec<Render> {
 pub fn run(kn: &Path, repo: &Path, profile: &str, opts: &BriefOptions) -> Result<(), String> {
     let pf_path = kn.join("profiles").join(profile).join("profile.yaml");
     let raw = fs::read_to_string(&pf_path).map_err(|e| format!("read {}: {e}", pf_path.display()))?;
-    let pf: ProfileFlows =
+    let pf: ProfileMeta =
         serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", pf_path.display()))?;
 
     let steps = pf.flows.get(&opts.flow).ok_or_else(|| {
@@ -116,9 +177,35 @@ pub fn run(kn: &Path, repo: &Path, profile: &str, opts: &BriefOptions) -> Result
     })?;
 
     let mut packs: Vec<Pack> = Vec::new();
+    let mut ctx = BriefContext::default();
     for step in steps {
         let (kind, arg) = parse_step(step);
         let (title, content) = match kind.as_str() {
+            "convention" if arg == "by-file-kind" => {
+                let content = if !ctx.diff_scanned {
+                    "(run diff.scan first — no touched families recorded)".to_string()
+                } else if ctx.touched_families.is_empty() {
+                    "(no fact-family files changed — nothing to check)".to_string()
+                } else {
+                    let topics = mapped_topics(&pf.review_map, &ctx.touched_families);
+                    if topics.is_empty() {
+                        "(no review_map entries for the touched families)".to_string()
+                    } else {
+                        topics
+                            .iter()
+                            .map(|t| {
+                                format!(
+                                    "### {t}\n{}",
+                                    knowledge::convention_outline(kn, profile, t)
+                                        .unwrap_or_else(|e| format!("({e})"))
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    }
+                };
+                ("conventions by file kind".to_string(), content)
+            }
             "convention" => (
                 format!("convention: {arg}"),
                 knowledge::convention_outline(kn, profile, &arg).unwrap_or_else(|e| format!("({e})")),
@@ -139,6 +226,28 @@ pub fn run(kn: &Path, repo: &Path, profile: &str, opts: &BriefOptions) -> Result
                 format!("module info for '{}'", opts.target),
                 indexer::module_report(repo, &opts.target),
             ),
+            "diff.scan" => {
+                let gitref = if opts.target.is_empty() { "HEAD" } else { opts.target.as_str() };
+                let content = match (indexer::load_families(kn, profile), git_changed_files(repo, gitref)) {
+                    (Err(e), _) => format!("({e})"),
+                    (_, Err(e)) => format!("({e})"),
+                    (Ok(_), Ok(files)) if files.is_empty() => {
+                        ctx.diff_scanned = true;
+                        format!("(no changed files vs {gitref})")
+                    }
+                    (Ok((_ignore, families)), Ok(files)) => {
+                        ctx.diff_scanned = true;
+                        let (groups, touched) = classify_files(&files, &families);
+                        ctx.touched_families = touched;
+                        let mut s = String::new();
+                        for (fam, fs) in &groups {
+                            s.push_str(&format!("{fam}: {}\n", fs.join(", ")));
+                        }
+                        s
+                    }
+                };
+                (format!("changed files vs {gitref}"), content)
+            }
             other => (
                 other.to_string(),
                 format!("(step '{step}' not yet available in this build)"),
@@ -263,5 +372,29 @@ mod tests {
         let packs = vec![pack("prd.context", &huge)];
         let r = budget_packs(&packs, 10);
         assert!(matches!(r[0], Render::Truncated { .. }));
+    }
+
+    #[test]
+    fn mapped_topics_dedupes_across_touched_families() {
+        let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        map.insert("viewmodel".into(), vec!["architecture".into(), "testing".into()]);
+        map.insert("route".into(), vec!["architecture".into()]);
+        let mut touched = BTreeSet::new();
+        touched.insert("viewmodel".to_string());
+        touched.insert("route".to_string());
+        let topics = mapped_topics(&map, &touched);
+        assert_eq!(topics, vec!["architecture".to_string(), "testing".to_string()]);
+    }
+
+    #[test]
+    fn classify_files_groups_and_collects_families() {
+        let cfg: indexer::Extractors = serde_yaml::from_str(
+            "families:\n  - id: viewmodel\n    ext: [kt]\n    regex: 'x'\n  - id: i18n\n    ext: [xml]\n    path_contains: values\n    regex: 'x'\n",
+        ).unwrap();
+        let fams = indexer::compile_families(&cfg).unwrap();
+        let files = vec!["a/Login.kt".to_string(), "a/values/strings.xml".to_string(), "README.md".to_string()];
+        let (groups, touched) = classify_files(&files, &fams);
+        assert!(touched.contains("viewmodel") && touched.contains("i18n"));
+        assert!(groups.get("(unclassified)").map(|v| v.contains(&"README.md".to_string())).unwrap_or(false));
     }
 }

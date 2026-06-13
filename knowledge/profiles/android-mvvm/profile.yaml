@@ -25,3 +25,12 @@ flows:
   feature:  [prd.context, recipe(feature), module.info, convention(architecture)]
   refactor: [module.info, convention(architecture), convention(style), recipe(refactor)]
   review:   [diff.scan, convention(by-file-kind)]
+
+# Maps each fact family to the convention topics a reviewer should check when a
+# file of that kind changed. Drives `brief review` (diff.scan → by-file-kind).
+review_map:
+  viewmodel:  [architecture]
+  repository: [architecture]
+  service:    [architecture]
+  route:      [architecture]
+  i18n:       [architecture]

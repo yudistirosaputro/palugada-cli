@@ -13,7 +13,7 @@ use std::path::Path;
 use walkdir::{DirEntry, WalkDir};
 
 #[derive(Deserialize, Default)]
-struct Extractors {
+pub struct Extractors {
     #[serde(default)]
     ignore_dirs: Vec<String>,
     #[serde(default)]
@@ -46,7 +46,7 @@ struct Manifest {
     counts: BTreeMap<String, usize>,
 }
 
-struct CompiledFamily {
+pub struct CompiledFamily {
     pub id: String,
     pub ext: Vec<String>,
     pub path_contains: String,
@@ -54,7 +54,7 @@ struct CompiledFamily {
 }
 
 /// Compile every family's regex and validate its id (ids become index file names).
-pub(crate) fn compile_families(cfg: &Extractors) -> Result<Vec<CompiledFamily>, String> {
+pub fn compile_families(cfg: &Extractors) -> Result<Vec<CompiledFamily>, String> {
     let mut families: Vec<CompiledFamily> = Vec::new();
     for f in &cfg.families {
         let id_ok = !f.id.is_empty()
@@ -86,6 +86,16 @@ fn family_matches(f: &CompiledFamily, path_str: &str, ext: &str) -> bool {
 /// Ids of every family whose ext/path_contains rules match `path_str`.
 pub fn families_for_path(path_str: &str, ext: &str, families: &[CompiledFamily]) -> Vec<String> {
     families.iter().filter(|f| family_matches(f, path_str, ext)).map(|f| f.id.clone()).collect()
+}
+
+/// Read + compile a profile's extractors.yaml. Returns (ignore_dirs, families).
+pub fn load_families(kn: &Path, profile: &str) -> Result<(Vec<String>, Vec<CompiledFamily>), String> {
+    let ext_path = kn.join("profiles").join(profile).join("extractors.yaml");
+    let raw = fs::read_to_string(&ext_path)
+        .map_err(|e| format!("no extractors.yaml for profile '{profile}' ({}): {e}", ext_path.display()))?;
+    let cfg: Extractors = serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", ext_path.display()))?;
+    let families = compile_families(&cfg)?;
+    Ok((cfg.ignore_dirs, families))
 }
 
 #[derive(Deserialize, Default)]
@@ -157,19 +167,11 @@ pub fn fact_report(
 }
 
 pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
-    let ext_path = kn.join("profiles").join(profile).join("extractors.yaml");
-    let raw = fs::read_to_string(&ext_path).map_err(|e| {
-        format!("no extractors.yaml for profile '{profile}' ({}): {e}", ext_path.display())
-    })?;
-    let cfg: Extractors =
-        serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", ext_path.display()))?;
-
-    let families = compile_families(&cfg)?;
+    let (ignore, families) = load_families(kn, profile)?;
     if families.is_empty() {
         return Err(format!("profile '{profile}' declares no extraction families"));
     }
 
-    let ignore = cfg.ignore_dirs.clone();
     let mut symbols: Vec<Symbol> = Vec::new();
 
     for entry in WalkDir::new(repo)
