@@ -258,8 +258,9 @@ auth_profiles:
 See [`examples/project.config.example.yaml`](examples/project.config.example.yaml).
 Each integration names a provider. Implemented today: issue tracker `jira` or
 `github_issues` (set `repo: owner/name`); wiki `confluence`; git host `gitlab`
-or `github`; design `figma`; CI `jenkins`; chat `slack`. Other providers (Notion,
-Linear, …) are roadmap only — selecting one is a hard error.
+or `github`; design `figma`; CI `jenkins`, `github_actions`, or `gitlab_ci`; chat
+`slack`. Other providers (Notion, Linear, …) are roadmap only — selecting one is
+a hard error.
 
 ## Layout
 
@@ -290,8 +291,8 @@ knowledge/profiles/    bundled stack profiles (android-mvvm starter)
   `feature` flow currently packs the issue summary + description only.
 - More tree-sitter grammars (Swift, TS, Go, Python) and typed fact aliases
   (`viewmodel` / `service` …) layered over the generic `fact` command.
-- More providers as demand dictates (GitHub Actions / GitLab CI for `ci`,
-  Notion for `wiki`, Linear for `issue_tracker`, Slack/Teams for notify).
+- More providers as demand dictates (Notion for `wiki`, Linear for
+  `issue_tracker`, Teams/DingTalk for `notify`).
 
 There is **no `sync`**: the index is local to each developer — `palugada index`
 regenerates it from the local checkout; nothing is pulled from a shared corpus.

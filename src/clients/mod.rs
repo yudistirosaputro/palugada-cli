@@ -8,8 +8,10 @@
 pub mod confluence;
 pub mod figma;
 pub mod github;
+pub mod github_actions;
 pub mod github_issues;
 pub mod gitlab;
+pub mod gitlab_ci;
 pub mod jenkins;
 pub mod jira;
 pub mod slack;
@@ -217,7 +219,21 @@ pub fn ci_provider(
             &auth.jenkins_token,
             insecure,
         ))),
-        other => Err(format!("unsupported ci provider: '{other}' (supported: jenkins)")),
+        "github_actions" => Ok(Box::new(github_actions::GitHubActions::new(
+            &p.base_url,
+            &p.repo,
+            &auth.git_token,
+            insecure,
+        ))),
+        "gitlab_ci" => Ok(Box::new(gitlab_ci::GitLabCi::new(
+            &p.base_url,
+            &p.repo,
+            &auth.git_token,
+            insecure,
+        ))),
+        other => Err(format!(
+            "unsupported ci provider: '{other}' (supported: jenkins, github_actions, gitlab_ci)"
+        )),
     }
 }
 
