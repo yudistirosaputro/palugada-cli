@@ -88,6 +88,74 @@ pub fn families_for_path(path_str: &str, ext: &str, families: &[CompiledFamily])
     families.iter().filter(|f| family_matches(f, path_str, ext)).map(|f| f.id.clone()).collect()
 }
 
+#[derive(Deserialize, Default)]
+struct ProfileFacts {
+    #[serde(default)]
+    fact_families: Vec<FactFamily>,
+}
+#[derive(Deserialize)]
+struct FactFamily {
+    id: String,
+}
+
+/// The fact-family ids the profile declares (validates `fact <family>`).
+pub fn fact_families(kn: &Path, profile: &str) -> Result<Vec<String>, String> {
+    let p = kn.join("profiles").join(profile).join("profile.yaml");
+    let raw = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
+    let pf: ProfileFacts = serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", p.display()))?;
+    Ok(pf.fact_families.into_iter().map(|f| f.id).collect())
+}
+
+/// Look up indexed facts of one family, optionally filtered by name substring.
+pub fn fact_report(
+    repo: &Path,
+    kn: &Path,
+    profile: &str,
+    family: &str,
+    name: Option<&str>,
+) -> Result<String, String> {
+    let known = fact_families(kn, profile)?;
+    if !known.iter().any(|f| f == family) {
+        return Err(format!(
+            "unknown fact family '{family}' for profile '{profile}' (available: {})",
+            if known.is_empty() { "none".to_string() } else { known.join(", ") }
+        ));
+    }
+    let p = repo.join(".palugada").join("index").join("symbols.json");
+    let data = match fs::read_to_string(&p) {
+        Ok(d) => d,
+        Err(_) => return Ok(format!("(no index at {} — run `palugada index`)", p.display())),
+    };
+    let symbols: Vec<Symbol> =
+        serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))?;
+    let needle = name.map(|n| n.to_lowercase());
+    let mut out = String::new();
+    let mut hits = 0;
+    for s in &symbols {
+        if s.kind != family {
+            continue;
+        }
+        if let Some(n) = &needle {
+            if !s.name.to_lowercase().contains(n.as_str()) {
+                continue;
+            }
+        }
+        out.push_str(&format!("{:<32} {}:{}\n", s.name, s.file, s.line));
+        hits += 1;
+        if hits >= 30 {
+            out.push_str("… (more matches; narrow the query)\n");
+            break;
+        }
+    }
+    if hits == 0 {
+        out.push_str(&format!(
+            "(no '{family}' facts{})",
+            name.map(|n| format!(" matching '{n}'")).unwrap_or_default()
+        ));
+    }
+    Ok(out)
+}
+
 pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
     let ext_path = kn.join("profiles").join(profile).join("extractors.yaml");
     let raw = fs::read_to_string(&ext_path).map_err(|e| {
@@ -278,6 +346,41 @@ mod tests {
         assert_eq!(families_for_path("app/values/strings.xml", "xml", &fams), vec!["i18n".to_string()]);
         // xml outside a values/ dir does not match i18n
         assert!(families_for_path("app/other/x.xml", "xml", &fams).is_empty());
+    }
+
+    #[test]
+    fn fact_report_rejects_unknown_family() {
+        let (kn, repo) = fixture(
+            "families:\n  - id: viewmodel\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        );
+        let prof = kn.path().join("profiles").join("p");
+        fs::write(prof.join("profile.yaml"), "fact_families:\n  - { id: viewmodel, symbol: true }\n").unwrap();
+        let err = fact_report(repo.path(), kn.path(), "p", "widget", None).unwrap_err();
+        assert!(err.contains("widget"), "{err}");
+        assert!(err.contains("viewmodel"), "should list available families: {err}");
+    }
+
+    #[test]
+    fn fact_report_filters_by_kind_and_name() {
+        let (kn, repo) = fixture(
+            "families:\n  - id: viewmodel\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)ViewModel'\n",
+        );
+        let prof = kn.path().join("profiles").join("p");
+        fs::write(
+            prof.join("profile.yaml"),
+            "fact_families:\n  - { id: viewmodel, symbol: true }\n  - { id: service, symbol: true }\n",
+        ).unwrap();
+        let idx = repo.path().join(".palugada").join("index");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(idx.join("symbols.json"),
+            r#"[{"name":"LoginViewModel","kind":"viewmodel","file":"a.kt","line":1},
+                {"name":"PaymentViewModel","kind":"viewmodel","file":"b.kt","line":2},
+                {"name":"AuthService","kind":"service","file":"c.kt","line":3}]"#).unwrap();
+        let all = fact_report(repo.path(), kn.path(), "p", "viewmodel", None).unwrap();
+        assert!(all.contains("LoginViewModel") && all.contains("PaymentViewModel"));
+        assert!(!all.contains("AuthService"), "must not include other families");
+        let one = fact_report(repo.path(), kn.path(), "p", "viewmodel", Some("login")).unwrap();
+        assert!(one.contains("LoginViewModel") && !one.contains("PaymentViewModel"));
     }
 
     #[test]

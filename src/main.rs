@@ -107,6 +107,16 @@ enum Commands {
     Symbol {
         query: String,
     },
+    /// Look up indexed facts of a profile-declared family: `fact <family> [name]`.
+    Fact {
+        /// Fact family id declared in the profile (e.g. viewmodel, route).
+        family: String,
+        /// Optional name substring filter.
+        name: Option<String>,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
+    },
     /// Assemble a budgeted context pack for a flow: `brief <flow> [target]`.
     Brief {
         /// Flow id (e.g. bugfix, feature, refactor, review).
@@ -259,6 +269,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Search { query, profile } => cmd_search(query, profile, project),
         Commands::Index { repo, profile } => cmd_index(repo, profile, project),
         Commands::Symbol { query } => cmd_symbol(query, project),
+        Commands::Fact { family, name, profile } => cmd_fact(family, name, profile, project),
         Commands::Brief { flow, target, budget, json, profile } => {
             cmd_brief(flow, target, budget, json, profile, project)
         }
@@ -387,6 +398,22 @@ fn cmd_symbol(query: String, project: Option<&str>) -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo_path = config::resolve_repo(&global, project, None, &cwd)?;
     indexer::symbol_search(&repo_path, &query)
+}
+
+fn cmd_fact(
+    family: String,
+    name: Option<String>,
+    profile: Option<String>,
+    project: Option<&str>,
+) -> Result<(), String> {
+    let global = GlobalConfig::load_or_default()?;
+    let kn = knowledge::knowledge_dir(&global)?;
+    let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
+    let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+    let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    let report = indexer::fact_report(&repo, &kn, &prof, &family, name.as_deref())?;
+    println!("{}", report.trim_end());
+    Ok(())
 }
 
 // ── brief: flow context packs ──────────────────────────────────────────────
