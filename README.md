@@ -166,6 +166,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada s <kw>` | search conventions + recipes by keyword |
 | `palugada index` | scan the project's code → `<repo>/.palugada/index/` (local, per-dev) |
 | `palugada symbol <query>` | search indexed symbols by name |
+| `palugada fact <family> [name]` | look up indexed facts of a profile-declared family (e.g. `fact viewmodel Login`) |
 | `palugada brief <flow> [target]` | one budgeted context pack for a flow (`--budget`, `--json`) |
 | `palugada issue view <KEY>` | fetch an issue (Jira) |
 | `palugada wiki page <ID>` | fetch a page (Confluence) |
@@ -281,10 +282,10 @@ knowledge/profiles/    bundled stack profiles (android-mvvm starter)
 
 ## Roadmap (next)
 
-- Flesh out the remaining `brief` flow steps: `prd.context` (issue/wiki
-  tie-in), `module.info`, and `diff.scan` (for `review`).
-- Typed fact aliases over the index (`viewmodel` / `service` / `route` …) and
-  richer extractors (tree-sitter where regex is too coarse).
+- Wiki tie-in for `prd.context` (a ticket's linked Confluence/Notion spec) — the
+  `feature` flow currently packs the issue summary + description only.
+- Richer extractors (tree-sitter where regex is too coarse) and typed fact
+  aliases (`viewmodel` / `service` …) layered over the generic `fact` command.
 - More providers as demand dictates (GitHub Actions / GitLab CI for `ci`,
   Notion for `wiki`, GitHub Issues / Linear for `issue_tracker`).
 
@@ -293,8 +294,9 @@ regenerates it from the local checkout; nothing is pulled from a shared corpus.
 
 Done so far: connectors (Jira / Confluence / Figma / Jenkins / GitLab / GitHub),
 `palugada init` (offline multi-agent scaffolding), knowledge reads
-(`q` / `for` / `s`), the project indexer (`index` + `symbol`), and flow context
-packs (`brief` — the `bugfix` flow is fully wired end-to-end).
+(`q` / `for` / `s`), the project indexer (`index` + `symbol` + `fact`), and flow
+context packs (`brief` — all four flows wired: bugfix, feature, refactor, review,
+with a priority-fill token budget).
 
 ## Contributing
 

@@ -1,8 +1,11 @@
 //! `palugada brief <flow> <target>` — assemble one budgeted context pack.
 //!
-//! Reads the flow's step list from the bound profile's `profile.yaml`, runs the
-//! steps it can (conventions, recipes, indexed symbols, recent commits), and
-//! gracefully stubs the ones not built yet (prd.context, module.info, diff.scan).
+//! Reads the flow's step list from the bound profile's `profile.yaml` and runs
+//! each step: conventions, recipes, indexed symbols, recent commits,
+//! `module.info`, `diff.scan` + `convention(by-file-kind)` (driven by the
+//! profile's `review_map`), and `prd.context` (the only networked step — its
+//! IssueTracker is built lazily and every failure degrades to an inline note).
+//! A priority-fill budget keeps the highest-value steps and truncates the rest.
 
 use crate::clients;
 use crate::config::{AuthProfile, ProjectConfig};
