@@ -14,6 +14,48 @@
         { "id": "data-flow", "title": "Unidirectional Data Flow",  "tokens": 230 }
       ],
       "related": ["di", "networking", "concurrency", "testing"]
+    },
+    {
+      "id": "errorhandling",
+      "title": "Error Handling",
+      "file": "errorhandling.md",
+      "description": "Model failures explicitly, handle coroutine cancellation correctly, and surface errors as UiState rather than crashing or swallowing them.",
+      "tags": ["error", "exception", "result", "coroutines", "flow", "retrofit"],
+      "sections": [
+        { "id": "result",     "title": "Modeling Failures",    "tokens": 180 },
+        { "id": "coroutines", "title": "Errors in Coroutines", "tokens": 210 },
+        { "id": "surfacing",  "title": "Surfacing to the UI",  "tokens": 170 },
+        { "id": "network",    "title": "Network Errors",       "tokens": 190 }
+      ],
+      "related": ["architecture", "testing", "networking"]
+    },
+    {
+      "id": "testing",
+      "title": "Testing",
+      "file": "testing.md",
+      "description": "Unit-test ViewModels, repositories, and mappers with coroutines-test and Turbine; prefer fakes over mocks; keep framework code out of pure-logic tests.",
+      "tags": ["testing", "junit", "coroutines-test", "turbine", "flow", "fake"],
+      "sections": [
+        { "id": "scope",      "title": "What to Test",         "tokens": 170 },
+        { "id": "viewmodel",  "title": "Testing ViewModels",   "tokens": 220 },
+        { "id": "repository", "title": "Testing Repositories", "tokens": 170 },
+        { "id": "practices",  "title": "Practices",            "tokens": 150 }
+      ],
+      "related": ["architecture", "errorhandling", "concurrency"]
+    },
+    {
+      "id": "style",
+      "title": "Style",
+      "file": "style.md",
+      "description": "Official Kotlin style enforced with ktlint/detekt, consistent naming with role suffixes, idiomatic null-safety, and package-by-feature structure.",
+      "tags": ["style", "kotlin", "ktlint", "naming", "idioms", "formatting"],
+      "sections": [
+        { "id": "formatting", "title": "Formatting",     "tokens": 150 },
+        { "id": "naming",     "title": "Naming",         "tokens": 170 },
+        { "id": "idioms",     "title": "Idioms",         "tokens": 200 },
+        { "id": "structure",  "title": "File Structure", "tokens": 150 }
+      ],
+      "related": ["architecture"]
     }
   ]
 }

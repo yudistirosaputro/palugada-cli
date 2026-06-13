@@ -13,6 +13,19 @@
       ],
       "related_recipes": ["viewmodel", "repository"],
       "tags": ["feature", "scaffold", "mvvm"]
+    },
+    {
+      "id": "refactor",
+      "title": "Refactor safely",
+      "description": "Change structure or readability without changing behaviour — characterize with tests first, move in small reversible steps, keep tests green throughout.",
+      "file": "refactor.md",
+      "convention_refs": [
+        { "topic": "testing",      "section": "viewmodel" },
+        { "topic": "style",        "section": "idioms" },
+        { "topic": "architecture", "section": "layers" }
+      ],
+      "related_recipes": ["feature"],
+      "tags": ["refactor", "cleanup", "tests"]
     }
   ]
 }
