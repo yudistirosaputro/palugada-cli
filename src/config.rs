@@ -158,22 +158,26 @@ impl Secrets {
         Self::load_from_path(&Self::default_path())
     }
 
-    /// Write the secrets file, created 0600 so tokens are never world-readable.
-    /// Uses an atomic write (write to sibling .tmp, then rename) to eliminate
-    /// the brief world-readable window on re-save.
+    /// Write the secrets file. On Unix it is created 0600 so tokens are never
+    /// world-readable; Windows has no std chmod equivalent and relies on the
+    /// per-user profile directory's default ACLs. Uses an atomic write (write to
+    /// sibling .tmp, then rename) to eliminate the brief world-readable window
+    /// on re-save.
     pub fn save_to_path(&self, p: &Path) -> Result<(), String> {
         use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
         if let Some(dir) = p.parent() {
             fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
         }
         let data = serde_yaml::to_string(self).map_err(|e| e.to_string())?;
         let tmp = p.with_extension("tmp");
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            opts.mode(0o600);
+        }
+        let mut f = opts
             .open(&tmp)
             .map_err(|e| format!("open {}: {e}", tmp.display()))?;
         f.write_all(data.as_bytes())
@@ -599,6 +603,7 @@ doctor: { cmd: ["android -V", "adb version"] }
     }
 
     #[test]
+    #[cfg(unix)]
     fn secrets_save_is_0600_and_round_trips() {
         use std::os::unix::fs::PermissionsExt as _;
         let dir = tempfile::tempdir().expect("tempdir creation failed");
