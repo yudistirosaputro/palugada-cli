@@ -1,8 +1,9 @@
 # Declarative extraction rules for the android-mvvm profile.
-# The indexer walks a project's files and, for each family, runs `regex` over
-# files whose extension is in `ext` (and whose path contains `path_contains`,
-# if set), capturing the named group `name`. Pure-regex MVP — tune as needed;
-# heavier parsing (tree-sitter) can replace a rule later without engine changes.
+# Each family declares EITHER a `regex` (run over the file text) OR a tree-sitter
+# `query` (a .scm file run against the parsed tree, with a `language`). Both
+# capture a `name`. Structural families (class/interface lookups) use tree-sitter
+# so comments and strings can't false-match; the long tail (annotation args, XML)
+# stays regex.
 
 schema_version: "1.0"
 
@@ -11,15 +12,18 @@ ignore_dirs: [".git", "build", ".gradle", ".idea", "node_modules", ".palugada", 
 families:
   - id: viewmodel
     ext: [kt]
-    regex: 'class\s+(?P<name>\w+)[^\n]*\bViewModel\b'
+    language: kotlin
+    query: extractors/viewmodel.scm
 
   - id: repository
     ext: [kt]
-    regex: 'class\s+(?P<name>\w+RepositoryImpl)\b'
+    language: kotlin
+    query: extractors/repository.scm
 
   - id: service
     ext: [kt]
-    regex: 'interface\s+(?P<name>\w+Service)\b'
+    language: kotlin
+    query: extractors/service.scm
 
   - id: route
     ext: [kt]
