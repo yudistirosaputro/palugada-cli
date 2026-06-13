@@ -100,6 +100,20 @@ pub fn atlassian_auth(email: &str, token: &str) -> String {
     }
 }
 
+/// Standard GitHub API request headers: the required User-Agent + API version,
+/// plus a Bearer PAT when one is present. Shared by the GitHub GitHost and
+/// IssueTracker providers.
+pub fn github_headers(token: &str) -> Vec<(&str, String)> {
+    let mut h = vec![
+        ("User-Agent", "palugada".to_string()),
+        ("X-GitHub-Api-Version", "2022-11-28".to_string()),
+    ];
+    if !token.is_empty() {
+        h.push(("Authorization", format!("Bearer {token}")));
+    }
+    h
+}
+
 pub fn issue_tracker(
     pc: &ProjectConfig,
     auth: &AuthProfile,
@@ -200,5 +214,14 @@ mod tests {
         assert_eq!(atlassian_auth("", "tok123"), "Bearer tok123");
         // base64("me@x.co:tok123") = bWVAeC5jbzp0b2sxMjM=
         assert_eq!(atlassian_auth("me@x.co", "tok123"), "Basic bWVAeC5jbzp0b2sxMjM=");
+    }
+
+    #[test]
+    fn github_headers_include_ua_version_and_optional_bearer() {
+        let h = github_headers("tok123");
+        assert!(h.iter().any(|(k, v)| *k == "Authorization" && v == "Bearer tok123"));
+        assert!(h.iter().any(|(k, _)| *k == "User-Agent"));
+        assert!(h.iter().any(|(k, _)| *k == "X-GitHub-Api-Version"));
+        assert!(github_headers("").iter().all(|(k, _)| *k != "Authorization"));
     }
 }

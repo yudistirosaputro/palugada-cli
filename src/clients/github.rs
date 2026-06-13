@@ -25,17 +25,6 @@ impl GitHub {
         }
     }
 
-    fn headers(&self) -> Vec<(&str, String)> {
-        // GitHub requires a User-Agent; auth is a Bearer PAT.
-        let mut h = vec![
-            ("User-Agent", "palugada".to_string()),
-            ("X-GitHub-Api-Version", "2022-11-28".to_string()),
-        ];
-        if !self.token.is_empty() {
-            h.push(("Authorization", format!("Bearer {}", self.token)));
-        }
-        h
-    }
 }
 
 #[derive(Deserialize)]
@@ -50,7 +39,7 @@ impl GitHost for GitHub {
             return Err("git_token is empty in the auth profile".into());
         }
         let url = format!("{}/user", self.base_url);
-        let u: UserResp = self.http.get_json(&url, &self.headers())?;
+        let u: UserResp = self.http.get_json(&url, &super::github_headers(&self.token))?;
         Ok(GitUser {
             username: u.login.unwrap_or_default(),
             name: u.name.unwrap_or_default(),
