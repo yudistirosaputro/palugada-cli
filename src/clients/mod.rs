@@ -8,6 +8,7 @@
 pub mod confluence;
 pub mod figma;
 pub mod github;
+pub mod github_issues;
 pub mod gitlab;
 pub mod jenkins;
 pub mod jira;
@@ -126,7 +127,15 @@ pub fn issue_tracker(
         .ok_or("no issue_tracker configured for this project")?;
     match p.provider.as_str() {
         "jira" => Ok(Box::new(jira::Jira::new(&p.base_url, &auth.jira_email, &auth.jira_token, insecure))),
-        other => Err(format!("unsupported issue_tracker provider: '{other}' (supported: jira)")),
+        "github_issues" => Ok(Box::new(github_issues::GitHubIssues::new(
+            &p.base_url,
+            &p.repo,
+            &auth.git_token,
+            insecure,
+        ))),
+        other => Err(format!(
+            "unsupported issue_tracker provider: '{other}' (supported: jira, github_issues)"
+        )),
     }
 }
 
