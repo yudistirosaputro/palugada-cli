@@ -271,7 +271,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Symbol { query } => cmd_symbol(query, project),
         Commands::Fact { family, name, profile } => cmd_fact(family, name, profile, project),
         Commands::Brief { flow, target, budget, json, profile } => {
-            cmd_brief(flow, target, budget, json, profile, project)
+            cmd_brief(flow, target, budget, json, profile, project, cli.insecure)
         }
         Commands::Project { action } => cmd_project(action),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
@@ -425,13 +425,19 @@ fn cmd_brief(
     json: bool,
     profile: Option<String>,
     project: Option<&str>,
+    insecure: bool,
 ) -> Result<(), String> {
     let global = GlobalConfig::load_or_default()?;
     let kn = knowledge::knowledge_dir(&global)?;
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo = config::resolve_repo(&global, project, None, &cwd)?;
-    brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json })
+    // Best-effort: brief works without a project (local steps); only prd.context needs this.
+    let connectors = Secrets::load_or_default()
+        .ok()
+        .and_then(|s| config::resolve_project(&global, &s, project).ok())
+        .map(|(_n, pc, auth)| brief::BriefConnectors { pc, auth, insecure });
+    brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json }, connectors.as_ref())
 }
 
 // ── exec: profile-declared execution toolbelt ──────────────────────────────

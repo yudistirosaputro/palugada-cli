@@ -4,6 +4,8 @@
 //! steps it can (conventions, recipes, indexed symbols, recent commits), and
 //! gracefully stubs the ones not built yet (prd.context, module.info, diff.scan).
 
+use crate::clients;
+use crate::config::{AuthProfile, ProjectConfig};
 use crate::{indexer, knowledge};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -160,7 +162,43 @@ fn budget_packs(packs: &[Pack], budget: usize) -> Vec<Render> {
     renders
 }
 
-pub fn run(kn: &Path, repo: &Path, profile: &str, opts: &BriefOptions) -> Result<(), String> {
+pub struct BriefConnectors {
+    pub pc: ProjectConfig,
+    pub auth: AuthProfile,
+    pub insecure: bool,
+}
+
+fn format_issue_pack(i: &clients::Issue) -> String {
+    let excerpt: String = i.description.chars().take(600).collect();
+    format!(
+        "{} — {}\nStatus: {} · Type: {} · Assignee: {}\nSpec excerpt: {}",
+        i.key, i.summary, i.status, i.issue_type, i.assignee, excerpt
+    )
+}
+
+/// Fetch the target ticket via the project's IssueTracker. Every failure path
+/// degrades to an inline `(…)` note so `brief` never aborts on the network.
+fn prd_context_content(connectors: Option<&BriefConnectors>, target: &str) -> String {
+    match connectors {
+        None => "(no project/credentials resolved — run brief inside a registered project)".to_string(),
+        Some(_) if target.is_empty() => "(no target ticket)".to_string(),
+        Some(c) => match clients::issue_tracker(&c.pc, &c.auth, c.insecure) {
+            Err(e) => format!("({e})"),
+            Ok(tracker) => match tracker.get_issue(target) {
+                Err(e) => format!("(could not fetch {target}: {e})"),
+                Ok(i) => format_issue_pack(&i),
+            },
+        },
+    }
+}
+
+pub fn run(
+    kn: &Path,
+    repo: &Path,
+    profile: &str,
+    opts: &BriefOptions,
+    connectors: Option<&BriefConnectors>,
+) -> Result<(), String> {
     let pf_path = kn.join("profiles").join(profile).join("profile.yaml");
     let raw = fs::read_to_string(&pf_path).map_err(|e| format!("read {}: {e}", pf_path.display()))?;
     let pf: ProfileMeta =
@@ -225,6 +263,10 @@ pub fn run(kn: &Path, repo: &Path, profile: &str, opts: &BriefOptions) -> Result
             "module.info" => (
                 format!("module info for '{}'", opts.target),
                 indexer::module_report(repo, &opts.target),
+            ),
+            "prd.context" => (
+                format!("ticket context for '{}'", opts.target),
+                prd_context_content(connectors, &opts.target),
             ),
             "diff.scan" => {
                 let gitref = if opts.target.is_empty() { "HEAD" } else { opts.target.as_str() };
@@ -384,6 +426,43 @@ mod tests {
         touched.insert("route".to_string());
         let topics = mapped_topics(&map, &touched);
         assert_eq!(topics, vec!["architecture".to_string(), "testing".to_string()]);
+    }
+
+    #[test]
+    fn prd_context_degrades_without_connectors() {
+        assert!(prd_context_content(None, "PROJ-1").contains("no project"));
+    }
+
+    #[test]
+    fn prd_context_notes_empty_target() {
+        let c = BriefConnectors {
+            pc: crate::config::ProjectConfig::default(),
+            auth: crate::config::AuthProfile::default(),
+            insecure: false,
+        };
+        assert!(prd_context_content(Some(&c), "").contains("no target ticket"));
+    }
+
+    #[test]
+    fn prd_context_notes_missing_tracker() {
+        // default ProjectConfig has no issue_tracker → factory errors, degraded to a note.
+        let c = BriefConnectors {
+            pc: crate::config::ProjectConfig::default(),
+            auth: crate::config::AuthProfile::default(),
+            insecure: false,
+        };
+        let out = prd_context_content(Some(&c), "PROJ-1");
+        assert!(out.starts_with('(') && out.contains("issue_tracker"));
+    }
+
+    #[test]
+    fn format_issue_pack_includes_key_and_excerpt() {
+        let i = crate::clients::Issue {
+            key: "T-1".into(), summary: "Add export".into(), status: "Open".into(),
+            issue_type: "Story".into(), assignee: "me".into(), description: "spec body".into(),
+        };
+        let s = format_issue_pack(&i);
+        assert!(s.contains("T-1 — Add export") && s.contains("spec body"));
     }
 
     #[test]
