@@ -14,6 +14,7 @@ pub mod gitlab;
 pub mod gitlab_ci;
 pub mod jenkins;
 pub mod jira;
+pub mod notion;
 pub mod slack;
 
 use crate::config::{AuthProfile, ProjectConfig};
@@ -165,7 +166,8 @@ pub fn doc_source(
             &auth.wiki_token,
             insecure,
         ))),
-        other => Err(format!("unsupported wiki provider: '{other}' (supported: confluence)")),
+        "notion" => Ok(Box::new(notion::Notion::new(&p.base_url, &auth.wiki_token, insecure))),
+        other => Err(format!("unsupported wiki provider: '{other}' (supported: confluence, notion)")),
     }
 }
 
