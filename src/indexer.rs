@@ -27,7 +27,13 @@ struct Family {
     ext: Vec<String>,
     #[serde(default)]
     path_contains: String,
+    #[serde(default)]
     regex: String,
+    #[serde(default)]
+    language: String,
+    /// Path to a `.scm` tree-sitter query, relative to the profile dir.
+    #[serde(default)]
+    query: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,15 +52,23 @@ struct Manifest {
     counts: BTreeMap<String, usize>,
 }
 
+#[derive(Debug)]
+enum Extractor {
+    Regex(Regex),
+    TreeSitter { language: String, query: tree_sitter::Query },
+}
+
+#[derive(Debug)]
 pub struct CompiledFamily {
     pub id: String,
     pub ext: Vec<String>,
     pub path_contains: String,
-    pub re: Regex,
+    extractor: Extractor,
 }
 
-/// Compile every family's regex and validate its id (ids become index file names).
-pub fn compile_families(cfg: &Extractors) -> Result<Vec<CompiledFamily>, String> {
+/// Compile every family into a regex or tree-sitter extractor and validate it.
+/// `profile_dir` is where `.scm` query paths resolve from.
+pub fn compile_families(cfg: &Extractors, profile_dir: &Path) -> Result<Vec<CompiledFamily>, String> {
     let mut families: Vec<CompiledFamily> = Vec::new();
     for f in &cfg.families {
         let id_ok = !f.id.is_empty()
@@ -67,12 +81,36 @@ pub fn compile_families(cfg: &Extractors) -> Result<Vec<CompiledFamily>, String>
                 f.id
             ));
         }
-        let re = Regex::new(&f.regex).map_err(|e| format!("family '{}': invalid regex: {e}", f.id))?;
+        let has_regex = !f.regex.is_empty();
+        let has_query = !f.query.is_empty();
+        let extractor = match (has_regex, has_query) {
+            (true, true) => return Err(format!("family '{}': set either regex or query, not both", f.id)),
+            (false, false) => return Err(format!("family '{}': must set a regex or a query", f.id)),
+            (true, false) => {
+                let re = Regex::new(&f.regex).map_err(|e| format!("family '{}': invalid regex: {e}", f.id))?;
+                Extractor::Regex(re)
+            }
+            (false, true) => {
+                if f.language.is_empty() {
+                    return Err(format!("family '{}': a query needs a `language`", f.id));
+                }
+                let lang = language_for(&f.language)?;
+                let scm = profile_dir.join(&f.query);
+                let src = fs::read_to_string(&scm)
+                    .map_err(|e| format!("family '{}': read {}: {e}", f.id, scm.display()))?;
+                let query = tree_sitter::Query::new(&lang, &src)
+                    .map_err(|e| format!("family '{}': invalid query {}: {e}", f.id, scm.display()))?;
+                if query.capture_index_for_name("name").is_none() {
+                    return Err(format!("family '{}': query {} has no @name capture", f.id, scm.display()));
+                }
+                Extractor::TreeSitter { language: f.language.clone(), query }
+            }
+        };
         families.push(CompiledFamily {
             id: f.id.clone(),
             ext: f.ext.clone(),
             path_contains: f.path_contains.clone(),
-            re,
+            extractor,
         });
     }
     Ok(families)
@@ -97,13 +135,86 @@ fn language_for(name: &str) -> Result<tree_sitter::Language, String> {
     }
 }
 
+/// Emit symbols from one file: regex families inline, tree-sitter families
+/// against a tree parsed once per distinct language present in `applicable`.
+fn extract_file(text: &str, rel: &str, applicable: &[&CompiledFamily], symbols: &mut Vec<Symbol>) {
+    use std::collections::BTreeSet;
+    use tree_sitter::StreamingIterator;
+
+    for fam in applicable {
+        if let Extractor::Regex(re) = &fam.extractor {
+            for caps in re.captures_iter(text) {
+                if let Some(m) = caps.name("name") {
+                    let line = text[..m.start()].bytes().filter(|&b| b == b'\n').count() + 1;
+                    symbols.push(Symbol {
+                        name: m.as_str().to_string(),
+                        kind: fam.id.clone(),
+                        file: rel.to_string(),
+                        line,
+                    });
+                }
+            }
+        }
+    }
+
+    let langs: BTreeSet<&str> = applicable
+        .iter()
+        .filter_map(|f| match &f.extractor {
+            Extractor::TreeSitter { language, .. } => Some(language.as_str()),
+            _ => None,
+        })
+        .collect();
+    for langname in langs {
+        let lang = match language_for(langname) {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&lang).is_err() {
+            continue;
+        }
+        let tree = match parser.parse(text, None) {
+            Some(t) => t,
+            None => continue,
+        };
+        for fam in applicable {
+            if let Extractor::TreeSitter { language, query } = &fam.extractor {
+                if language != langname {
+                    continue;
+                }
+                let name_idx = match query.capture_index_for_name("name") {
+                    Some(i) => i,
+                    None => continue,
+                };
+                let mut cur = tree_sitter::QueryCursor::new();
+                let mut it = cur.matches(query, tree.root_node(), text.as_bytes());
+                while let Some(m) = it.next() {
+                    for c in m.captures {
+                        if c.index == name_idx {
+                            if let Ok(nm) = c.node.utf8_text(text.as_bytes()) {
+                                symbols.push(Symbol {
+                                    name: nm.to_string(),
+                                    kind: fam.id.clone(),
+                                    file: rel.to_string(),
+                                    line: c.node.start_position().row + 1,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Read + compile a profile's extractors.yaml. Returns (ignore_dirs, families).
 pub fn load_families(kn: &Path, profile: &str) -> Result<(Vec<String>, Vec<CompiledFamily>), String> {
-    let ext_path = kn.join("profiles").join(profile).join("extractors.yaml");
+    let profile_dir = kn.join("profiles").join(profile);
+    let ext_path = profile_dir.join("extractors.yaml");
     let raw = fs::read_to_string(&ext_path)
         .map_err(|e| format!("no extractors.yaml for profile '{profile}' ({}): {e}", ext_path.display()))?;
     let cfg: Extractors = serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", ext_path.display()))?;
-    let families = compile_families(&cfg)?;
+    let families = compile_families(&cfg, &profile_dir)?;
     Ok((cfg.ignore_dirs, families))
 }
 
@@ -217,19 +328,7 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
             .to_string_lossy()
             .to_string();
 
-        for fam in applicable {
-            for caps in fam.re.captures_iter(&text) {
-                if let Some(m) = caps.name("name") {
-                    let line = text[..m.start()].bytes().filter(|&b| b == b'\n').count() + 1;
-                    symbols.push(Symbol {
-                        name: m.as_str().to_string(),
-                        kind: fam.id.clone(),
-                        file: rel.clone(),
-                        line,
-                    });
-                }
-            }
-        }
+        extract_file(&text, &rel, &applicable, &mut symbols);
     }
 
     // Write index artifacts — clear first so stale per-kind files are removed.
@@ -404,7 +503,8 @@ mod tests {
         let cfg: Extractors = serde_yaml::from_str(
             "families:\n  - id: viewmodel\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n  - id: i18n\n    ext: [xml]\n    path_contains: values\n    regex: '<string\\s+name=\"(?P<name>[^\"]+)\"'\n",
         ).unwrap();
-        let fams = compile_families(&cfg).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let fams = compile_families(&cfg, dir.path()).unwrap();
         assert_eq!(families_for_path("app/Login.kt", "kt", &fams), vec!["viewmodel".to_string()]);
         assert_eq!(families_for_path("app/values/strings.xml", "xml", &fams), vec!["i18n".to_string()]);
         // xml outside a values/ dir does not match i18n
@@ -465,6 +565,55 @@ mod tests {
     fn module_report_needs_a_target() {
         let repo = tempfile::tempdir().unwrap();
         assert!(module_report(repo.path(), "").contains("needs a target"));
+    }
+
+    #[test]
+    fn rejects_family_with_both_regex_and_query() {
+        let cfg: Extractors = serde_yaml::from_str(
+            "families:\n  - id: x\n    ext: [kt]\n    regex: 'a'\n    query: q.scm\n    language: kotlin\n",
+        ).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let err = compile_families(&cfg, dir.path()).unwrap_err();
+        assert!(err.contains("either regex or query"), "{err}");
+    }
+
+    #[test]
+    fn rejects_query_without_language() {
+        let cfg: Extractors = serde_yaml::from_str(
+            "families:\n  - id: x\n    ext: [kt]\n    query: q.scm\n",
+        ).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let err = compile_families(&cfg, dir.path()).unwrap_err();
+        assert!(err.contains("language"), "{err}");
+    }
+
+    #[test]
+    fn rejects_query_without_name_capture() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("q.scm"), "(class_declaration) @other\n").unwrap();
+        let cfg: Extractors = serde_yaml::from_str(
+            "families:\n  - id: x\n    ext: [kt]\n    language: kotlin\n    query: q.scm\n",
+        ).unwrap();
+        let err = compile_families(&cfg, dir.path()).unwrap_err();
+        assert!(err.contains("@name"), "{err}");
+    }
+
+    #[test]
+    fn tree_sitter_extracts_and_skips_comments() {
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(prof.join("extractors")).unwrap();
+        fs::write(prof.join("extractors.yaml"),
+            "families:\n  - id: viewmodel\n    ext: [kt]\n    language: kotlin\n    query: extractors/vm.scm\n").unwrap();
+        fs::write(prof.join("extractors").join("vm.scm"),
+            "(class_declaration name: (identifier) @name (#match? @name \"ViewModel$\"))\n").unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(repo.path().join("A.kt"),
+            "class LoginViewModel : ViewModel()\n// class GhostViewModel removed\n").unwrap();
+        run(repo.path(), kn.path(), "p").unwrap();
+        let data = fs::read_to_string(repo.path().join(".palugada").join("index").join("symbols.json")).unwrap();
+        assert!(data.contains("LoginViewModel"), "{data}");
+        assert!(!data.contains("GhostViewModel"), "comment must not be extracted: {data}");
     }
 
     #[test]

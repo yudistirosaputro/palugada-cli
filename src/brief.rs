@@ -473,7 +473,8 @@ mod tests {
         let cfg: indexer::Extractors = serde_yaml::from_str(
             "families:\n  - id: viewmodel\n    ext: [kt]\n    regex: 'x'\n  - id: i18n\n    ext: [xml]\n    path_contains: values\n    regex: 'x'\n",
         ).unwrap();
-        let fams = indexer::compile_families(&cfg).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let fams = indexer::compile_families(&cfg, dir.path()).unwrap();
         let files = vec!["a/Login.kt".to_string(), "a/values/strings.xml".to_string(), "README.md".to_string()];
         let (groups, touched) = classify_files(&files, &fams);
         assert!(touched.contains("viewmodel") && touched.contains("i18n"));
