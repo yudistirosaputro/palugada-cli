@@ -88,6 +88,15 @@ pub fn families_for_path(path_str: &str, ext: &str, families: &[CompiledFamily])
     families.iter().filter(|f| family_matches(f, path_str, ext)).map(|f| f.id.clone()).collect()
 }
 
+/// Map a profile-declared `language` string to its bundled tree-sitter grammar.
+/// Adding a language later = add its crate + one arm here (no profile change).
+fn language_for(name: &str) -> Result<tree_sitter::Language, String> {
+    match name {
+        "kotlin" => Ok(tree_sitter_kotlin_ng::LANGUAGE.into()),
+        other => Err(format!("unsupported language '{other}' (supported: kotlin)")),
+    }
+}
+
 /// Read + compile a profile's extractors.yaml. Returns (ignore_dirs, families).
 pub fn load_families(kn: &Path, profile: &str) -> Result<(Vec<String>, Vec<CompiledFamily>), String> {
     let ext_path = kn.join("profiles").join(profile).join("extractors.yaml");
@@ -380,6 +389,14 @@ mod tests {
         fs::write(prof.join("extractors.yaml"), extractors_yaml).unwrap();
         let repo = tempfile::tempdir().unwrap();
         (kn, repo)
+    }
+
+    #[test]
+    fn kotlin_grammar_loads_and_unknown_language_errors() {
+        let lang = language_for("kotlin").unwrap();
+        let q = tree_sitter::Query::new(&lang, r#"(class_declaration name: (identifier) @name)"#).unwrap();
+        assert!(q.capture_index_for_name("name").is_some());
+        assert!(language_for("klingon").unwrap_err().contains("klingon"));
     }
 
     #[test]

@@ -25,6 +25,8 @@ base64 = "0.22"
 regex = "1"
 walkdir = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+tree-sitter = "0.25"
+tree-sitter-kotlin-ng = "1.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
