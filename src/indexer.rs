@@ -293,6 +293,50 @@ pub fn symbol_report(repo: &Path, query: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// Module prefix for a target: a file → its parent dir; anything else → itself.
+fn module_prefix(target: &str) -> String {
+    let p = Path::new(target);
+    if p.extension().is_some() {
+        p.parent().map(|x| x.to_string_lossy().to_string()).unwrap_or_default()
+    } else {
+        target.trim_end_matches('/').to_string()
+    }
+}
+
+/// Summarise indexed symbols whose file lives under the target's module prefix.
+pub fn module_report(repo: &Path, target: &str) -> String {
+    if target.is_empty() {
+        return "(module.info needs a target path)".to_string();
+    }
+    let prefix = module_prefix(target);
+    let p = repo.join(".palugada").join("index").join("symbols.json");
+    let data = match fs::read_to_string(&p) {
+        Ok(d) => d,
+        Err(_) => return format!("(no index at {} — run `palugada index`)", p.display()),
+    };
+    let symbols: Vec<Symbol> = match serde_json::from_str(&data) {
+        Ok(s) => s,
+        Err(e) => return format!("(parse {}: {e})", p.display()),
+    };
+    let in_module: Vec<&Symbol> = symbols
+        .iter()
+        .filter(|s| s.file == prefix || s.file.starts_with(&format!("{prefix}/")))
+        .collect();
+    if in_module.is_empty() {
+        return format!("(no indexed symbols under '{prefix}')");
+    }
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+    for s in &in_module {
+        *counts.entry(s.kind.clone()).or_insert(0) += 1;
+    }
+    let summary: Vec<String> = counts.iter().map(|(k, c)| format!("{k}: {c}")).collect();
+    let mut out = format!("module {prefix} — {} symbols ({})\n", in_module.len(), summary.join(", "));
+    for s in in_module.iter().take(30) {
+        out.push_str(&format!("  {:<12} {:<28} {}:{}\n", s.kind, s.name, s.file, s.line));
+    }
+    out
+}
+
 fn is_ignored(e: &DirEntry, ignore: &[String]) -> bool {
     e.file_name()
         .to_str()
@@ -381,6 +425,27 @@ mod tests {
         assert!(!all.contains("AuthService"), "must not include other families");
         let one = fact_report(repo.path(), kn.path(), "p", "viewmodel", Some("login")).unwrap();
         assert!(one.contains("LoginViewModel") && !one.contains("PaymentViewModel"));
+    }
+
+    #[test]
+    fn module_report_summarises_symbols_under_prefix() {
+        let repo = tempfile::tempdir().unwrap();
+        let idx = repo.path().join(".palugada").join("index");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(idx.join("symbols.json"),
+            r#"[{"name":"LoginViewModel","kind":"viewmodel","file":"feature/auth/Login.kt","line":1},
+                {"name":"AuthService","kind":"service","file":"feature/auth/Auth.kt","line":2},
+                {"name":"HomeViewModel","kind":"viewmodel","file":"feature/home/Home.kt","line":3}]"#).unwrap();
+        // target is a file → its directory becomes the module prefix
+        let out = module_report(repo.path(), "feature/auth/Login.kt");
+        assert!(out.contains("LoginViewModel") && out.contains("AuthService"));
+        assert!(!out.contains("HomeViewModel"), "home is outside feature/auth");
+    }
+
+    #[test]
+    fn module_report_needs_a_target() {
+        let repo = tempfile::tempdir().unwrap();
+        assert!(module_report(repo.path(), "").contains("needs a target"));
     }
 
     #[test]

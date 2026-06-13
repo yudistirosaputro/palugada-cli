@@ -135,6 +135,10 @@ pub fn run(kn: &Path, repo: &Path, profile: &str, opts: &BriefOptions) -> Result
                 format!("recent commits for '{}'", opts.target),
                 git_recent(repo, &opts.target),
             ),
+            "module.info" => (
+                format!("module info for '{}'", opts.target),
+                indexer::module_report(repo, &opts.target),
+            ),
             other => (
                 other.to_string(),
                 format!("(step '{step}' not yet available in this build)"),
