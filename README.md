@@ -11,7 +11,9 @@ any project:
 - **A knowledge layer** — stack conventions (`q`), task recipes (`for`), and
   keyword search (`s`) read from bundled profiles (android-mvvm starter).
 - **A local code indexer** — `index` scans your repo into
-  `<repo>/.palugada/index/`; `symbol` searches it.
+  `<repo>/.palugada/index/`; `symbol` searches it. Extraction is per
+  fact-family: structural **tree-sitter** queries (Kotlin today) with regex for
+  the long tail.
 - **Budgeted context packs** — `brief <flow>` assembles conventions + recipe +
   indexed facts into a token-budgeted pack for AI-agent work (bugfix, feature,
   refactor, review).
@@ -284,8 +286,8 @@ knowledge/profiles/    bundled stack profiles (android-mvvm starter)
 
 - Wiki tie-in for `prd.context` (a ticket's linked Confluence/Notion spec) — the
   `feature` flow currently packs the issue summary + description only.
-- Richer extractors (tree-sitter where regex is too coarse) and typed fact
-  aliases (`viewmodel` / `service` …) layered over the generic `fact` command.
+- More tree-sitter grammars (Swift, TS, Go, Python) and typed fact aliases
+  (`viewmodel` / `service` …) layered over the generic `fact` command.
 - More providers as demand dictates (GitHub Actions / GitLab CI for `ci`,
   Notion for `wiki`, GitHub Issues / Linear for `issue_tracker`).
 
