@@ -256,6 +256,8 @@ enum ProfileCmd {
     Validate { id: String },
     /// Scaffold a new profile from a minimal template: `profile new <id>`.
     New { id: String },
+    /// Bind the active (or `--project`) project to a profile: `profile use <id>`.
+    Use { id: String },
 }
 
 #[derive(Subcommand)]
@@ -340,7 +342,7 @@ fn run(cli: Cli) -> Result<(), String> {
             cmd_brief(flow, target, budget, json, profile, project, cli.insecure)
         }
         Commands::Project { action } => cmd_project(action),
-        Commands::Profile { action } => cmd_profile(action),
+        Commands::Profile { action } => cmd_profile(action, project),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
@@ -850,7 +852,11 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
             }
             for (name, e) in &global.projects.registered {
                 let marker = if *name == global.projects.active { "*" } else { " " };
-                println!("{marker} {name}  ->  {}", e.repo_path);
+                let prof = config::ProjectConfig::load_from(&e.repo_path)
+                    .map(|c| c.profile)
+                    .unwrap_or_default();
+                let prof = if prof.is_empty() { "—".to_string() } else { prof };
+                println!("{marker} {name}  profile={prof}  ->  {}", e.repo_path);
             }
             println!("\n(* = active)");
             Ok(())
@@ -868,7 +874,7 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
     }
 }
 
-fn cmd_profile(action: ProfileCmd) -> Result<(), String> {
+fn cmd_profile(action: ProfileCmd, project: Option<&str>) -> Result<(), String> {
     let global = GlobalConfig::load_or_default()?;
     let kn = knowledge::knowledge_dir(&global)?;
     match action {
@@ -905,6 +911,26 @@ fn cmd_profile(action: ProfileCmd) -> Result<(), String> {
                 println!("  {}", p.display());
             }
             println!("validate with:  palugada profile validate {id}");
+            Ok(())
+        }
+        ProfileCmd::Use { id } => {
+            let profs = profile::list(&kn)?;
+            if !profs.iter().any(|(pid, _)| pid == &id) {
+                return Err(format!(
+                    "unknown profile '{id}' (available: {})",
+                    profs.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join(", ")
+                ));
+            }
+            let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+            let name = config::resolve_project_name(&global, project, &cwd)?;
+            let entry = global
+                .projects
+                .registered
+                .get(&name)
+                .ok_or_else(|| format!("project '{name}' is not registered"))?;
+            config::set_profile(&entry.repo_path, &id)?;
+            println!("project '{name}' now uses profile '{id}'");
+            println!("knowledge & symbols already follow it; run `palugada index` only if this profile adds new fact families.");
             Ok(())
         }
     }
