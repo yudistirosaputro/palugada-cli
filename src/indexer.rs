@@ -49,6 +49,7 @@ struct Manifest {
     indexed_at: String,
     git_sha: String,
     total: usize,
+    symbols: usize,
     counts: BTreeMap<String, usize>,
 }
 
@@ -423,7 +424,8 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
         return Err(format!("profile '{profile}' declares no extraction families"));
     }
 
-    let mut symbols: Vec<Symbol> = Vec::new();
+    let mut facts: Vec<Symbol> = Vec::new();
+    let mut defs: Vec<SymbolDef> = Vec::new();
 
     for entry in WalkDir::new(repo)
         .into_iter()
@@ -445,7 +447,8 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
 
         let applicable: Vec<&CompiledFamily> =
             families.iter().filter(|f| family_matches(f, &path_str, &ext)).collect();
-        if applicable.is_empty() {
+        let lang = language_for_ext(&ext).filter(|l| tags_query(l).is_some());
+        if applicable.is_empty() && lang.is_none() {
             continue;
         }
 
@@ -459,7 +462,12 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
             .to_string_lossy()
             .to_string();
 
-        extract_file(&text, &rel, &applicable, &mut symbols);
+        if !applicable.is_empty() {
+            extract_file(&text, &rel, &applicable, &mut facts);
+        }
+        if let Some(l) = lang {
+            extract_symbols(&text, &rel, l, &mut defs);
+        }
     }
 
     // Write index artifacts — clear first so stale per-kind files are removed.
@@ -471,21 +479,24 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
     }
     fs::create_dir_all(&out).map_err(|e| format!("create {}: {e}", out.display()))?;
 
-    write_json(&out.join("symbols.json"), &symbols)?;
+    // generic symbol index (all definitions)
+    write_json(&out.join("symbols.json"), &defs)?;
 
+    // curated fact families → per-family files
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for s in &symbols {
+    for s in &facts {
         *counts.entry(s.kind.clone()).or_insert(0) += 1;
     }
     for kind in counts.keys() {
-        let fam: Vec<&Symbol> = symbols.iter().filter(|s| &s.kind == kind).collect();
+        let fam: Vec<&Symbol> = facts.iter().filter(|s| &s.kind == kind).collect();
         write_json(&out.join(format!("{kind}.json")), &fam)?;
     }
 
     let manifest = Manifest {
         indexed_at: chrono::Utc::now().to_rfc3339(),
         git_sha: git_sha(repo),
-        total: symbols.len(),
+        total: facts.len(),
+        symbols: defs.len(),
         counts: counts.clone(),
     };
     write_json(&out.join("manifest.json"), &manifest)?;
@@ -494,7 +505,8 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
     for (k, c) in &counts {
         println!("  {:<12} {}", k, c);
     }
-    println!("  {:<12} {}", "TOTAL", symbols.len());
+    println!("  {:<12} {}", "symbols", defs.len());
+    println!("  {:<12} {}", "FACTS", facts.len());
     Ok(())
 }
 
