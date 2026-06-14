@@ -167,6 +167,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada project use <name>` | set the active project |
 | `palugada project remove <name>` | unregister a project (files on disk untouched) |
 | `palugada profile list/validate/new` | list, lint, or scaffold a stack profile |
+| `palugada profile use <id>` | bind the active (or `--project`) project to a profile (config flip; re-index only for new fact families) |
 | `palugada q <topic>[.N]` | read a convention from the active profile (`-b` outline, `--list`) |
 | `palugada for <task>` | read a recipe from the active profile (`--list`) |
 | `palugada s <kw>` | search conventions + recipes by keyword |
