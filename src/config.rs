@@ -311,6 +311,14 @@ impl ProjectConfig {
     }
 }
 
+/// Set a project's bound profile by editing its `.palugada/config.yaml`.
+/// (Callers validate that the profile id exists.)
+pub fn set_profile(repo_path: &str, profile_id: &str) -> Result<(), String> {
+    let mut pc = ProjectConfig::load_from(repo_path)?;
+    pc.profile = profile_id.to_string();
+    pc.save_to(repo_path)
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Resolution helpers
 // ─────────────────────────────────────────────────────────────────────────
@@ -577,6 +585,15 @@ mod tests {
         // multi-byte secret must not panic (old code sliced bytes)
         let m = mask_secret("ключключключ");
         assert!(m.starts_with("****"), "{m}");
+    }
+
+    #[test]
+    fn set_profile_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().to_string_lossy().to_string();
+        ProjectConfig { profile: "a".into(), ..Default::default() }.save_to(&repo).unwrap();
+        set_profile(&repo, "b").unwrap();
+        assert_eq!(ProjectConfig::load_from(&repo).unwrap().profile, "b");
     }
 
     #[test]
