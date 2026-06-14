@@ -11,9 +11,12 @@ any project:
 - **A knowledge layer** — stack conventions (`q`), task recipes (`for`), and
   keyword search (`s`) read from bundled profiles (android-mvvm starter).
 - **A local code indexer** — `index` scans your repo into
-  `<repo>/.palugada/index/`; `symbol` searches it. Extraction is per
-  fact-family: structural **tree-sitter** queries (Kotlin today) with regex for
-  the long tail.
+  `<repo>/.palugada/index/`. It builds a **generic symbol index** of every
+  definition (class, object, function, method, property — with kind, enclosing
+  scope, and signature) via a per-language tree-sitter tags query (Kotlin today),
+  so `symbol` finds functions, not just types. Curated **fact families**
+  (viewmodel/route/…) are extracted alongside via tree-sitter/regex for the
+  knowledge layer.
 - **Budgeted context packs** — `brief <flow>` assembles conventions + recipe +
   indexed facts into a token-budgeted pack for AI-agent work (bugfix, feature,
   refactor, review).
@@ -168,7 +171,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada for <task>` | read a recipe from the active profile (`--list`) |
 | `palugada s <kw>` | search conventions + recipes by keyword |
 | `palugada index` | scan the project's code → `<repo>/.palugada/index/` (local, per-dev) |
-| `palugada symbol <query>` | search indexed symbols by name |
+| `palugada symbol <query> [--kind K]` | search indexed definitions (class/function/method/…) by name; `--kind` filters |
 | `palugada fact <family> [name]` | look up indexed facts of a profile-declared family (e.g. `fact viewmodel Login`) |
 | `palugada brief <flow> [target]` | one budgeted context pack for a flow (`--budget`, `--json`) |
 | `palugada issue view <KEY>` | fetch an issue (Jira) |
