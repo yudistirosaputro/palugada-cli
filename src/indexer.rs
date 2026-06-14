@@ -135,6 +135,24 @@ fn language_for(name: &str) -> Result<tree_sitter::Language, String> {
     }
 }
 
+const KOTLIN_TAGS: &str = include_str!("tags/kotlin.scm");
+
+/// Map a file extension to a language that has a generic tags query.
+pub fn language_for_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        "kt" | "kts" => Some("kotlin"),
+        _ => None,
+    }
+}
+
+/// The embedded tree-sitter tags query for a language, if any.
+pub fn tags_query(lang: &str) -> Option<&'static str> {
+    match lang {
+        "kotlin" => Some(KOTLIN_TAGS),
+        _ => None,
+    }
+}
+
 /// Emit symbols from one file: regex families inline, tree-sitter families
 /// against a tree parsed once per distinct language present in `applicable`.
 fn extract_file(text: &str, rel: &str, applicable: &[&CompiledFamily], symbols: &mut Vec<Symbol>) {
@@ -496,6 +514,16 @@ mod tests {
         let q = tree_sitter::Query::new(&lang, r#"(class_declaration name: (identifier) @name)"#).unwrap();
         assert!(q.capture_index_for_name("name").is_some());
         assert!(language_for("klingon").unwrap_err().contains("klingon"));
+    }
+
+    #[test]
+    fn tags_registry_resolves_kotlin() {
+        assert_eq!(language_for_ext("kt"), Some("kotlin"));
+        assert_eq!(language_for_ext("kts"), Some("kotlin"));
+        assert_eq!(language_for_ext("txt"), None);
+        let q = tags_query("kotlin").unwrap();
+        let lang = language_for("kotlin").unwrap();
+        assert!(tree_sitter::Query::new(&lang, q).is_ok(), "kotlin.scm must compile");
     }
 
     #[test]
