@@ -204,6 +204,154 @@ pub fn recipe_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
+// ── writers (author conventions/recipes from the web console) ──────────────
+
+#[derive(serde::Deserialize)]
+pub struct SectionSpec {
+    pub title: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub code: bool,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ConventionSpec {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub sections: Vec<SectionSpec>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RecipeSpec {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub body: String,
+}
+
+/// Kebab-case a heading: lowercase, runs of non-alphanumeric → single '-', trimmed.
+pub fn slug(title: &str) -> String {
+    let mut out = String::new();
+    let mut dash = false;
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            dash = false;
+        } else if !out.is_empty() && !dash {
+            out.push('-');
+            dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn validate_doc_id(id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    {
+        return Err(format!("invalid id '{id}' — use only [a-z0-9_-]"));
+    }
+    Ok(())
+}
+
+/// Quote a YAML scalar if it could be misparsed (Rust debug = double-quoted).
+fn yaml_scalar(s: &str) -> String {
+    if s.is_empty() || s.contains(['"', ':', '#', '\n']) || s.starts_with(' ') || s.ends_with(' ') {
+        format!("{s:?}")
+    } else {
+        s.to_string()
+    }
+}
+
+/// Insert-or-replace an object (matched by `id`) in a JSON index file's array.
+fn upsert_index(path: &Path, array_key: &str, id: &str, entry: serde_json::Value) -> Result<(), String> {
+    let mut root: serde_json::Value = if path.exists() {
+        serde_json::from_str(&fs::read_to_string(path).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("parse {}: {e}", path.display()))?
+    } else {
+        serde_json::json!({ "schema_version": "1.0", array_key: [] })
+    };
+    let arr = root
+        .get_mut(array_key)
+        .and_then(|v| v.as_array_mut())
+        .ok_or_else(|| format!("{} has no '{array_key}' array", path.display()))?;
+    arr.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(id));
+    arr.push(entry);
+    let out = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    fs::write(path, out + "\n").map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+/// Author a convention: write `<id>.md` (front-matter + `## Title {#slug}`
+/// sections) and upsert it into `conventions/_index.json`.
+pub fn add_convention(kn: &Path, profile: &str, spec: &ConventionSpec) -> Result<(), String> {
+    validate_doc_id(&spec.id)?;
+    let dir = kn.join("profiles").join(profile).join("conventions");
+    fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+
+    let mut fm = format!(
+        "---\nid: {}\ntitle: {}\ndescription: {}\nsections:\n",
+        spec.id,
+        yaml_scalar(&spec.title),
+        yaml_scalar(&spec.description)
+    );
+    let mut body = format!("# {}\n", spec.title);
+    let mut sec_meta: Vec<serde_json::Value> = Vec::new();
+    for s in &spec.sections {
+        let sid = slug(&s.title);
+        let tokens = s.body.len() / 4 + 8;
+        fm.push_str(&format!(
+            "  - {{ id: {}, title: {}, tokens: {}, code: {} }}\n",
+            sid,
+            yaml_scalar(&s.title),
+            tokens,
+            s.code
+        ));
+        body.push_str(&format!("\n## {} {{#{}}}\n{}\n", s.title, sid, s.body.trim()));
+        sec_meta.push(serde_json::json!({ "id": sid, "title": s.title, "tokens": tokens }));
+    }
+    fm.push_str(&format!("tags: [{}]\n---\n\n", spec.tags.join(", ")));
+    fs::write(dir.join(format!("{}.md", spec.id)), format!("{fm}{body}"))
+        .map_err(|e| format!("write convention: {e}"))?;
+
+    let entry = serde_json::json!({
+        "id": spec.id, "title": spec.title, "file": format!("{}.md", spec.id),
+        "description": spec.description, "tags": spec.tags, "sections": sec_meta,
+    });
+    upsert_index(&dir.join("_index.json"), "topics", &spec.id, entry)
+}
+
+/// Author a recipe: write `<id>.md` and upsert it into `recipes/_index.json`.
+pub fn add_recipe(kn: &Path, profile: &str, spec: &RecipeSpec) -> Result<(), String> {
+    validate_doc_id(&spec.id)?;
+    let dir = kn.join("profiles").join(profile).join("recipes");
+    fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let md = format!(
+        "---\nid: {}\ntitle: {}\ndescription: {}\ntags: [{}]\n---\n\n# {}\n\n{}\n",
+        spec.id,
+        yaml_scalar(&spec.title),
+        yaml_scalar(&spec.description),
+        spec.tags.join(", "),
+        spec.title,
+        spec.body.trim()
+    );
+    fs::write(dir.join(format!("{}.md", spec.id)), md).map_err(|e| format!("write recipe: {e}"))?;
+    let entry = serde_json::json!({
+        "id": spec.id, "title": spec.title, "description": spec.description,
+        "file": format!("{}.md", spec.id), "tags": spec.tags,
+    });
+    upsert_index(&dir.join("_index.json"), "recipes", &spec.id, entry)
+}
+
 // ── q: conventions ──────────────────────────────────────────────────────
 
 pub fn list_topics(kn: &Path, profile: &str) -> Result<(), String> {
@@ -445,6 +593,41 @@ fn sections(body: &str) -> Vec<Section> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slug_kebabs_titles() {
+        assert_eq!(slug("Errors in Coroutines"), "errors-in-coroutines");
+        assert_eq!(slug("Sealed UiState!"), "sealed-uistate");
+    }
+
+    #[test]
+    fn add_convention_writes_md_and_index() {
+        let kn = tempfile::tempdir().unwrap();
+        let c = kn.path().join("profiles").join("p").join("conventions");
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::write(c.join("_index.json"), r#"{"schema_version":"1.0","topics":[]}"#).unwrap();
+        let spec = ConventionSpec {
+            id: "errorhandling".into(),
+            title: "Error Handling".into(),
+            description: "Handle failures.".into(),
+            tags: vec!["error".into()],
+            sections: vec![SectionSpec {
+                title: "Modeling Failures".into(),
+                body: "Model errors explicitly.".into(),
+                code: false,
+            }],
+        };
+        add_convention(kn.path(), "p", &spec).unwrap();
+        let md = convention_md(kn.path(), "p", "errorhandling").unwrap();
+        assert!(md.contains("## Modeling Failures {#modeling-failures}"), "{md}");
+        assert!(md.contains("id: errorhandling"));
+        let topics = conventions(kn.path(), "p").unwrap();
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0].sections, vec!["Modeling Failures".to_string()]);
+        // re-adding the same id replaces, not duplicates
+        add_convention(kn.path(), "p", &spec).unwrap();
+        assert_eq!(conventions(kn.path(), "p").unwrap().len(), 1);
+    }
 
     #[test]
     fn conventions_accessor_reads_index() {
