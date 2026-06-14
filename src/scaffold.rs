@@ -26,7 +26,22 @@ const FLOWS: &[(&str, &str, &str, &str)] = &[
     ("review", "Review a diff or pull/merge request.", "review a diff", "Review"),
 ];
 
-pub fn run(opts: InitOptions) -> Result<(), String> {
+/// Result of generating a project's scaffold (files + registry), reusable by
+/// both `cmd_init` (CLI) and the web console's `/api/init`.
+pub struct GenerateOutcome {
+    pub name: String,
+    pub profile: String,
+    pub auth: String,
+    pub agents: Vec<String>,
+    pub written: Vec<String>,
+    pub skipped: Vec<String>,
+    pub became_active: bool,
+    pub config_path: String,
+}
+
+/// Generate a project's config skeleton + agent files + registry entry. No
+/// printing — the caller reports. This is the reusable core of `init`.
+pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
     let repo = fs::canonicalize(expand_home(&opts.repo))
         .map_err(|e| format!("repo path not found ({}): {e}", opts.repo))?;
     if !repo.is_dir() {
@@ -97,22 +112,38 @@ pub fn run(opts: InitOptions) -> Result<(), String> {
     }
     global.save()?;
 
-    // 4. summary
-    println!("palugada init — project '{name}' (profile: {profile}, auth: {auth}, agents: {})", agents.join(","));
-    for w in &written {
+    Ok(GenerateOutcome {
+        name,
+        profile,
+        auth,
+        agents,
+        written,
+        skipped,
+        became_active,
+        config_path: cfg.display().to_string(),
+    })
+}
+
+pub fn run(opts: InitOptions) -> Result<(), String> {
+    let out = generate(&opts)?;
+    println!(
+        "palugada init — project '{}' (profile: {}, auth: {}, agents: {})",
+        out.name, out.profile, out.auth, out.agents.join(",")
+    );
+    for w in &out.written {
         println!("  wrote    {w}");
     }
-    for s in &skipped {
+    for s in &out.skipped {
         println!("  skipped  {s}  (exists — use --force to overwrite)");
     }
     println!(
         "  registered in {}{}",
         GlobalConfig::default_path().display(),
-        if became_active { " (now active)" } else { "" }
+        if out.became_active { " (now active)" } else { "" }
     );
     println!("\nDone — 0 network calls. Next:");
-    println!("  1. fill the integration base URLs in {}", cfg.display());
-    println!("  2. add tokens to ~/.palugada/secrets.yaml under auth-profile '{auth}'");
+    println!("  1. fill the integration base URLs in {}", out.config_path);
+    println!("  2. add tokens to ~/.palugada/secrets.yaml under auth-profile '{}'", out.auth);
     println!("  3. run `palugada config verify`");
     Ok(())
 }
