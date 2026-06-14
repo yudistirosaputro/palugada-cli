@@ -113,8 +113,8 @@ fn handle(mut request: tiny_http::Request) {
     }
 }
 
-/// JSON API dispatch. Read handlers here; write handlers added next.
-fn api(route: Route, _body: &str) -> (u16, String) {
+/// JSON API dispatch — read and write handlers.
+fn api(route: Route, body: &str) -> (u16, String) {
     match route {
         Route::Overview => read(overview_json),
         Route::Projects => read(projects_json),
@@ -128,6 +128,22 @@ fn api(route: Route, _body: &str) -> (u16, String) {
             let kn = knowledge_dir()?;
             Ok(json!({ "markdown": crate::knowledge::recipe_md(&kn, &id, &rid)? }))
         }),
+        Route::CreateProfile => write_op(|| create_profile(body)),
+        Route::AddConvention(id) => write_op(|| {
+            let kn = knowledge_dir()?;
+            let spec: crate::knowledge::ConventionSpec =
+                serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            crate::knowledge::add_convention(&kn, &id, &spec)?;
+            Ok(json!({ "ok": true, "id": spec.id }))
+        }),
+        Route::AddRecipe(id) => write_op(|| {
+            let kn = knowledge_dir()?;
+            let spec: crate::knowledge::RecipeSpec =
+                serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            crate::knowledge::add_recipe(&kn, &id, &spec)?;
+            Ok(json!({ "ok": true, "id": spec.id }))
+        }),
+        Route::Init => write_op(|| init_op(body)),
         _ => (501, err_json("not implemented yet")),
     }
 }
@@ -137,6 +153,71 @@ fn read<F: FnOnce() -> Result<serde_json::Value, String>>(f: F) -> (u16, String)
         Ok(v) => (200, v.to_string()),
         Err(e) => (500, err_json(&e)),
     }
+}
+
+/// Like `read` but maps errors to 400 (client/data error) for write endpoints.
+fn write_op<F: FnOnce() -> Result<serde_json::Value, String>>(f: F) -> (u16, String) {
+    match f() {
+        Ok(v) => (200, v.to_string()),
+        Err(e) => (400, err_json(&e)),
+    }
+}
+
+fn create_profile(body: &str) -> Result<serde_json::Value, String> {
+    #[derive(serde::Deserialize)]
+    struct NewProfile {
+        id: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        languages: Vec<String>,
+    }
+    let np: NewProfile = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let kn = knowledge_dir()?;
+    crate::profile::scaffold_new(&kn, &np.id)?;
+    // Apply the chosen title / languages over the scaffold's defaults.
+    if !np.title.is_empty() || !np.languages.is_empty() {
+        let pf = kn.join("profiles").join(&np.id).join("profile.yaml");
+        let mut raw = std::fs::read_to_string(&pf).map_err(|e| e.to_string())?;
+        if !np.title.is_empty() {
+            raw = raw.replace(
+                &format!("title: \"{} profile\"", np.id),
+                &format!("title: \"{}\"", np.title.replace('"', "'")),
+            );
+        }
+        if !np.languages.is_empty() {
+            raw = raw.replace("languages: []", &format!("languages: [{}]", np.languages.join(", ")));
+        }
+        std::fs::write(&pf, raw).map_err(|e| e.to_string())?;
+    }
+    Ok(json!({ "ok": true, "id": np.id }))
+}
+
+fn init_op(body: &str) -> Result<serde_json::Value, String> {
+    #[derive(serde::Deserialize)]
+    struct InitReq {
+        repo: String,
+        #[serde(default)]
+        agents: Vec<String>,
+        #[serde(default)]
+        profile: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+    }
+    let req: InitReq = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let opts = crate::scaffold::InitOptions {
+        repo: req.repo,
+        name: req.name,
+        profile: req.profile,
+        auth: None,
+        agents: req.agents,
+        force: false,
+    };
+    let out = crate::scaffold::generate(&opts)?;
+    Ok(json!({
+        "ok": true, "name": out.name, "profile": out.profile,
+        "written": out.written, "skipped": out.skipped,
+    }))
 }
 
 /// Serialize a value to `serde_json::Value` (null on failure — handlers control errors).
