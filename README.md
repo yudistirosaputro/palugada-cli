@@ -181,6 +181,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada prd fetch/list/cat/search` | personal corpus of fetched tickets in `~/.palugada/personal/` |
 | `palugada exec <verb> [k=v…]` | run a profile/project-declared shell verb (`--list`, `--json`) |
 | `palugada doctor` | check tool + connector readiness (`--json`); non-zero exit on failure |
+| `palugada web [--open]` | local authoring console (browse + create profiles/knowledge, generate agent skills) |
 
 Global flags: `--project <name>` (override active), `--insecure` (accept
 self-signed TLS for corporate hosts), `--version`. Every invocation needs a home
@@ -237,6 +238,23 @@ check fails; `--json` emits `{ok, checks[]}`.
 palugada doctor
 palugada doctor --json
 ```
+
+## Web console (`palugada web`)
+
+An **optional** local authoring console for humans. It does not change how agents
+consume palugada (that stays the cold CLI) — it's a browser GUI over the same
+config/profile/knowledge files, so you can author without hand-editing YAML/markdown.
+
+```bash
+palugada web --open        # serves http://127.0.0.1:7777 and opens your browser
+```
+
+From the console you can browse the config, projects, profiles, and knowledge;
+**create a profile** (any stack, not just Android); **author conventions/recipes**
+split into token-cheap sections; and **generate agent skill files** into a project
+(the same files `palugada init` writes). Everything writes the files the CLI reads
+— no database. The server binds to loopback only, accepts only `localhost` Hosts,
+and never reads or writes your secrets.
 
 ## `~/.palugada/secrets.yaml` (example — never commit)
 
