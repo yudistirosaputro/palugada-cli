@@ -29,6 +29,7 @@ pub enum Route {
     CreateProfile,
     AddConvention(String),
     AddRecipe(String),
+    SetProjectProfile(String),
     Init,
     NotFound,
 }
@@ -53,6 +54,7 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", ["api", "profile"]) => Route::CreateProfile,
         ("POST", ["api", "profile", id, "convention"]) => Route::AddConvention((*id).to_string()),
         ("POST", ["api", "profile", id, "recipe"]) => Route::AddRecipe((*id).to_string()),
+        ("POST", ["api", "project", name, "profile"]) => Route::SetProjectProfile((*name).to_string()),
         ("POST", ["api", "init"]) => Route::Init,
         _ => Route::NotFound,
     }
@@ -143,6 +145,7 @@ fn api(route: Route, body: &str) -> (u16, String) {
             crate::knowledge::add_recipe(&kn, &id, &spec)?;
             Ok(json!({ "ok": true, "id": spec.id }))
         }),
+        Route::SetProjectProfile(name) => write_op(|| set_project_profile(&name, body)),
         Route::Init => write_op(|| init_op(body)),
         _ => (501, err_json("not implemented yet")),
     }
@@ -191,6 +194,31 @@ fn create_profile(body: &str) -> Result<serde_json::Value, String> {
         std::fs::write(&pf, raw).map_err(|e| e.to_string())?;
     }
     Ok(json!({ "ok": true, "id": np.id }))
+}
+
+fn set_project_profile(name: &str, body: &str) -> Result<serde_json::Value, String> {
+    #[derive(serde::Deserialize)]
+    struct Req {
+        profile: String,
+    }
+    let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let global = crate::config::GlobalConfig::load_or_default()?;
+    let kn = crate::knowledge::knowledge_dir(&global)?;
+    let profs = crate::profile::list(&kn)?;
+    if !profs.iter().any(|(p, _)| *p == req.profile) {
+        return Err(format!(
+            "unknown profile '{}' (available: {})",
+            req.profile,
+            profs.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    let entry = global
+        .projects
+        .registered
+        .get(name)
+        .ok_or_else(|| format!("project '{name}' is not registered"))?;
+    crate::config::set_profile(&entry.repo_path, &req.profile)?;
+    Ok(json!({ "ok": true, "name": name, "profile": req.profile }))
 }
 
 fn init_op(body: &str) -> Result<serde_json::Value, String> {
@@ -245,7 +273,12 @@ fn projects_json() -> Result<serde_json::Value, String> {
         .projects
         .registered
         .iter()
-        .map(|(name, e)| json!({ "name": name, "repo_path": e.repo_path, "active": *name == active }))
+        .map(|(name, e)| {
+            let profile = crate::config::ProjectConfig::load_from(&e.repo_path)
+                .map(|c| c.profile)
+                .unwrap_or_default();
+            json!({ "name": name, "repo_path": e.repo_path, "active": *name == active, "profile": profile })
+        })
         .collect();
     Ok(json!({ "active": active, "projects": list }))
 }
@@ -348,6 +381,7 @@ mod tests {
         assert_eq!(route("POST", "/api/profile"), Route::CreateProfile);
         assert_eq!(route("POST", "/api/profile/p/convention"), Route::AddConvention("p".into()));
         assert_eq!(route("POST", "/api/init"), Route::Init);
+        assert_eq!(route("POST", "/api/project/x/profile"), Route::SetProjectProfile("x".into()));
         assert_eq!(route("GET", "/nope"), Route::NotFound);
     }
 
