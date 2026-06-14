@@ -109,6 +109,12 @@ enum Commands {
     /// Search indexed project symbols by name: `symbol <query>`.
     Symbol {
         query: String,
+        /// Filter by kind (class, object, function, method, property).
+        #[arg(long)]
+        kind: Option<String>,
+        /// Repo to search (default: active project's repo, else current dir).
+        #[arg(long)]
+        repo: Option<String>,
     },
     /// Look up indexed facts of a profile-declared family: `fact <family> [name]`.
     Fact {
@@ -328,7 +334,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::ForTask { task, list, profile } => cmd_for(task, list, profile, project),
         Commands::Search { query, profile } => cmd_search(query, profile, project),
         Commands::Index { repo, profile } => cmd_index(repo, profile, project),
-        Commands::Symbol { query } => cmd_symbol(query, project),
+        Commands::Symbol { query, kind, repo } => cmd_symbol(query, kind, repo, project),
         Commands::Fact { family, name, profile } => cmd_fact(family, name, profile, project),
         Commands::Brief { flow, target, budget, json, profile } => {
             cmd_brief(flow, target, budget, json, profile, project, cli.insecure)
@@ -458,11 +464,16 @@ fn cmd_index(repo: Option<String>, profile: Option<String>, project: Option<&str
     indexer::run(&repo_path, &kn, &prof)
 }
 
-fn cmd_symbol(query: String, project: Option<&str>) -> Result<(), String> {
+fn cmd_symbol(
+    query: String,
+    kind: Option<String>,
+    repo: Option<String>,
+    project: Option<&str>,
+) -> Result<(), String> {
     let global = GlobalConfig::load_or_default()?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
-    let repo_path = config::resolve_repo(&global, project, None, &cwd)?;
-    indexer::symbol_search(&repo_path, &query)
+    let repo_path = config::resolve_repo(&global, project, repo, &cwd)?;
+    indexer::symbol_search(&repo_path, &query, kind.as_deref())
 }
 
 fn cmd_fact(

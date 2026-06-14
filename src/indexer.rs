@@ -507,34 +507,43 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Search the project's indexed symbols by name (case-insensitive substring).
-pub fn symbol_search(repo: &Path, query: &str) -> Result<(), String> {
-    println!("{}", symbol_report(repo, query)?.trim_end());
+/// Search the generic symbol index by name (case-insensitive substring),
+/// optionally filtered by kind.
+pub fn symbol_search(repo: &Path, query: &str, kind: Option<&str>) -> Result<(), String> {
+    println!("{}", symbol_report(repo, query, kind)?.trim_end());
     Ok(())
 }
 
 /// Like `symbol_search` but returns the formatted result as a string (for
 /// `brief`). A missing index degrades to a note rather than an error.
-pub fn symbol_report(repo: &Path, query: &str) -> Result<String, String> {
+pub fn symbol_report(repo: &Path, query: &str, kind: Option<&str>) -> Result<String, String> {
     let p = repo.join(".palugada").join("index").join("symbols.json");
     let data = match fs::read_to_string(&p) {
         Ok(d) => d,
         Err(_) => return Ok(format!("(no index at {} — run `palugada index`)", p.display())),
     };
-    let symbols: Vec<Symbol> =
+    let symbols: Vec<SymbolDef> =
         serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))?;
 
     let needle = query.to_lowercase();
     let mut out = String::new();
     let mut hits = 0;
     for s in &symbols {
-        if query.is_empty() || s.name.to_lowercase().contains(&needle) {
-            out.push_str(&format!("{:<12} {:<32} {}:{}\n", s.kind, s.name, s.file, s.line));
-            hits += 1;
-            if hits >= 30 {
-                out.push_str("… (more matches; narrow the query)\n");
-                break;
+        if let Some(k) = kind {
+            if s.kind != k {
+                continue;
             }
+        }
+        if !query.is_empty() && !s.name.to_lowercase().contains(&needle) {
+            continue;
+        }
+        let sig = if s.signature.is_empty() { s.name.clone() } else { s.signature.clone() };
+        let scope = if s.scope.is_empty() { String::new() } else { format!("{}  ·  ", s.scope) };
+        out.push_str(&format!("{:<9} {}  ·  {}{}:{}\n", s.kind, sig, scope, s.file, s.line));
+        hits += 1;
+        if hits >= 40 {
+            out.push_str("… (more matches; narrow the query or use --kind)\n");
+            break;
         }
     }
     if hits == 0 {
@@ -564,11 +573,11 @@ pub fn module_report(repo: &Path, target: &str) -> String {
         Ok(d) => d,
         Err(_) => return format!("(no index at {} — run `palugada index`)", p.display()),
     };
-    let symbols: Vec<Symbol> = match serde_json::from_str(&data) {
+    let symbols: Vec<SymbolDef> = match serde_json::from_str(&data) {
         Ok(s) => s,
         Err(e) => return format!("(parse {}: {e})", p.display()),
     };
-    let in_module: Vec<&Symbol> = symbols
+    let in_module: Vec<&SymbolDef> = symbols
         .iter()
         .filter(|s| s.file == prefix || s.file.starts_with(&format!("{prefix}/")))
         .collect();

@@ -257,7 +257,7 @@ pub fn run(
             ),
             "symbol.find" => (
                 format!("symbols matching '{}'", opts.target),
-                indexer::symbol_report(repo, &opts.target).unwrap_or_else(|e| format!("({e})")),
+                indexer::symbol_report(repo, &opts.target, None).unwrap_or_else(|e| format!("({e})")),
             ),
             "code.recent" => (
                 format!("recent commits for '{}'", opts.target),
