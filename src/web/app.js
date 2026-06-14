@@ -73,14 +73,29 @@ async function renderOverview() {
 
 async function renderProjects() {
   view.innerHTML = "<h2>Projects</h2>";
+  let d, profs;
   try {
-    const d = await api("/api/projects");
-    if (!d.projects.length) {
-      view.appendChild(h(`<p class="muted">No registered projects yet. Use <code>palugada init</code> or the Generate panel under a profile.</p>`));
-    }
-    d.projects.forEach(p => view.appendChild(h(
-      `<div class="card"><strong>${esc(p.name)}</strong>${p.active ? ' <span class="pill">active</span>' : ""}<div class="muted">${esc(p.repo_path)}</div></div>`)));
-  } catch (e) { toast(e.message, true); }
+    d = await api("/api/projects");
+    profs = (await api("/api/profiles")).profiles;
+  } catch (e) { toast(e.message, true); return; }
+  if (!d.projects.length) {
+    view.appendChild(h(`<p class="muted">No registered projects yet. Use <code>palugada init</code> or the Generate panel under a profile.</p>`));
+  }
+  d.projects.forEach(p => {
+    const opts = profs.map(pr =>
+      `<option value="${esc(pr.id)}"${pr.id === p.profile ? " selected" : ""}>${esc(pr.id)}</option>`).join("");
+    const card = h(`<div class="card"><strong>${esc(p.name)}</strong>${p.active ? ' <span class="pill">active</span>' : ""}
+      <div class="muted">${esc(p.repo_path)}</div>
+      <div class="row" style="margin-top:6px"><label style="margin:0">profile</label>
+        <select class="proj-profile" style="max-width:240px">${opts}</select></div></div>`);
+    card.querySelector(".proj-profile").onchange = async (e) => {
+      try {
+        await api(`/api/project/${encodeURIComponent(p.name)}/profile`, "POST", { profile: e.target.value });
+        toast(`${p.name} → ${e.target.value}`);
+      } catch (err) { toast(err.message, true); }
+    };
+    view.appendChild(card);
+  });
 }
 
 async function renderProfiles() {
