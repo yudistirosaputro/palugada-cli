@@ -149,6 +149,61 @@ fn read_recipe_index(kn: &Path, profile: &str) -> Result<RecipeIndex, String> {
     serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))
 }
 
+// ── data accessors (typed; for the web console / programmatic use) ──────────
+
+#[derive(serde::Serialize)]
+pub struct TopicMeta {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub tags: Vec<String>,
+    pub sections: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct RecipeMeta {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub tags: Vec<String>,
+}
+
+/// The profile's conventions as data (id/title/description/tags + section titles).
+pub fn conventions(kn: &Path, profile: &str) -> Result<Vec<TopicMeta>, String> {
+    Ok(read_conv_index(kn, profile)?
+        .topics
+        .into_iter()
+        .map(|t| TopicMeta {
+            id: t.id,
+            title: t.title,
+            description: t.description,
+            tags: t.tags,
+            sections: t.sections.into_iter().map(|s| s.title).collect(),
+        })
+        .collect())
+}
+
+/// The profile's recipes as data.
+pub fn recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
+    Ok(read_recipe_index(kn, profile)?
+        .recipes
+        .into_iter()
+        .map(|r| RecipeMeta { id: r.id, title: r.title, description: r.description, tags: r.tags })
+        .collect())
+}
+
+/// Raw markdown of one convention file.
+pub fn convention_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
+    let p = kn.join("profiles").join(profile).join("conventions").join(format!("{id}.md"));
+    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
+}
+
+/// Raw markdown of one recipe file.
+pub fn recipe_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
+    let p = kn.join("profiles").join(profile).join("recipes").join(format!("{id}.md"));
+    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
+}
+
 // ── q: conventions ──────────────────────────────────────────────────────
 
 pub fn list_topics(kn: &Path, profile: &str) -> Result<(), String> {
@@ -390,6 +445,19 @@ fn sections(body: &str) -> Vec<Section> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conventions_accessor_reads_index() {
+        let kn = tempfile::tempdir().unwrap();
+        let c = kn.path().join("profiles").join("p").join("conventions");
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::write(c.join("_index.json"),
+            r#"{"topics":[{"id":"arch","title":"Arch","description":"d","tags":["x"],"sections":[{"id":"o","title":"Overview"}]}]}"#).unwrap();
+        let v = conventions(kn.path(), "p").unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].id, "arch");
+        assert_eq!(v[0].sections, vec!["Overview".to_string()]);
+    }
 
     #[test]
     fn sections_ignores_headers_inside_code_fences() {
