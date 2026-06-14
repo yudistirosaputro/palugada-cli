@@ -202,6 +202,9 @@ fn set_project_profile(name: &str, body: &str) -> Result<serde_json::Value, Stri
         profile: String,
     }
     let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+    // The project name arrives URL-encoded in the path (project names may contain
+    // spaces etc.); decode before matching the registry's plain keys.
+    let name = crate::http::decode_segment(name);
     let global = crate::config::GlobalConfig::load_or_default()?;
     let kn = crate::knowledge::knowledge_dir(&global)?;
     let profs = crate::profile::list(&kn)?;
@@ -215,7 +218,7 @@ fn set_project_profile(name: &str, body: &str) -> Result<serde_json::Value, Stri
     let entry = global
         .projects
         .registered
-        .get(name)
+        .get(&name)
         .ok_or_else(|| format!("project '{name}' is not registered"))?;
     crate::config::set_profile(&entry.repo_path, &req.profile)?;
     Ok(json!({ "ok": true, "name": name, "profile": req.profile }))

@@ -92,7 +92,10 @@ async function renderProjects() {
       try {
         await api(`/api/project/${encodeURIComponent(p.name)}/profile`, "POST", { profile: e.target.value });
         toast(`${p.name} → ${e.target.value}`);
-      } catch (err) { toast(err.message, true); }
+      } catch (err) {
+        toast(err.message, true);
+        renderProjects(); // revert the dropdown to the actual bound profile
+      }
     };
     view.appendChild(card);
   });

@@ -92,6 +92,36 @@ fn describe_ureq(method: &str, url: &str, e: ureq::Error) -> String {
     }
 }
 
+/// Percent-decode a URL path segment (inverse of `encode_segment`). Invalid
+/// `%XX` sequences are left as-is. `+` is kept literal (it means space only in
+/// query strings, not path segments).
+pub fn decode_segment(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Percent-encode a single URL path segment (RFC 3986 unreserved kept).
 pub fn encode_segment(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -115,6 +145,17 @@ mod tests {
         assert_eq!(encode_segment("PROJ-123"), "PROJ-123");
         assert_eq!(encode_segment("a b/c?d"), "a%20b%2Fc%3Fd");
         assert_eq!(encode_segment("naïve"), "na%C3%AFve");
+    }
+
+    #[test]
+    fn decode_segment_inverts_encode() {
+        for s in ["PROJ-123", "my project", "a b/c?d", "naïve", "a&b=c"] {
+            assert_eq!(decode_segment(&encode_segment(s)), s, "round-trip failed for {s:?}");
+        }
+        assert_eq!(decode_segment("my%20project"), "my project");
+        // malformed sequences are left as-is
+        assert_eq!(decode_segment("100%done"), "100%done");
+        assert_eq!(decode_segment("ends%2"), "ends%2");
     }
 }
 
