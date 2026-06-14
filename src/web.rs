@@ -6,7 +6,7 @@
 //! no secrets exposed. The agent-consumption path stays the cold CLI; this runs
 //! only while a human is editing.
 
-use std::io::Read;
+use serde_json::json;
 use std::path::PathBuf;
 
 const INDEX_HTML: &str = include_str!("web/index.html");
@@ -113,11 +113,93 @@ fn handle(mut request: tiny_http::Request) {
     }
 }
 
-/// JSON API dispatch. Read handlers land in the next step; for now everything is
-/// not-yet-implemented. (Keeps the HTTP wiring testable in isolation.)
+/// JSON API dispatch. Read handlers here; write handlers added next.
 fn api(route: Route, _body: &str) -> (u16, String) {
-    let _ = route;
-    (501, err_json("not implemented yet"))
+    match route {
+        Route::Overview => read(overview_json),
+        Route::Projects => read(projects_json),
+        Route::Profiles => read(profiles_json),
+        Route::Profile(id) => read(|| profile_json(&id)),
+        Route::Convention(id, cid) => read(|| {
+            let kn = knowledge_dir()?;
+            Ok(json!({ "markdown": crate::knowledge::convention_md(&kn, &id, &cid)? }))
+        }),
+        Route::Recipe(id, rid) => read(|| {
+            let kn = knowledge_dir()?;
+            Ok(json!({ "markdown": crate::knowledge::recipe_md(&kn, &id, &rid)? }))
+        }),
+        _ => (501, err_json("not implemented yet")),
+    }
+}
+
+fn read<F: FnOnce() -> Result<serde_json::Value, String>>(f: F) -> (u16, String) {
+    match f() {
+        Ok(v) => (200, v.to_string()),
+        Err(e) => (500, err_json(&e)),
+    }
+}
+
+/// Serialize a value to `serde_json::Value` (null on failure — handlers control errors).
+fn jv<T: serde::Serialize>(t: &T) -> serde_json::Value {
+    serde_json::to_value(t).unwrap_or(serde_json::Value::Null)
+}
+
+fn overview_json() -> Result<serde_json::Value, String> {
+    let global = crate::config::GlobalConfig::load_or_default()?;
+    let kn = crate::knowledge::knowledge_dir(&global)?;
+    let profs = crate::profile::list(&kn)?;
+    Ok(json!({
+        "knowledge_dir": kn.display().to_string(),
+        "active_project": global.projects.active,
+        "default_profile": global.defaults.profile,
+        "profile_count": profs.len(),
+        "project_count": global.projects.registered.len(),
+    }))
+}
+
+fn projects_json() -> Result<serde_json::Value, String> {
+    let global = crate::config::GlobalConfig::load_or_default()?;
+    let active = global.projects.active.clone();
+    let list: Vec<serde_json::Value> = global
+        .projects
+        .registered
+        .iter()
+        .map(|(name, e)| json!({ "name": name, "repo_path": e.repo_path, "active": *name == active }))
+        .collect();
+    Ok(json!({ "active": active, "projects": list }))
+}
+
+fn profiles_json() -> Result<serde_json::Value, String> {
+    let kn = knowledge_dir()?;
+    let list: Vec<serde_json::Value> = crate::profile::list(&kn)?
+        .into_iter()
+        .map(|(id, title)| json!({ "id": id, "title": title }))
+        .collect();
+    Ok(json!({ "profiles": list }))
+}
+
+fn profile_json(id: &str) -> Result<serde_json::Value, String> {
+    let kn = knowledge_dir()?;
+    Ok(json!({
+        "id": id,
+        "conventions": jv(&crate::knowledge::conventions(&kn, id)?),
+        "recipes": jv(&crate::knowledge::recipes(&kn, id)?),
+        "fact_families": crate::indexer::fact_families(&kn, id).unwrap_or_default(),
+        "flows": jv(&flows(&kn, id).unwrap_or_default()),
+    }))
+}
+
+/// The profile's flow → step-list map, read from `profile.yaml`.
+fn flows(kn: &std::path::Path, profile: &str) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
+    #[derive(serde::Deserialize, Default)]
+    struct F {
+        #[serde(default)]
+        flows: std::collections::BTreeMap<String, Vec<String>>,
+    }
+    let p = kn.join("profiles").join(profile).join("profile.yaml");
+    let raw = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+    let f: F = serde_yaml::from_str(&raw).map_err(|e| e.to_string())?;
+    Ok(f.flows)
 }
 
 // ── response helpers ──────────────────────────────────────────────────────
@@ -163,7 +245,6 @@ fn open_browser(url: &str) {
 }
 
 /// Resolve the knowledge dir for API handlers (shared by read/write).
-#[allow(dead_code)]
 fn knowledge_dir() -> Result<PathBuf, String> {
     let global = crate::config::GlobalConfig::load_or_default()?;
     crate::knowledge::knowledge_dir(&global)
