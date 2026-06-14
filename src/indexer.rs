@@ -383,10 +383,10 @@ pub fn fact_report(
             if known.is_empty() { "none".to_string() } else { known.join(", ") }
         ));
     }
-    let p = repo.join(".palugada").join("index").join("symbols.json");
+    let p = repo.join(".palugada").join("index").join(format!("{family}.json"));
     let data = match fs::read_to_string(&p) {
         Ok(d) => d,
-        Err(_) => return Ok(format!("(no index at {} — run `palugada index`)", p.display())),
+        Err(_) => return Ok(format!("(no '{family}' facts indexed — run `palugada index`)")),
     };
     let symbols: Vec<Symbol> =
         serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))?;
@@ -394,9 +394,6 @@ pub fn fact_report(
     let mut out = String::new();
     let mut hits = 0;
     for s in &symbols {
-        if s.kind != family {
-            continue;
-        }
         if let Some(n) = &needle {
             if !s.name.to_lowercase().contains(n.as_str()) {
                 continue;
@@ -705,13 +702,12 @@ mod tests {
         ).unwrap();
         let idx = repo.path().join(".palugada").join("index");
         fs::create_dir_all(&idx).unwrap();
-        fs::write(idx.join("symbols.json"),
+        // fact lookups read the per-family file, not symbols.json
+        fs::write(idx.join("viewmodel.json"),
             r#"[{"name":"LoginViewModel","kind":"viewmodel","file":"a.kt","line":1},
-                {"name":"PaymentViewModel","kind":"viewmodel","file":"b.kt","line":2},
-                {"name":"AuthService","kind":"service","file":"c.kt","line":3}]"#).unwrap();
+                {"name":"PaymentViewModel","kind":"viewmodel","file":"b.kt","line":2}]"#).unwrap();
         let all = fact_report(repo.path(), kn.path(), "p", "viewmodel", None).unwrap();
         assert!(all.contains("LoginViewModel") && all.contains("PaymentViewModel"));
-        assert!(!all.contains("AuthService"), "must not include other families");
         let one = fact_report(repo.path(), kn.path(), "p", "viewmodel", Some("login")).unwrap();
         assert!(one.contains("LoginViewModel") && !one.contains("PaymentViewModel"));
     }
