@@ -14,6 +14,7 @@ mod knowledge;
 mod personal;
 mod profile;
 mod scaffold;
+mod web;
 
 use clap::{Parser, Subcommand};
 use config::{mask_secret, resolve_project, GlobalConfig, ProjectEntry, Secrets};
@@ -186,6 +187,15 @@ enum Commands {
         #[command(subcommand)]
         action: PrdCmd,
     },
+    /// Launch the local authoring console in a browser.
+    Web {
+        /// Port to bind on 127.0.0.1.
+        #[arg(long, default_value_t = 7777)]
+        port: u16,
+        /// Open the console in your browser.
+        #[arg(long)]
+        open: bool,
+    },
     /// Check tool + connector readiness for the current repo.
     Doctor {
         /// Emit JSON.
@@ -333,6 +343,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Ci { action } => cmd_ci(action, project, cli.insecure),
         Commands::Notify { message } => cmd_notify(message, project, cli.insecure),
         Commands::Prd { action } => cmd_prd(action, project, cli.insecure),
+        Commands::Web { port, open } => web::run(port, open),
         Commands::Doctor { json } => cmd_doctor(json, project, cli.insecure),
         Commands::Exec { verb, args, list, json, profile } => {
             cmd_exec(verb, args, list, json, profile, project)

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>palugada web</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">🛠 palugada</span>
+    <span class="brand-sub" id="kn-dir">web console</span>
+  </header>
+  <div class="shell">
+    <nav class="sidebar">
+      <a class="nav-item active" data-view="overview">Overview</a>
+      <a class="nav-item" data-view="projects">Projects</a>
+      <a class="nav-item" data-view="profiles">Profiles</a>
+      <a class="nav-item" data-view="knowledge">Knowledge</a>
+    </nav>
+    <main class="view" id="view">Loading…</main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

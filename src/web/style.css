@@ -1,0 +1,42 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: #0f1115; color: #d7dae0; }
+.topbar { display: flex; align-items: baseline; gap: 12px; padding: 10px 16px;
+  background: #161922; border-bottom: 1px solid #262b36; }
+.brand { font-weight: 700; }
+.brand-sub { color: #8b93a3; font-size: 12px; }
+.shell { display: flex; min-height: calc(100vh - 44px); }
+.sidebar { width: 180px; flex-shrink: 0; padding: 12px; background: #12151c;
+  border-right: 1px solid #262b36; }
+.nav-item { display: block; padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  color: #b9c0cc; text-decoration: none; }
+.nav-item:hover { background: #1c212c; }
+.nav-item.active { background: #243044; color: #fff; }
+.view { flex: 1; padding: 20px 24px; max-width: 980px; }
+h2 { margin: 0 0 4px; } h3 { margin: 18px 0 6px; }
+.muted { color: #8b93a3; }
+.card { background: #161922; border: 1px solid #262b36; border-radius: 8px;
+  padding: 12px 14px; margin: 10px 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+button { font: inherit; background: #2b6cb0; color: #fff; border: 0; border-radius: 6px;
+  padding: 6px 12px; cursor: pointer; }
+button.ghost { background: #243044; }
+button:hover { filter: brightness(1.1); }
+input, textarea, select { font: inherit; background: #0f1115; color: #d7dae0;
+  border: 1px solid #313845; border-radius: 6px; padding: 6px 8px; width: 100%; }
+textarea { min-height: 80px; resize: vertical; }
+label { display: block; font-size: 12px; color: #8b93a3; margin: 8px 0 2px; }
+pre { background: #0b0d11; border: 1px solid #262b36; border-radius: 8px; padding: 12px;
+  overflow: auto; white-space: pre-wrap; }
+a.link { color: #5aa2e8; cursor: pointer; text-decoration: none; }
+a.link:hover { text-decoration: underline; }
+.pill { display: inline-block; background: #243044; border-radius: 10px; padding: 1px 8px;
+  font-size: 12px; margin: 2px 4px 2px 0; }
+.section-row { border: 1px dashed #313845; border-radius: 6px; padding: 8px; margin: 6px 0; }
+.toast { position: fixed; right: 16px; bottom: 16px; padding: 10px 14px; border-radius: 8px;
+  background: #1f2a1f; border: 1px solid #2e7d32; color: #c8e6c9; opacity: 0;
+  transition: opacity .2s; pointer-events: none; max-width: 380px; }
+.toast.show { opacity: 1; }
+.toast.err { background: #2a1f1f; border-color: #c62828; color: #ffcdd2; }
