@@ -225,6 +225,119 @@ fn extract_file(text: &str, rel: &str, applicable: &[&CompiledFamily], symbols: 
     }
 }
 
+// ── generic symbol index (all definitions, via per-language tags query) ─────
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct SymbolDef {
+    name: String,
+    kind: String,
+    file: String,
+    line: usize,
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
+    signature: String,
+}
+
+const SIG_CAP: usize = 160;
+
+/// Walk up to the nearest definition node.
+fn nearest_decl(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    let mut n = Some(node);
+    while let Some(cur) = n {
+        match cur.kind() {
+            "class_declaration" | "object_declaration" | "function_declaration" | "property_declaration" => {
+                return Some(cur)
+            }
+            _ => n = cur.parent(),
+        }
+    }
+    None
+}
+
+/// Name of the class/object enclosing `decl` (empty if top-level).
+fn enclosing_type_name(decl: tree_sitter::Node, bytes: &[u8]) -> String {
+    let mut n = decl.parent();
+    while let Some(cur) = n {
+        if matches!(cur.kind(), "class_declaration" | "object_declaration") {
+            if let Some(nm) = cur.child_by_field_name("name") {
+                return nm.utf8_text(bytes).unwrap_or("").to_string();
+            }
+        }
+        n = cur.parent();
+    }
+    String::new()
+}
+
+/// Declaration header: source from the decl start to its body, whitespace-collapsed and capped.
+fn signature_of(decl: tree_sitter::Node, text: &str) -> String {
+    let mut end = decl.end_byte();
+    let mut walk = decl.walk();
+    for child in decl.children(&mut walk) {
+        if matches!(child.kind(), "function_body" | "class_body" | "enum_class_body") {
+            end = child.start_byte();
+            break;
+        }
+    }
+    let raw = text.get(decl.start_byte()..end).unwrap_or("");
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > SIG_CAP {
+        let s: String = collapsed.chars().take(SIG_CAP).collect();
+        format!("{s}…")
+    } else {
+        collapsed
+    }
+}
+
+/// Generic pass: extract all definitions from one file via its language tags query.
+fn extract_symbols(text: &str, rel: &str, lang_name: &str, out: &mut Vec<SymbolDef>) {
+    use tree_sitter::StreamingIterator;
+    let q_src = match tags_query(lang_name) {
+        Some(q) => q,
+        None => return,
+    };
+    let lang = match language_for(lang_name) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let query = match tree_sitter::Query::new(&lang, q_src) {
+        Ok(q) => q,
+        Err(_) => return,
+    };
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&lang).is_err() {
+        return;
+    }
+    let tree = match parser.parse(text, None) {
+        Some(t) => t,
+        None => return,
+    };
+    let names = query.capture_names();
+    let bytes = text.as_bytes();
+    let mut cur = tree_sitter::QueryCursor::new();
+    let mut it = cur.matches(&query, tree.root_node(), bytes);
+    while let Some(m) = it.next() {
+        for c in m.captures {
+            let kind0 = names[c.index as usize];
+            let name = match c.node.utf8_text(bytes) {
+                Ok(s) => s.to_string(),
+                Err(_) => continue,
+            };
+            let decl = nearest_decl(c.node).unwrap_or(c.node);
+            let scope = enclosing_type_name(decl, bytes);
+            let kind = if kind0 == "function" && !scope.is_empty() { "method" } else { kind0 };
+            out.push(SymbolDef {
+                name,
+                kind: kind.to_string(),
+                file: rel.to_string(),
+                line: c.node.start_position().row + 1,
+                scope,
+                signature: signature_of(decl, text),
+            });
+        }
+    }
+}
+
 /// Read + compile a profile's extractors.yaml. Returns (ignore_dirs, families).
 pub fn load_families(kn: &Path, profile: &str) -> Result<(Vec<String>, Vec<CompiledFamily>), String> {
     let profile_dir = kn.join("profiles").join(profile);
@@ -514,6 +627,23 @@ mod tests {
         let q = tree_sitter::Query::new(&lang, r#"(class_declaration name: (identifier) @name)"#).unwrap();
         assert!(q.capture_index_for_name("name").is_some());
         assert!(language_for("klingon").unwrap_err().contains("klingon"));
+    }
+
+    #[test]
+    fn extract_symbols_finds_defs_with_scope_and_kind() {
+        let src = "class LoginViewModel : ViewModel() {\n  val title: String = \"x\"\n  fun login(u: String): Boolean { return true }\n}\nfun topLevel() {}\n// fun ghost() {}\nobject Cfg\n";
+        let mut out = Vec::new();
+        extract_symbols(src, "A.kt", "kotlin", &mut out);
+        let by = |k: &str, n: &str| out.iter().find(|s| s.kind == k && s.name == n).cloned();
+        assert!(by("class", "LoginViewModel").is_some());
+        assert!(by("object", "Cfg").is_some());
+        let login = by("method", "login").expect("login is a method");
+        assert_eq!(login.scope, "LoginViewModel");
+        assert!(login.signature.contains("fun login"), "sig was {:?}", login.signature);
+        let tl = by("function", "topLevel").expect("topLevel is a function");
+        assert_eq!(tl.scope, "");
+        assert!(by("property", "title").is_some());
+        assert!(out.iter().all(|s| s.name != "ghost"), "comment fun must not be captured");
     }
 
     #[test]
