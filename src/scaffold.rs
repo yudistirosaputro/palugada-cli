@@ -229,6 +229,57 @@ fn skill_path(name: &str) -> String {
     format!(".claude/skills/{name}/SKILL.md")
 }
 
+/// User-authored custom skills for a profile: `profiles/<profile>/skills/<name>/SKILL.md`
+/// → (".claude/skills/<name>/SKILL.md", body) pairs (sorted; empty if none).
+pub fn custom_skill_files(kn: &Path, profile: &str) -> Vec<(String, String)> {
+    let dir = kn.join("profiles").join(profile).join("skills");
+    let mut out: Vec<(String, String)> = Vec::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(_) => return out,
+    };
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let skill = entry.path().join("SKILL.md");
+        if let Ok(body) = fs::read_to_string(&skill) {
+            out.push((format!(".claude/skills/{name}/SKILL.md"), body));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Scaffold a starter custom skill into `profiles/<profile>/skills/<name>/SKILL.md`.
+pub fn new_custom_skill(kn: &Path, profile: &str, name: &str) -> Result<std::path::PathBuf, String> {
+    let valid = !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if !valid {
+        return Err(format!("invalid skill name '{name}' — use only [a-z0-9-_]"));
+    }
+    if name.starts_with("palugada-") {
+        return Err(format!(
+            "'{name}' uses the reserved 'palugada-' prefix (that namespace is the generated standard set)"
+        ));
+    }
+    let dir = kn.join("profiles").join(profile).join("skills").join(name);
+    let p = dir.join("SKILL.md");
+    if p.exists() {
+        return Err(format!("custom skill '{name}' already exists at {}", p.display()));
+    }
+    fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    fs::write(&p, custom_skill_template(name)).map_err(|e| format!("write {}: {e}", p.display()))?;
+    Ok(p)
+}
+
+fn custom_skill_template(name: &str) -> String {
+    format!(
+        "---\nname: {name}\ndescription: >\n  TRIGGER when … (describe when an agent should use this skill).\nallowed-tools: Bash(palugada *), Read, Grep, Glob, Write, Edit\n---\n\n# {name}\n\nDescribe the task here. Pull rules from the profile instead of inlining them:\n\n    palugada for <task>     # a recipe   (`palugada for --list`)\n    palugada q <topic>      # a convention (`palugada q --list`)\n\nLocate code with the `palugada-search` skill before grepping.\n"
+    )
+}
+
 fn claude_pointer(profile: &str, kinds: &[&str]) -> String {
     let mut s = String::new();
     s.push_str("# Working with palugada\n\n");
@@ -427,6 +478,31 @@ integrations:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_skill_files_reads_profile_skills_dir() {
+        let kn = tempfile::tempdir().unwrap();
+        let d = kn.path().join("profiles").join("p").join("skills").join("mvi-state");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("SKILL.md"), "---\nname: mvi-state\n---\n# MVI\n").unwrap();
+        let files = custom_skill_files(kn.path(), "p");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].0, ".claude/skills/mvi-state/SKILL.md");
+        assert!(files[0].1.contains("name: mvi-state"));
+        assert!(custom_skill_files(kn.path(), "other").is_empty());
+    }
+
+    #[test]
+    fn new_custom_skill_scaffolds_and_guards() {
+        let kn = tempfile::tempdir().unwrap();
+        let p = new_custom_skill(kn.path(), "p", "mvi-state").unwrap();
+        assert!(p.exists());
+        assert!(fs::read_to_string(&p).unwrap().contains("name: mvi-state"));
+        assert!(new_custom_skill(kn.path(), "p", "mvi-state").is_err()); // duplicate
+        assert!(new_custom_skill(kn.path(), "p", "palugada-foo").unwrap_err().contains("reserved"));
+        assert!(new_custom_skill(kn.path(), "p", "Bad Name").is_err());
+        assert!(custom_skill_files(kn.path(), "p").iter().any(|(rel, _)| rel.contains("mvi-state")));
+    }
 
     #[test]
     fn skill_files_gates_tool_skills_by_integration() {
