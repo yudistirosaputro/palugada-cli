@@ -264,6 +264,13 @@ enum SkillsCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Scaffold a custom skill in a profile: `skills new <name> [--profile <id>]`.
+    New {
+        name: String,
+        /// Profile to add the skill to (default: the active project's profile).
+        #[arg(long)]
+        profile: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -361,7 +368,7 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Commands::Project { action } => cmd_project(action),
         Commands::Profile { action } => cmd_profile(action, project),
-        Commands::Skills { action } => cmd_skills_sync(action, project),
+        Commands::Skills { action } => cmd_skills(action, project),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
@@ -955,8 +962,18 @@ fn cmd_profile(action: ProfileCmd, project: Option<&str>) -> Result<(), String> 
     }
 }
 
-fn cmd_skills_sync(action: SkillsCmd, project: Option<&str>) -> Result<(), String> {
+fn cmd_skills(action: SkillsCmd, project: Option<&str>) -> Result<(), String> {
     match action {
+        SkillsCmd::New { name, profile } => {
+            let global = GlobalConfig::load_or_default()?;
+            let kn = knowledge::knowledge_dir(&global)?;
+            let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
+            let p = scaffold::new_custom_skill(&kn, &prof, &name)?;
+            println!("created custom skill '{name}' for profile '{prof}':");
+            println!("  {}", p.display());
+            println!("edit it, then `palugada skills sync` into a project bound to '{prof}'.");
+            Ok(())
+        }
         SkillsCmd::Sync { agents, force } => {
             let global = GlobalConfig::load_or_default()?;
             let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
