@@ -153,6 +153,11 @@ enum Commands {
         #[command(subcommand)]
         action: ProfileCmd,
     },
+    /// (Re)generate this project's agent skill files.
+    Skills {
+        #[command(subcommand)]
+        action: SkillsCmd,
+    },
     /// Work with the project's issue tracker.
     Issue {
         #[command(subcommand)]
@@ -246,6 +251,19 @@ enum ProjectCmd {
     Use { name: String },
     /// Remove a project from the registry (files on disk are untouched).
     Remove { name: String },
+}
+
+#[derive(Subcommand)]
+enum SkillsCmd {
+    /// Write any missing skill files for the active (or `--project`) project.
+    Sync {
+        /// Comma-separated agent targets (default: claude).
+        #[arg(long, default_value = "claude")]
+        agents: String,
+        /// Overwrite existing skill files instead of skipping them.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -343,6 +361,7 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Commands::Project { action } => cmd_project(action),
         Commands::Profile { action } => cmd_profile(action, project),
+        Commands::Skills { action } => cmd_skills_sync(action, project),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
         Commands::Git { action } => cmd_git(action, project, cli.insecure),
@@ -931,6 +950,48 @@ fn cmd_profile(action: ProfileCmd, project: Option<&str>) -> Result<(), String> 
             config::set_profile(&entry.repo_path, &id)?;
             println!("project '{name}' now uses profile '{id}'");
             println!("knowledge & symbols already follow it; run `palugada index` only if this profile adds new fact families.");
+            Ok(())
+        }
+    }
+}
+
+fn cmd_skills_sync(action: SkillsCmd, project: Option<&str>) -> Result<(), String> {
+    match action {
+        SkillsCmd::Sync { agents, force } => {
+            let global = GlobalConfig::load_or_default()?;
+            let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+            let name = config::resolve_project_name(&global, project, &cwd)?;
+            let entry = global
+                .projects
+                .registered
+                .get(&name)
+                .ok_or_else(|| format!("project '{name}' is not registered"))?;
+            let pc = config::ProjectConfig::load_from(&entry.repo_path)?;
+            let kinds = scaffold::integration_kinds(&pc);
+            let agents: Vec<String> = agents
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let repo = std::path::Path::new(&entry.repo_path);
+            let (mut wrote, mut skipped) = (0usize, 0usize);
+            for (rel, body) in scaffold::skill_files(&pc.profile, &kinds, &agents) {
+                let p = repo.join(&rel);
+                if p.exists() && !force {
+                    skipped += 1;
+                    continue;
+                }
+                if let Some(parent) = p.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+                }
+                std::fs::write(&p, body).map_err(|e| format!("write {}: {e}", p.display()))?;
+                println!("  wrote    {}", p.display());
+                wrote += 1;
+            }
+            println!("skills sync — '{name}' (profile {}): wrote {wrote}, skipped {skipped} (exist)", pc.profile);
+            if skipped > 0 && !force {
+                println!("  use --force to overwrite existing skill files");
+            }
             Ok(())
         }
     }
