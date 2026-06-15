@@ -145,10 +145,17 @@ palugada init [--repo .] [--name my-app] [--profile android-mvvm] \
 | Target | Files written |
 |---|---|
 | (always) | `<repo>/.palugada/config.yaml` + registration in `~/.palugada.yaml` |
-| `claude` (default) | `CLAUDE.md` + `.claude/skills/{bugfix,feature,refactor,review}/SKILL.md` |
-| `codex` | `AGENTS.md` |
-| `gemini` | `GEMINI.md` |
+| `claude` (default) | thin `CLAUDE.md` pointer + `.claude/skills/palugada-{search,bugfix,feature,refactor,review}/SKILL.md` + tool skills `palugada-{git,docs,ci,design}` (gated by configured integrations) |
+| `codex` | `AGENTS.md` (single richer guide) |
+| `gemini` | `GEMINI.md` (single richer guide) |
 | `cursor` | `.cursor/rules/palugada.mdc` |
+
+The generated skills are **references to palugada commands** (never inlined
+knowledge), so they're token-cheap and **follow the active profile
+automatically** — a `palugada profile use <id>` switch needs no regeneration.
+`palugada-search` enforces the "use `palugada symbol`/`fact` before grep" rule.
+Re-emit them anytime with `palugada skills sync` (writes missing files; skips
+existing so your edits survive — `--force` to overwrite).
 
 The stack profile is auto-detected (Gradle files → `android-mvvm`,
 `package.json` → `web-react`); existing files are skipped unless `--force`.
@@ -168,6 +175,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada project remove <name>` | unregister a project (files on disk untouched) |
 | `palugada profile list/validate/new` | list, lint, or scaffold a stack profile |
 | `palugada profile use <id>` | bind the active (or `--project`) project to a profile (config flip; re-index only for new fact families) |
+| `palugada skills sync [--force]` | (re)generate the project's agent skill files (writes missing; skips existing unless `--force`) |
 | `palugada q <topic>[.N]` | read a convention from the active profile (`-b` outline, `--list`) |
 | `palugada for <task>` | read a recipe from the active profile (`--list`) |
 | `palugada s <kw>` | search conventions + recipes by keyword |
