@@ -974,8 +974,13 @@ fn cmd_skills_sync(action: SkillsCmd, project: Option<&str>) -> Result<(), Strin
                 .filter(|s| !s.is_empty())
                 .collect();
             let repo = std::path::Path::new(&entry.repo_path);
+            let mut files = scaffold::skill_files(&pc.profile, &kinds, &agents);
+            if agents.iter().any(|a| a == "claude") {
+                let kn = knowledge::knowledge_dir(&global)?;
+                files.extend(scaffold::custom_skill_files(&kn, &pc.profile));
+            }
             let (mut wrote, mut skipped) = (0usize, 0usize);
-            for (rel, body) in scaffold::skill_files(&pc.profile, &kinds, &agents) {
+            for (rel, body) in files {
                 let p = repo.join(&rel);
                 if p.exists() && !force {
                     skipped += 1;

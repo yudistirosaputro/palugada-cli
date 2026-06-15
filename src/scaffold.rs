@@ -69,14 +69,22 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
             ));
         }
     }
+    let mut global = GlobalConfig::load_or_default()?;
     let pc = crate::config::ProjectConfig::load_from(&repo_str)?;
     let kinds = integration_kinds(&pc);
     for (rel, body) in skill_files(&profile, &kinds, &agents) {
         write_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped)?;
     }
+    // per-profile custom skills (Claude only; additive — never fatal to init)
+    if agents.iter().any(|a| a == "claude") {
+        if let Ok(kn) = crate::knowledge::knowledge_dir(&global) {
+            for (rel, body) in custom_skill_files(&kn, &profile) {
+                write_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped)?;
+            }
+        }
+    }
 
     // 3. register in the global project registry
-    let mut global = GlobalConfig::load_or_default()?;
     let workspace = format!("{}/.palugada", repo_str.trim_end_matches('/'));
     global.projects.registered.insert(
         name.clone(),
