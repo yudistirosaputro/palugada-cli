@@ -18,14 +18,6 @@ pub struct InitOptions {
     pub force: bool,
 }
 
-/// (flow id, description, verb phrase, title)
-const FLOWS: &[(&str, &str, &str, &str)] = &[
-    ("bugfix", "Fix a bug or crash.", "fix a bug", "Bugfix"),
-    ("feature", "Build a new feature or screen.", "build a feature", "Feature"),
-    ("refactor", "Refactor or restructure code.", "refactor code", "Refactor"),
-    ("review", "Review a diff or pull/merge request.", "review a diff", "Review"),
-];
-
 /// Result of generating a project's scaffold (files + registry), reusable by
 /// both `cmd_init` (CLI) and the web console's `/api/init`.
 pub struct GenerateOutcome {
@@ -69,34 +61,18 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
     let cfg = repo.join(".palugada").join("config.yaml");
     write_file(&cfg, &config_skeleton(&name, &profile, &auth), opts.force, &mut written, &mut skipped)?;
 
-    // 2. agent files (shared body, per-tool filename/format)
-    let guide = agent_guide(&name, &profile);
+    // 2. agent files (rich, profile-agnostic, gated by configured integrations)
     for agent in &agents {
-        match agent.as_str() {
-            "claude" => {
-                write_file(&repo.join("CLAUDE.md"), &guide, opts.force, &mut written, &mut skipped)?;
-                for &(flow, desc, action, title) in FLOWS {
-                    let p = repo.join(".claude").join("skills").join(flow).join("SKILL.md");
-                    let body = agent_skill(flow, desc, action, title, &profile);
-                    write_file(&p, &body, opts.force, &mut written, &mut skipped)?;
-                }
-            }
-            "codex" => {
-                write_file(&repo.join("AGENTS.md"), &guide, opts.force, &mut written, &mut skipped)?;
-            }
-            "gemini" => {
-                write_file(&repo.join("GEMINI.md"), &guide, opts.force, &mut written, &mut skipped)?;
-            }
-            "cursor" => {
-                let p = repo.join(".cursor").join("rules").join("palugada.mdc");
-                write_file(&p, &cursor_wrap(&guide), opts.force, &mut written, &mut skipped)?;
-            }
-            other => {
-                return Err(format!(
-                    "unknown agent target: '{other}' (supported: claude, codex, gemini, cursor)"
-                ));
-            }
+        if !matches!(agent.as_str(), "claude" | "codex" | "gemini" | "cursor") {
+            return Err(format!(
+                "unknown agent target: '{agent}' (supported: claude, codex, gemini, cursor)"
+            ));
         }
+    }
+    let pc = crate::config::ProjectConfig::load_from(&repo_str)?;
+    let kinds = integration_kinds(&pc);
+    for (rel, body) in skill_files(&profile, &kinds, &agents) {
+        write_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped)?;
     }
 
     // 3. register in the global project registry
@@ -188,20 +164,235 @@ fn config_skeleton(name: &str, profile: &str, auth: &str) -> String {
         .replace("__AUTH__", auth)
 }
 
-fn agent_guide(name: &str, profile: &str) -> String {
-    GUIDE_TEMPLATE
-        .replace("__PROJECT__", name)
-        .replace("__PROFILE__", profile)
+// ── rich, profile-agnostic skill set ───────────────────────────────────────
+
+/// Which integrations a project declares (drives which tool skills get generated).
+pub fn integration_kinds(pc: &crate::config::ProjectConfig) -> Vec<&'static str> {
+    let i = &pc.integrations;
+    let mut k = Vec::new();
+    if i.issue_tracker.is_some() { k.push("issue_tracker"); }
+    if i.wiki.is_some() { k.push("wiki"); }
+    if i.git_host.is_some() { k.push("git_host"); }
+    if i.design.is_some() { k.push("design"); }
+    if i.ci.is_some() { k.push("ci"); }
+    if i.chat.is_some() { k.push("chat"); }
+    k
 }
 
-fn agent_skill(flow: &str, desc: &str, action: &str, title: &str, profile: &str) -> String {
-    SKILL_TEMPLATE
-        .replace("__FLOW__", flow)
-        .replace("__DESC__", desc)
-        .replace("__ACTION__", action)
-        .replace("__TITLE__", title)
-        .replace("__PROFILE__", profile)
+/// (flow id, Title, trigger phrase, verb phrase)
+const FLOW_SKILLS: &[(&str, &str, &str, &str)] = &[
+    ("bugfix", "Bugfix", "fixing a bug, crash, or regression", "fix a bug"),
+    ("feature", "Feature", "building a new feature, screen, or endpoint", "build a feature"),
+    ("refactor", "Refactor", "refactoring or restructuring existing code", "refactor code"),
+    ("review", "Review", "reviewing a diff, pull request, or merge request", "review changes"),
+];
+
+/// Build (repo-relative path, body) pairs for the rich, profile-agnostic skill
+/// set. Claude gets a thin pointer + on-demand skills; codex/gemini/cursor get a
+/// single richer guide file. Tool skills are gated by configured integrations.
+pub fn skill_files(profile: &str, kinds: &[&str], agents: &[String]) -> Vec<(String, String)> {
+    let has = |k: &str| kinds.contains(&k);
+    let mut out: Vec<(String, String)> = Vec::new();
+    for agent in agents {
+        match agent.as_str() {
+            "claude" => {
+                out.push(("CLAUDE.md".into(), claude_pointer(profile, kinds)));
+                out.push((skill_path("palugada-search"), SKILL_SEARCH.to_string()));
+                for &(flow, title, trig, verb) in FLOW_SKILLS {
+                    out.push((skill_path(&format!("palugada-{flow}")), skill_flow(flow, title, trig, verb)));
+                }
+                if has("git_host") {
+                    out.push((skill_path("palugada-git"), SKILL_GIT.to_string()));
+                }
+                if has("issue_tracker") || has("wiki") {
+                    out.push((skill_path("palugada-docs"), SKILL_DOCS.to_string()));
+                }
+                if has("ci") || has("chat") {
+                    out.push((skill_path("palugada-ci"), SKILL_CI.to_string()));
+                }
+                if has("design") {
+                    out.push((skill_path("palugada-design"), SKILL_DESIGN.to_string()));
+                }
+            }
+            "codex" => out.push(("AGENTS.md".into(), single_guide(profile, kinds))),
+            "gemini" => out.push(("GEMINI.md".into(), single_guide(profile, kinds))),
+            "cursor" => {
+                out.push((".cursor/rules/palugada.mdc".into(), cursor_wrap(&single_guide(profile, kinds))))
+            }
+            _ => {}
+        }
+    }
+    out
 }
+
+fn skill_path(name: &str) -> String {
+    format!(".claude/skills/{name}/SKILL.md")
+}
+
+fn claude_pointer(profile: &str, kinds: &[&str]) -> String {
+    let mut s = String::new();
+    s.push_str("# Working with palugada\n\n");
+    s.push_str("This project uses **palugada** for token-cheap, always-current engineering\n");
+    s.push_str("context — ask palugada instead of re-reading lots of files.\n\n");
+    s.push_str("**Before** grepping for code (`grep`/`find`/`rg`/Glob), use the index:\n");
+    s.push_str("`palugada symbol <name>` / `palugada fact <family>`.\n\n");
+    s.push_str("On-demand skills (loaded by trigger):\n");
+    s.push_str("- `palugada-search` — locate code/symbols (use before grep)\n");
+    s.push_str("- `palugada-bugfix` / `-feature` / `-refactor` / `-review` — scoped task packs via `palugada brief`\n");
+    if kinds.contains(&"git_host") {
+        s.push_str("- `palugada-git` — git, PR/MR, commit conventions\n");
+    }
+    if kinds.contains(&"issue_tracker") || kinds.contains(&"wiki") {
+        s.push_str("- `palugada-docs` — issues, wiki pages, PRDs\n");
+    }
+    if kinds.contains(&"ci") || kinds.contains(&"chat") {
+        s.push_str("- `palugada-ci` — CI status & chat notify\n");
+    }
+    if kinds.contains(&"design") {
+        s.push_str("- `palugada-design` — Figma files\n");
+    }
+    s.push_str("\nDiscover: `palugada q --list` (conventions) · `palugada for --list` (recipes) · `palugada <cmd> --help`.\n");
+    s.push_str(&format!("Bound profile: `{profile}` — switch with `palugada profile use <id>` (skills follow the active profile automatically).\n"));
+    s
+}
+
+fn skill_flow(flow: &str, title: &str, trig: &str, verb: &str) -> String {
+    let review_note = if flow == "review" {
+        "\nThis flow is diff-scoped — point it at a ref: `palugada brief review <ref>`.\n"
+    } else {
+        "\nLocate code with the `palugada-search` skill — never blind-grep.\n"
+    };
+    format!(
+        "---\nname: palugada-{flow}\ndescription: TRIGGER when {trig}. Gather a context pack with palugada before editing.\nallowed-tools: Bash(palugada *), Read, Grep, Glob, Write, Edit\n---\n\n# {title}\n\nWhen {verb}, get ONE budgeted context pack first:\n\n    palugada brief {flow} <target>     # recent changes + symbols + the relevant conventions\n\nThen pull only the rules you need (don't guess — the knowledge lives in the profile):\n\n    palugada for <task>                # a recipe; `palugada for --list` to see all\n    palugada q <topic>                 # a convention; `palugada q --list` to see all\n{review_note}"
+    )
+}
+
+fn single_guide(profile: &str, kinds: &[&str]) -> String {
+    let mut s = String::new();
+    s.push_str("# Working with palugada\n\n");
+    s.push_str("This project uses **palugada** for token-cheap, always-current context.\n");
+    s.push_str("Ask palugada instead of re-reading files.\n\n");
+    s.push_str("## Find code FIRST (before grep)\n\n");
+    s.push_str("    palugada symbol <name> [--kind function]   # any definition (class/function/method/...)\n");
+    s.push_str("    palugada fact <family> [name]              # curated facts (viewmodel/route/...)\n\n");
+    s.push_str("Run these BEFORE any `grep`/`find`/`rg`; grep is the fallback only when the index is empty.\n\n");
+    s.push_str("## Scoped task packs\n\n");
+    s.push_str("    palugada brief bugfix|feature|refactor|review <target>\n");
+    s.push_str("    palugada for <task>      # a recipe   (`palugada for --list`)\n");
+    s.push_str("    palugada q <topic>       # a convention (`palugada q --list`)\n\n");
+    let mut conn: Vec<&str> = Vec::new();
+    if kinds.contains(&"issue_tracker") || kinds.contains(&"wiki") {
+        conn.push("    palugada issue view <KEY> | wiki page <ID> | prd fetch <KEY>\n");
+    }
+    if kinds.contains(&"git_host") {
+        conn.push("    palugada git whoami | pr recent <file>\n");
+    }
+    if kinds.contains(&"ci") || kinds.contains(&"chat") {
+        conn.push("    palugada ci status <JOB> | notify \"<message>\"\n");
+    }
+    if kinds.contains(&"design") {
+        conn.push("    palugada design file <KEY>\n");
+    }
+    if !conn.is_empty() {
+        s.push_str("## Connectors\n\n");
+        for c in conn {
+            s.push_str(c);
+        }
+        s.push('\n');
+    }
+    s.push_str(&format!("Bound profile `{profile}` — switch with `palugada profile use <id>`. `palugada <cmd> --help` for anything.\n"));
+    s
+}
+
+const SKILL_SEARCH: &str = r#"---
+name: palugada-search
+description: >
+  TRIGGER when locating code — find a function/class/symbol, "where is X defined",
+  what calls/lives in a module — and BEFORE any grep/find/rg/Glob over the repo.
+allowed-tools: Bash(palugada *), Grep, Glob, Read
+---
+
+# Locate code via palugada FIRST
+
+The project is indexed. Use the index before grepping.
+
+    palugada symbol <name>                   # any definition: class/function/method/property
+    palugada symbol <name> --kind function   # narrow by kind
+    palugada fact <family> [name]            # curated facts (e.g. viewmodel, route)
+
+**Hard rule:** run `palugada symbol` / `palugada fact` BEFORE any `grep`,
+`find`, `rg`, or `Glob` for code. grep is the fallback ONLY when the index
+returns nothing — and when that happens, say so (the indexer missed something
+worth fixing) and refresh with `palugada index`.
+"#;
+
+const SKILL_GIT: &str = r#"---
+name: palugada-git
+description: >
+  TRIGGER for git work — branch, commit, push, rebase/merge conflict, pull/merge
+  request, pipeline. Also when the user mentions gh, glab, GitHub, or GitLab.
+allowed-tools: Bash(palugada *), Bash(git *), Bash(gh *), Bash(glab *), Read, Grep, Glob, Write, Edit
+---
+
+# Git & PR/MR
+
+    palugada git whoami           # confirm the authenticated git-host user
+    palugada pr recent <file>     # recent commits touching a file (host reverse-index)
+
+## Commits & branches
+
+    type(scope): lowercase summary      e.g. feat(watchlist): add sort
+    type/TICKET-short-description        e.g. feat/UATP-1602-watchlist-sort
+
+## PR / MR
+
+Use `gh` (GitHub) or `glab` (GitLab) to create / list / review / merge.
+
+## Safety
+
+- Never `git push --force` — use `--force-with-lease`.
+- Only rebase YOUR feature branch, never a shared one.
+- Resolve conflicts per-hunk; build + test after; `git rebase --abort` is safe if unsure.
+"#;
+
+const SKILL_DOCS: &str = r#"---
+name: palugada-docs
+description: TRIGGER for tickets, issues, wiki/Confluence/Notion pages, PRDs, or specs.
+allowed-tools: Bash(palugada *), Read
+---
+
+# Issues, wiki & PRDs
+
+    palugada issue view <KEY>     # a ticket (Jira / GitHub Issues)
+    palugada wiki page <ID>       # a wiki/doc page (Confluence / Notion)
+    palugada prd fetch <KEY>      # save a ticket into the personal corpus
+    palugada prd list             # list saved corpus docs
+    palugada prd cat <name>       # read one
+    palugada prd search <kw>      # search the corpus offline
+"#;
+
+const SKILL_CI: &str = r#"---
+name: palugada-ci
+description: TRIGGER for CI/build status, pipelines, or notifying the team chat.
+allowed-tools: Bash(palugada *), Read
+---
+
+# CI & notify
+
+    palugada ci status <JOB>      # last build status (Jenkins / GH Actions / GitLab CI)
+    palugada notify "<message>"   # post to the project chat (Slack)
+"#;
+
+const SKILL_DESIGN: &str = r#"---
+name: palugada-design
+description: TRIGGER for Figma design files or design specs.
+allowed-tools: Bash(palugada *), Read
+---
+
+# Design
+
+    palugada design file <KEY>    # a Figma file's metadata (name, version, last modified)
+"#;
 
 fn cursor_wrap(body: &str) -> String {
     format!(
@@ -232,54 +423,48 @@ integrations:
   # ci:     { provider: jenkins, base_url: "" }
 "#;
 
-const GUIDE_TEMPLATE: &str = r#"# __PROJECT__ — working with palugada
 
-This project is wired to **palugada**, a CLI that gives AI agents token-cheap,
-always-current engineering context. Bound profile: `__PROFILE__`.
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-**Principle:** don't re-derive project knowledge by reading lots of files — ask
-`palugada`; it returns small, structured answers.
+    #[test]
+    fn skill_files_gates_tool_skills_by_integration() {
+        let only_git = skill_files("android-mvvm", &["git_host"], &["claude".to_string()]);
+        let names: Vec<&str> = only_git.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(names.iter().any(|p| p.contains("palugada-search/SKILL.md")));
+        assert!(names.iter().any(|p| p.contains("palugada-bugfix/SKILL.md")));
+        assert!(names.iter().any(|p| p.contains("palugada-git/SKILL.md")));
+        assert!(!names.iter().any(|p| p.contains("palugada-docs/SKILL.md")));
+        assert!(!names.iter().any(|p| p.contains("palugada-ci/SKILL.md")));
+        assert!(!names.iter().any(|p| p.contains("palugada-design/SKILL.md")));
 
-## Connectors (work today)
+        let all = skill_files(
+            "android-mvvm",
+            &["git_host", "wiki", "issue_tracker", "ci", "design"],
+            &["claude".to_string()],
+        );
+        let an: Vec<&str> = all.iter().map(|(p, _)| p.as_str()).collect();
+        for s in ["palugada-docs", "palugada-ci", "palugada-design"] {
+            assert!(an.iter().any(|p| p.contains(s)), "missing {s}");
+        }
+    }
 
-    palugada issue view <KEY>     # issue tracker (Jira)
-    palugada wiki page <ID>       # wiki / docs (Confluence)
-    palugada design file <KEY>    # design (Figma)
-    palugada ci status <JOB>      # CI (Jenkins)
-    palugada git whoami           # git host (GitLab/GitHub)
-    palugada config verify        # check every configured connection
+    #[test]
+    fn skill_bodies_are_profile_agnostic_references() {
+        let files = skill_files("android-mvvm", &["git_host"], &["claude".to_string()]);
+        let search = files.iter().find(|(p, _)| p.contains("palugada-search")).unwrap();
+        assert!(search.1.contains("palugada symbol"), "search must reference symbol");
+        assert!(
+            search.1.to_lowercase().contains("before") && search.1.contains("grep"),
+            "search-first rule missing"
+        );
+        let flow = files.iter().find(|(p, _)| p.contains("palugada-feature")).unwrap();
+        assert!(flow.1.contains("palugada brief feature"));
 
-## Knowledge & flows
-
-For a scoped task, ask for one budgeted context pack:
-
-    palugada brief bugfix   <file|symbol>
-    palugada brief feature  <ticket|area>
-    palugada brief refactor <module|file>
-    palugada brief review   --diff <ref>
-
-Or look things up directly:
-
-    palugada q <topic>            # a convention (e.g. palugada q architecture)
-    palugada for <task>           # a recipe (e.g. palugada for feature)
-
-> The knowledge layer (brief / q / for / indexed facts) is being rolled out; the
-> connector commands above already work. Conventions and recipes live in the
-> bound profile and update without editing this file — regenerate with
-> `palugada init` or `palugada skills sync`.
-"#;
-
-const SKILL_TEMPLATE: &str = r#"---
-name: __FLOW__
-description: __DESC__ Gather context with palugada before editing.
----
-
-# __TITLE__
-
-When you __ACTION__, get a context pack first:
-
-    palugada brief __FLOW__ <target>
-
-Then follow the returned conventions and recipe. Prefer `palugada` output over
-guessing — the knowledge lives in the bound profile (`__PROFILE__`).
-"#;
+        // codex → single guide file, no skills dir
+        let guide = skill_files("android-mvvm", &["git_host"], &["codex".to_string()]);
+        assert!(guide.iter().any(|(p, _)| p == "AGENTS.md"));
+        assert!(!guide.iter().any(|(p, _)| p.contains(".claude/skills")));
+    }
+}
