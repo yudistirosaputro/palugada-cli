@@ -157,6 +157,12 @@ automatically** — a `palugada profile use <id>` switch needs no regeneration.
 Re-emit them anytime with `palugada skills sync` (writes missing files; skips
 existing so your edits survive — `--force` to overwrite).
 
+**Per-profile custom skills.** A profile can carry its own stack-specific skills
+in `knowledge/profiles/<id>/skills/<name>/SKILL.md`; `init` / `skills sync` emit
+them into a bound project's `.claude/skills/` alongside the standard set (Claude
+only). Scaffold one with `palugada skills new <name> [--profile <id>]` (names
+can't use the reserved `palugada-` prefix).
+
 The stack profile is auto-detected (Gradle files → `android-mvvm`,
 `package.json` → `web-react`); existing files are skipped unless `--force`.
 Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
@@ -176,6 +182,7 @@ Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
 | `palugada profile list/validate/new` | list, lint, or scaffold a stack profile |
 | `palugada profile use <id>` | bind the active (or `--project`) project to a profile (config flip; re-index only for new fact families) |
 | `palugada skills sync [--force]` | (re)generate the project's agent skill files (writes missing; skips existing unless `--force`) |
+| `palugada skills new <name>` | scaffold a per-profile custom skill (`profiles/<id>/skills/<name>/`) |
 | `palugada q <topic>[.N]` | read a convention from the active profile (`-b` outline, `--list`) |
 | `palugada for <task>` | read a recipe from the active profile (`--list`) |
 | `palugada s <kw>` | search conventions + recipes by keyword |
