@@ -263,7 +263,7 @@ fn skill_flow(flow: &str, title: &str, trig: &str, verb: &str) -> String {
         "\nLocate code with the `palugada-search` skill — never blind-grep.\n"
     };
     format!(
-        "---\nname: palugada-{flow}\ndescription: TRIGGER when {trig}. Gather a context pack with palugada before editing.\nallowed-tools: Bash(palugada *), Read, Grep, Glob, Write, Edit\n---\n\n# {title}\n\nWhen {verb}, get ONE budgeted context pack first:\n\n    palugada brief {flow} <target>     # recent changes + symbols + the relevant conventions\n\nThen pull only the rules you need (don't guess — the knowledge lives in the profile):\n\n    palugada for <task>                # a recipe; `palugada for --list` to see all\n    palugada q <topic>                 # a convention; `palugada q --list` to see all\n{review_note}"
+        "---\nname: palugada-{flow}\ndescription: TRIGGER when {trig}. Gather a context pack with palugada before editing.\nallowed-tools: Bash(palugada *), Read, Grep, Glob, Write, Edit\n---\n\n# {title}\n\nWhen you {verb}, get ONE budgeted context pack first:\n\n    palugada brief {flow} <target>     # recent changes + symbols + the relevant conventions\n\nThen pull only the rules you need (don't guess — the knowledge lives in the profile):\n\n    palugada for <task>                # a recipe; `palugada for --list` to see all\n    palugada q <topic>                 # a convention; `palugada q --list` to see all\n{review_note}"
     )
 }
 
