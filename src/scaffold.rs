@@ -27,6 +27,7 @@ pub struct GenerateOutcome {
     pub agents: Vec<String>,
     pub written: Vec<String>,
     pub skipped: Vec<String>,
+    pub merged: Vec<String>,
     pub became_active: bool,
     pub config_path: String,
 }
@@ -48,14 +49,12 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
     });
     let profile = opts.profile.clone().unwrap_or_else(|| detect_profile(&repo));
     let auth = opts.auth.clone().unwrap_or_else(|| "default".to_string());
-    let agents = if opts.agents.is_empty() {
-        vec!["claude".to_string()]
-    } else {
-        opts.agents.clone()
-    };
+    let auto = opts.agents.is_empty() || (opts.agents.len() == 1 && opts.agents[0] == "auto");
+    let agents = if auto { detect_agents(&repo) } else { opts.agents.clone() };
 
     let mut written: Vec<String> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
+    let mut merged: Vec<String> = Vec::new();
 
     // 1. per-project config skeleton
     let cfg = repo.join(".palugada").join("config.yaml");
@@ -73,7 +72,7 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
     let pc = crate::config::ProjectConfig::load_from(&repo_str)?;
     let kinds = integration_kinds(&pc);
     for (rel, body) in skill_files(&profile, &kinds, &agents) {
-        write_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped)?;
+        write_agent_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped, &mut merged)?;
     }
     // per-profile custom skills (Claude only; additive — never fatal to init)
     if agents.iter().any(|a| a == "claude") {
@@ -103,6 +102,7 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
         agents,
         written,
         skipped,
+        merged,
         became_active,
         config_path: cfg.display().to_string(),
     })
@@ -116,6 +116,9 @@ pub fn run(opts: InitOptions) -> Result<(), String> {
     );
     for w in &out.written {
         println!("  wrote    {w}");
+    }
+    for m in &out.merged {
+        println!("  merged   {m}  (palugada section)");
     }
     for s in &out.skipped {
         println!("  skipped  {s}  (exists — use --force to overwrite)");
