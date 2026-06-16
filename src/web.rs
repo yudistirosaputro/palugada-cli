@@ -34,6 +34,9 @@ pub enum Route {
     SkillMap(String),
     SetConventionBody(String, String),
     SetRecipeBody(String, String),
+    ProjectConfig(String),
+    SaveProjectConfig(String),
+    VerifyCapability(String, String),
     NotFound,
 }
 
@@ -65,6 +68,11 @@ pub fn route(method: &str, path: &str) -> Route {
         }
         ("POST", ["api", "profile", id, "recipe", rid, "body"]) => {
             Route::SetRecipeBody((*id).to_string(), (*rid).to_string())
+        }
+        ("GET", ["api", "project", name, "config"]) => Route::ProjectConfig((*name).to_string()),
+        ("POST", ["api", "project", name, "config"]) => Route::SaveProjectConfig((*name).to_string()),
+        ("POST", ["api", "project", name, "verify", cap]) => {
+            Route::VerifyCapability((*name).to_string(), (*cap).to_string())
         }
         _ => Route::NotFound,
     }
@@ -164,6 +172,21 @@ fn api(route: Route, body: &str) -> (u16, String) {
         }),
         Route::SetConventionBody(id, cid) => write_op(|| set_doc_body(&id, "convention", &cid, body)),
         Route::SetRecipeBody(id, rid) => write_op(|| set_doc_body(&id, "recipe", &rid, body)),
+        Route::ProjectConfig(name) => read(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::project_config_json(&global, &name)
+        }),
+        Route::SaveProjectConfig(name) => write_op(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::save_project_config(&global, &name, body)
+        }),
+        Route::VerifyCapability(name, cap) => read(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::verify_capability(&global, &name, &cap)
+        }),
         _ => (501, err_json("not implemented yet")),
     }
 }
@@ -426,6 +449,12 @@ mod tests {
         assert_eq!(
             route("POST", "/api/profile/p/recipe/r/body"),
             Route::SetRecipeBody("p".into(), "r".into())
+        );
+        assert_eq!(route("GET", "/api/project/app/config"), Route::ProjectConfig("app".into()));
+        assert_eq!(route("POST", "/api/project/app/config"), Route::SaveProjectConfig("app".into()));
+        assert_eq!(
+            route("POST", "/api/project/app/verify/git_host"),
+            Route::VerifyCapability("app".into(), "git_host".into())
         );
         assert_eq!(route("GET", "/nope"), Route::NotFound);
     }

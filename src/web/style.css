@@ -52,3 +52,5 @@ a.link:hover { text-decoration: underline; }
 .warn-pill { color: #e0a458; font-size: 12px; margin-left: 6px; }
 .ok-pill { color: #7fd1a6; font-size: 12px; margin-left: 6px; }
 .card.warn { border-left: 3px solid #e0a458; }
+.cd-int { border: 1px dashed #313845; border-radius: 6px; padding: 8px; margin: 6px 0; }
+.cd-vres { font-size: 12px; }
