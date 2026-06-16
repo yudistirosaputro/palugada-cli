@@ -994,9 +994,12 @@ fn cmd_skills(action: SkillsCmd, project: Option<&str>) -> Result<(), String> {
             };
             let repo = std::path::Path::new(&entry.repo_path);
             let mut files = scaffold::skill_files(&pc.profile, &kinds, &agents);
+            let kn = knowledge::knowledge_dir(&global)?;
             if agents.iter().any(|a| a == "claude") {
-                let kn = knowledge::knowledge_dir(&global)?;
-                files.extend(scaffold::custom_skill_files(&kn, &pc.profile));
+                files.extend(scaffold::custom_skill_files(&kn, &pc.profile, ".claude/skills"));
+            }
+            if agents.iter().any(|a| a == "codex") {
+                files.extend(scaffold::custom_skill_files(&kn, &pc.profile, ".agents/skills"));
             }
             let (mut written, mut skipped, mut merged) = (Vec::new(), Vec::new(), Vec::new());
             for (rel, body) in files {

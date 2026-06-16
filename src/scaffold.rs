@@ -74,12 +74,18 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
     for (rel, body) in skill_files(&profile, &kinds, &agents) {
         write_agent_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped, &mut merged)?;
     }
-    // per-profile custom skills (Claude only; additive — never fatal to init)
-    if agents.iter().any(|a| a == "claude") {
-        if let Ok(kn) = crate::knowledge::knowledge_dir(&global) {
-            for (rel, body) in custom_skill_files(&kn, &profile) {
-                write_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped)?;
-            }
+    // per-profile custom skills (claude → .claude/skills, codex → .agents/skills;
+    // additive — never fatal to init)
+    if let Ok(kn) = crate::knowledge::knowledge_dir(&global) {
+        let mut custom: Vec<(String, String)> = Vec::new();
+        if agents.iter().any(|a| a == "claude") {
+            custom.extend(custom_skill_files(&kn, &profile, ".claude/skills"));
+        }
+        if agents.iter().any(|a| a == "codex") {
+            custom.extend(custom_skill_files(&kn, &profile, ".agents/skills"));
+        }
+        for (rel, body) in custom {
+            write_file(&repo.join(&rel), &body, opts.force, &mut written, &mut skipped)?;
         }
     }
 
@@ -290,30 +296,17 @@ pub const FLOW_SKILLS: &[(&str, &str, &str, &str)] = &[
 /// set. Claude gets a thin pointer + on-demand skills; codex/gemini/cursor get a
 /// single richer guide file. Tool skills are gated by configured integrations.
 pub fn skill_files(profile: &str, kinds: &[&str], agents: &[String]) -> Vec<(String, String)> {
-    let has = |k: &str| kinds.contains(&k);
     let mut out: Vec<(String, String)> = Vec::new();
     for agent in agents {
         match agent.as_str() {
             "claude" => {
                 out.push(("CLAUDE.md".into(), claude_pointer(profile, kinds)));
-                out.push((skill_path("palugada-search"), SKILL_SEARCH.to_string()));
-                for &(flow, title, trig, verb) in FLOW_SKILLS {
-                    out.push((skill_path(&format!("palugada-{flow}")), skill_flow(flow, title, trig, verb)));
-                }
-                if has("git_host") {
-                    out.push((skill_path("palugada-git"), SKILL_GIT.to_string()));
-                }
-                if has("issue_tracker") || has("wiki") {
-                    out.push((skill_path("palugada-docs"), SKILL_DOCS.to_string()));
-                }
-                if has("ci") || has("chat") {
-                    out.push((skill_path("palugada-ci"), SKILL_CI.to_string()));
-                }
-                if has("design") {
-                    out.push((skill_path("palugada-design"), SKILL_DESIGN.to_string()));
-                }
+                out.extend(standard_skill_set(kinds, ".claude/skills"));
             }
-            "codex" => out.push(("AGENTS.md".into(), single_guide(profile, kinds))),
+            "codex" => {
+                out.push(("AGENTS.md".into(), single_guide(profile, kinds)));
+                out.extend(standard_skill_set(kinds, ".agents/skills"));
+            }
             "gemini" => out.push(("GEMINI.md".into(), single_guide(profile, kinds))),
             "cursor" => {
                 out.push((".cursor/rules/palugada.mdc".into(), cursor_wrap(&single_guide(profile, kinds))))
@@ -324,13 +317,33 @@ pub fn skill_files(profile: &str, kinds: &[&str], agents: &[String]) -> Vec<(Str
     out
 }
 
-fn skill_path(name: &str) -> String {
-    format!(".claude/skills/{name}/SKILL.md")
+/// The granular skill set under `base` (e.g. ".claude/skills" or ".agents/skills"):
+/// search + one per flow + tool skills gated by configured integration kinds.
+fn standard_skill_set(kinds: &[&str], base: &str) -> Vec<(String, String)> {
+    let has = |k: &str| kinds.contains(&k);
+    let path = |name: &str| format!("{base}/{name}/SKILL.md");
+    let mut out = vec![(path("palugada-search"), SKILL_SEARCH.to_string())];
+    for &(flow, title, trig, verb) in FLOW_SKILLS {
+        out.push((path(&format!("palugada-{flow}")), skill_flow(flow, title, trig, verb)));
+    }
+    if has("git_host") {
+        out.push((path("palugada-git"), SKILL_GIT.to_string()));
+    }
+    if has("issue_tracker") || has("wiki") {
+        out.push((path("palugada-docs"), SKILL_DOCS.to_string()));
+    }
+    if has("ci") || has("chat") {
+        out.push((path("palugada-ci"), SKILL_CI.to_string()));
+    }
+    if has("design") {
+        out.push((path("palugada-design"), SKILL_DESIGN.to_string()));
+    }
+    out
 }
 
 /// User-authored custom skills for a profile: `profiles/<profile>/skills/<name>/SKILL.md`
-/// → (".claude/skills/<name>/SKILL.md", body) pairs (sorted; empty if none).
-pub fn custom_skill_files(kn: &Path, profile: &str) -> Vec<(String, String)> {
+/// → (`<base>/<name>/SKILL.md`, body) pairs (sorted; empty if none).
+pub fn custom_skill_files(kn: &Path, profile: &str, base: &str) -> Vec<(String, String)> {
     let dir = kn.join("profiles").join(profile).join("skills");
     let mut out: Vec<(String, String)> = Vec::new();
     let entries = match fs::read_dir(&dir) {
@@ -344,7 +357,7 @@ pub fn custom_skill_files(kn: &Path, profile: &str) -> Vec<(String, String)> {
         let name = entry.file_name().to_string_lossy().to_string();
         let skill = entry.path().join("SKILL.md");
         if let Ok(body) = fs::read_to_string(&skill) {
-            out.push((format!(".claude/skills/{name}/SKILL.md"), body));
+            out.push((format!("{base}/{name}/SKILL.md"), body));
         }
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -450,6 +463,7 @@ fn single_guide(profile: &str, kinds: &[&str]) -> String {
         }
         s.push('\n');
     }
+    s.push_str("On-demand granular skills are generated under `.agents/skills/` for agents that load them (Codex); otherwise this file is the full guide.\n");
     s.push_str(&format!("Bound profile `{profile}` — switch with `palugada profile use <id>`. `palugada <cmd> --help` for anything.\n"));
     s
 }
@@ -620,11 +634,30 @@ mod tests {
         let d = kn.path().join("profiles").join("p").join("skills").join("mvi-state");
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("SKILL.md"), "---\nname: mvi-state\n---\n# MVI\n").unwrap();
-        let files = custom_skill_files(kn.path(), "p");
+        let files = custom_skill_files(kn.path(), "p", ".claude/skills");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].0, ".claude/skills/mvi-state/SKILL.md");
         assert!(files[0].1.contains("name: mvi-state"));
-        assert!(custom_skill_files(kn.path(), "other").is_empty());
+        assert!(custom_skill_files(kn.path(), "other", ".claude/skills").is_empty());
+        // base dir is honored (codex → .agents/skills)
+        let codex = custom_skill_files(kn.path(), "p", ".agents/skills");
+        assert_eq!(codex[0].0, ".agents/skills/mvi-state/SKILL.md");
+    }
+
+    #[test]
+    fn skill_files_emits_codex_agents_skills() {
+        let f = skill_files("p", &["git_host"], &["codex".to_string()]);
+        let has = |p: &str| f.iter().any(|(rel, _)| rel == p);
+        assert!(has("AGENTS.md"));
+        assert!(has(".agents/skills/palugada-search/SKILL.md"));
+        assert!(has(".agents/skills/palugada-bugfix/SKILL.md"));
+        assert!(has(".agents/skills/palugada-git/SKILL.md")); // gated by git_host
+        // claude still uses .claude/skills
+        let c = skill_files("p", &[], &["claude".to_string()]);
+        assert!(c.iter().any(|(rel, _)| rel == ".claude/skills/palugada-search/SKILL.md"));
+        // codex with no integrations → no tool skill
+        let n = skill_files("p", &[], &["codex".to_string()]);
+        assert!(!n.iter().any(|(rel, _)| rel == ".agents/skills/palugada-git/SKILL.md"));
     }
 
     #[test]
@@ -636,7 +669,7 @@ mod tests {
         assert!(new_custom_skill(kn.path(), "p", "mvi-state").is_err()); // duplicate
         assert!(new_custom_skill(kn.path(), "p", "palugada-foo").unwrap_err().contains("reserved"));
         assert!(new_custom_skill(kn.path(), "p", "Bad Name").is_err());
-        assert!(custom_skill_files(kn.path(), "p").iter().any(|(rel, _)| rel.contains("mvi-state")));
+        assert!(custom_skill_files(kn.path(), "p", ".claude/skills").iter().any(|(rel, _)| rel.contains("mvi-state")));
     }
 
     #[test]
