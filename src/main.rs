@@ -7,6 +7,7 @@
 mod brief;
 mod clients;
 mod config;
+mod credentials;
 mod exec;
 mod http;
 mod indexer;
