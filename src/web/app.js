@@ -162,6 +162,30 @@ async function viewDoc(profile, kind, id) {
   } catch (e) { toast(e.message, true); }
 }
 
+async function editDoc(profile, kind, id) {
+  let b;
+  try { b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`); }
+  catch (e) { toast(e.message, true); return; }
+  let card = document.getElementById("bodyview");
+  if (card) card.remove();
+  card = h(`<div class="card" id="bodyview">
+    <div class="row"><strong>edit ${esc(kind)}: ${esc(id)}</strong><span class="spacer"></span><a class="link" id="ed-close">close</a></div>
+    <div class="muted">Edits the profile's knowledge in <code>~/.palugada</code> (shared by all projects on '${esc(profile)}'); your project repo is not touched.</div>
+    <textarea id="ed-body" style="min-height:320px;width:100%"></textarea>
+    <div class="row" style="margin-top:6px"><span class="spacer"></span><button id="ed-save">Save</button></div></div>`);
+  card.querySelector("#ed-body").value = b.markdown;
+  view.insertBefore(card, view.children[1] || null);
+  card.querySelector("#ed-close").onclick = () => card.remove();
+  card.querySelector("#ed-save").onclick = async () => {
+    const markdown = card.querySelector("#ed-body").value;
+    try {
+      await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}/body`, "POST", { markdown });
+      toast(`saved ${kind} ${id}`);
+      card.remove();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
 async function renderProfiles() {
   view.innerHTML = "<h2>Profiles</h2>";
   const form = h(`<div class="card"><strong>New profile</strong>

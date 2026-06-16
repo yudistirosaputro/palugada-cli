@@ -40,3 +40,15 @@ a.link:hover { text-decoration: underline; }
   transition: opacity .2s; pointer-events: none; max-width: 380px; }
 .toast.show { opacity: 1; }
 .toast.err { background: #2a1f1f; border-color: #c62828; color: #ffcdd2; }
+.steps { margin-top: 8px; }
+.step { padding: 3px 0; }
+.step-tag {
+  display: inline-block; min-width: 78px; text-align: center;
+  font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-right: 6px;
+  background: #2b313c; color: #9aa4b2; }
+.step-tag.convention { background: #1f3a2e; color: #7fd1a6; }
+.step-tag.recipe { background: #312a1f; color: #d1b07f; }
+.step-tag.review { background: #2a2f3c; color: #9ab0d1; }
+.warn-pill { color: #e0a458; font-size: 12px; margin-left: 6px; }
+.ok-pill { color: #7fd1a6; font-size: 12px; margin-left: 6px; }
+.card.warn { border-left: 3px solid #e0a458; }
