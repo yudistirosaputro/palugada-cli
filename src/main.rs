@@ -14,6 +14,7 @@ mod knowledge;
 mod personal;
 mod profile;
 mod scaffold;
+mod skillmap;
 mod web;
 
 use clap::{Parser, Subcommand};

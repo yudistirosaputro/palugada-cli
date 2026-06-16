@@ -352,6 +352,28 @@ pub fn add_recipe(kn: &Path, profile: &str, spec: &RecipeSpec) -> Result<(), Str
     upsert_index(&dir.join("_index.json"), "recipes", &spec.id, entry)
 }
 
+/// Overwrite an existing convention's markdown verbatim (edit-only).
+pub fn set_convention_body(kn: &Path, profile: &str, id: &str, markdown: &str) -> Result<(), String> {
+    set_doc_body(kn, profile, "conventions", id, markdown)
+}
+
+/// Overwrite an existing recipe's markdown verbatim (edit-only).
+pub fn set_recipe_body(kn: &Path, profile: &str, id: &str, markdown: &str) -> Result<(), String> {
+    set_doc_body(kn, profile, "recipes", id, markdown)
+}
+
+/// Write `<dir>/<id>.md` verbatim; errors if it doesn't already exist (edit-only),
+/// leaving the `_index.json` metadata (title/description/tags) untouched.
+fn set_doc_body(kn: &Path, profile: &str, dir: &str, id: &str, markdown: &str) -> Result<(), String> {
+    validate_doc_id(id)?;
+    let p = kn.join("profiles").join(profile).join(dir).join(format!("{id}.md"));
+    if !p.exists() {
+        let what = dir.strip_suffix('s').unwrap_or(dir);
+        return Err(format!("{what} '{id}' does not exist in profile '{profile}'"));
+    }
+    fs::write(&p, markdown).map_err(|e| format!("write {}: {e}", p.display()))
+}
+
 // ── q: conventions ──────────────────────────────────────────────────────
 
 pub fn list_topics(kn: &Path, profile: &str) -> Result<(), String> {
@@ -598,6 +620,33 @@ mod tests {
     fn slug_kebabs_titles() {
         assert_eq!(slug("Errors in Coroutines"), "errors-in-coroutines");
         assert_eq!(slug("Sealed UiState!"), "sealed-uistate");
+    }
+
+    #[test]
+    fn set_body_overwrites_verbatim_and_guards() {
+        let kn = tempfile::tempdir().unwrap();
+        let kp = kn.path();
+        add_convention(kp, "p", &ConventionSpec {
+            id: "arch".into(), title: "Arch".into(), description: "d".into(),
+            tags: vec!["t".into()],
+            sections: vec![SectionSpec { title: "S".into(), body: "old".into(), code: false }],
+        }).unwrap();
+        set_convention_body(kp, "p", "arch", "# brand new body\n").unwrap();
+        assert!(convention_md(kp, "p", "arch").unwrap().contains("brand new body"));
+        // _index.json metadata preserved
+        let cs = conventions(kp, "p").unwrap();
+        let arch = cs.iter().find(|c| c.id == "arch").unwrap();
+        assert_eq!(arch.title, "Arch");
+        assert_eq!(arch.tags, vec!["t".to_string()]);
+        // edit-only guard
+        assert!(set_convention_body(kp, "p", "missing", "x").is_err());
+
+        add_recipe(kp, "p", &RecipeSpec {
+            id: "pag".into(), title: "Pag".into(), description: "".into(), tags: vec![], body: "steps".into(),
+        }).unwrap();
+        set_recipe_body(kp, "p", "pag", "# r\nfresh\n").unwrap();
+        assert!(recipe_md(kp, "p", "pag").unwrap().contains("fresh"));
+        assert!(set_recipe_body(kp, "p", "nope", "x").is_err());
     }
 
     #[test]

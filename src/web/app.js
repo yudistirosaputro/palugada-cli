@@ -84,10 +84,11 @@ async function renderProjects() {
   d.projects.forEach(p => {
     const opts = profs.map(pr =>
       `<option value="${esc(pr.id)}"${pr.id === p.profile ? " selected" : ""}>${esc(pr.id)}</option>`).join("");
-    const card = h(`<div class="card"><strong>${esc(p.name)}</strong>${p.active ? ' <span class="pill">active</span>' : ""}
+    const card = h(`<div class="card"><a class="link projlink"><strong>${esc(p.name)}</strong></a>${p.active ? ' <span class="pill">active</span>' : ""}
       <div class="muted">${esc(p.repo_path)}</div>
       <div class="row" style="margin-top:6px"><label style="margin:0">profile</label>
         <select class="proj-profile" style="max-width:240px">${opts}</select></div></div>`);
+    card.querySelector(".projlink").onclick = () => renderProjectDetail(p.name);
     card.querySelector(".proj-profile").onchange = async (e) => {
       try {
         await api(`/api/project/${encodeURIComponent(p.name)}/profile`, "POST", { profile: e.target.value });
@@ -99,6 +100,90 @@ async function renderProjects() {
     };
     view.appendChild(card);
   });
+}
+
+async function renderProjectDetail(name) {
+  view.innerHTML = `<h2>${esc(name)}</h2><p><a class="link" id="back">← projects</a></p>`;
+  document.getElementById("back").onclick = renderProjects;
+  let m;
+  try { m = await api("/api/project/" + encodeURIComponent(name) + "/skillmap"); }
+  catch (e) { toast(e.message, true); return; }
+  view.appendChild(h(`<div class="card"><span class="muted">profile:</span> <strong>${esc(m.profile)}</strong></div>`));
+  if (m.warnings && m.warnings.length) {
+    view.appendChild(h(`<div class="card warn"><strong>⚠ warnings</strong>${
+      m.warnings.map(w => `<div class="muted">• ${esc(w)}</div>`).join("")
+    }</div>`));
+  }
+  m.skills.forEach(s => view.appendChild(skillCard(m.profile, s)));
+}
+
+function skillCard(profile, s) {
+  const card = h(`<div class="card"></div>`);
+  const head = h(`<div class="row"><strong>${esc(s.name)}</strong> <span class="pill">${esc(s.kind)}</span><span class="spacer"></span></div>`);
+  card.appendChild(head);
+  if (s.command) card.appendChild(h(`<div class="muted"><code>${esc(s.command)}</code></div>`));
+  if (s.kind === "flow") {
+    const steps = h(`<div class="steps"></div>`);
+    (s.steps || []).forEach(st => steps.appendChild(stepRow(profile, st)));
+    if (!s.steps || !s.steps.length) steps.appendChild(h(`<div class="muted">no steps defined for this flow</div>`));
+    card.appendChild(steps);
+  } else if (s.kind === "tool") {
+    head.appendChild(s.enabled
+      ? h(`<span class="ok-pill">active</span>`)
+      : h(`<span class="warn-pill">⚠ needs ${esc((s.needs || []).join(" or "))}</span>`));
+  }
+  return card;
+}
+
+function stepRow(profile, st) {
+  if (st.kind === "engine")
+    return h(`<div class="step"><span class="step-tag engine">engine</span> <span class="muted">${esc(st.token)} — ${esc(st.label)}</span></div>`);
+  if (st.kind === "review_map") {
+    const rows = (st.expand || []).map(e =>
+      `<div class="muted" style="margin-left:18px">${esc(e.family)} → ${e.conventions.map(esc).join(", ")}</div>`).join("");
+    return h(`<div class="step"><span class="step-tag review">review_map</span> <span class="muted">by changed file kind</span>${rows}</div>`);
+  }
+  const missing = st.exists === false;
+  const row = h(`<div class="step"><span class="step-tag ${esc(st.kind)}">${esc(st.kind)}</span> <code>${esc(st.id)}</code>${
+    missing ? ' <span class="warn-pill">⚠ missing</span>'
+            : ' <a class="link doc-view">view</a> <a class="link doc-edit">edit</a>'
+  }</div>`);
+  if (!missing) {
+    row.querySelector(".doc-view").onclick = () => viewDoc(profile, st.kind, st.id);
+    row.querySelector(".doc-edit").onclick = () => editDoc(profile, st.kind, st.id);
+  }
+  return row;
+}
+
+async function viewDoc(profile, kind, id) {
+  try {
+    const b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`);
+    showBody(`${kind}: ${id}`, b.markdown);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function editDoc(profile, kind, id) {
+  let b;
+  try { b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`); }
+  catch (e) { toast(e.message, true); return; }
+  let card = document.getElementById("bodyview");
+  if (card) card.remove();
+  card = h(`<div class="card" id="bodyview">
+    <div class="row"><strong>edit ${esc(kind)}: ${esc(id)}</strong><span class="spacer"></span><a class="link" id="ed-close">close</a></div>
+    <div class="muted">Edits the profile's knowledge in <code>~/.palugada</code> (shared by all projects on '${esc(profile)}'); your project repo is not touched.</div>
+    <textarea id="ed-body" style="min-height:320px;width:100%"></textarea>
+    <div class="row" style="margin-top:6px"><span class="spacer"></span><button id="ed-save">Save</button></div></div>`);
+  card.querySelector("#ed-body").value = b.markdown;
+  view.insertBefore(card, view.children[1] || null);
+  card.querySelector("#ed-close").onclick = () => card.remove();
+  card.querySelector("#ed-save").onclick = async () => {
+    const markdown = card.querySelector("#ed-body").value;
+    try {
+      await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}/body`, "POST", { markdown });
+      toast(`saved ${kind} ${id}`);
+      card.remove();
+    } catch (e) { toast(e.message, true); }
+  };
 }
 
 async function renderProfiles() {

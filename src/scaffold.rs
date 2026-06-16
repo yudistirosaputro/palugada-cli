@@ -188,7 +188,7 @@ pub fn integration_kinds(pc: &crate::config::ProjectConfig) -> Vec<&'static str>
 }
 
 /// (flow id, Title, trigger phrase, verb phrase)
-const FLOW_SKILLS: &[(&str, &str, &str, &str)] = &[
+pub const FLOW_SKILLS: &[(&str, &str, &str, &str)] = &[
     ("bugfix", "Bugfix", "fixing a bug, crash, or regression", "fix a bug"),
     ("feature", "Feature", "building a new feature, screen, or endpoint", "build a feature"),
     ("refactor", "Refactor", "refactoring or restructuring existing code", "refactor code"),
