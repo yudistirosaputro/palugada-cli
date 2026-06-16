@@ -79,6 +79,9 @@ jobs:
           Copy-Item README.md $stage/
           Compress-Archive -Path "$stage/*" -DestinationPath "palugada-${{ matrix.target }}.zip" -Force
           (Get-FileHash "palugada-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower() + "  palugada-${{ matrix.target }}.zip" | Out-File -Encoding ascii "palugada-${{ matrix.target }}.zip.sha256"
+          # Also emit a .tar.gz (consumed by the npm channel; Windows 10+ ships bsdtar).
+          tar czf "palugada-${{ matrix.target }}.tar.gz" -C $stage .
+          (Get-FileHash "palugada-${{ matrix.target }}.tar.gz" -Algorithm SHA256).Hash.ToLower() + "  palugada-${{ matrix.target }}.tar.gz" | Out-File -Encoding ascii "palugada-${{ matrix.target }}.tar.gz.sha256"
 
       - name: Attach to release
         uses: softprops/action-gh-release@v2
@@ -119,25 +122,25 @@ jobs:
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Download release archives
+      - name: Download release checksums
         if: steps.gate.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"
-          mkdir -p dl dist
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p 'palugada-*.tar.gz' -p 'palugada-*.zip' -D dl
-          for f in dl/*.tar.gz; do n="$(basename "$f" .tar.gz)"; mkdir -p "dist/$n"; tar xzf "$f" -C "dist/$n"; done
-          for f in dl/*.zip;    do n="$(basename "$f" .zip)";    mkdir -p "dist/$n"; unzip -q "$f" -d "dist/$n"; done
+          mkdir -p dl
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" -p 'palugada-*.tar.gz.sha256' -D dl
       - name: Assemble & publish
         if: steps.gate.outputs.enabled == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           tag="${{ github.event.inputs.tag || github.ref_name }}"; ver="${tag#v}"
-          node npm/build-npm.mjs "$ver" dist
-          for d in npm/.staging/palugada-cli-*/; do (cd "$d" && npm publish --access public); done
-          (cd npm/.staging/palugada-cli && npm publish --access public)
+          node npm/gen-checksums.mjs dl npm/palugada-cli/checksums.json
+          cat npm/palugada-cli/checksums.json
+          cd npm/palugada-cli
+          npm version "$ver" --no-git-tag-version --allow-same-version
+          npm publish --access public
 
   homebrew:
     name: update Homebrew tap
