@@ -280,7 +280,7 @@ fn init_op(body: &str) -> Result<serde_json::Value, String> {
     let out = crate::scaffold::generate(&opts)?;
     Ok(json!({
         "ok": true, "name": out.name, "profile": out.profile,
-        "written": out.written, "skipped": out.skipped,
+        "written": out.written, "merged": out.merged, "skipped": out.skipped,
     }))
 }
 

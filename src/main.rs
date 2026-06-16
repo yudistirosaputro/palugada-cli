@@ -52,7 +52,7 @@ enum Commands {
         #[arg(long)]
         auth: Option<String>,
         /// Comma-separated agent targets: claude,codex,gemini,cursor.
-        #[arg(long, default_value = "claude")]
+        #[arg(long, default_value = "auto")]
         agents: String,
         /// Overwrite existing files.
         #[arg(long)]
@@ -258,8 +258,8 @@ enum ProjectCmd {
 enum SkillsCmd {
     /// Write any missing skill files for the active (or `--project`) project.
     Sync {
-        /// Comma-separated agent targets (default: claude).
-        #[arg(long, default_value = "claude")]
+        /// Comma-separated agent targets, or `auto` to detect existing guide files.
+        #[arg(long, default_value = "auto")]
         agents: String,
         /// Overwrite existing skill files instead of skipping them.
         #[arg(long)]
@@ -986,34 +986,39 @@ fn cmd_skills(action: SkillsCmd, project: Option<&str>) -> Result<(), String> {
                 .ok_or_else(|| format!("project '{name}' is not registered"))?;
             let pc = config::ProjectConfig::load_from(&entry.repo_path)?;
             let kinds = scaffold::integration_kinds(&pc);
-            let agents: Vec<String> = agents
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
+            let agents: Vec<String> = if agents.trim() == "auto" {
+                scaffold::detect_agents(std::path::Path::new(&entry.repo_path))
+            } else {
+                agents.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            };
             let repo = std::path::Path::new(&entry.repo_path);
             let mut files = scaffold::skill_files(&pc.profile, &kinds, &agents);
             if agents.iter().any(|a| a == "claude") {
                 let kn = knowledge::knowledge_dir(&global)?;
                 files.extend(scaffold::custom_skill_files(&kn, &pc.profile));
             }
-            let (mut wrote, mut skipped) = (0usize, 0usize);
+            let (mut written, mut skipped, mut merged) = (Vec::new(), Vec::new(), Vec::new());
             for (rel, body) in files {
-                let p = repo.join(&rel);
-                if p.exists() && !force {
-                    skipped += 1;
-                    continue;
-                }
-                if let Some(parent) = p.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
-                }
-                std::fs::write(&p, body).map_err(|e| format!("write {}: {e}", p.display()))?;
-                println!("  wrote    {}", p.display());
-                wrote += 1;
+                scaffold::write_agent_file(&repo.join(&rel), &body, force, &mut written, &mut skipped, &mut merged)?;
             }
-            println!("skills sync — '{name}' (profile {}): wrote {wrote}, skipped {skipped} (exist)", pc.profile);
-            if skipped > 0 && !force {
-                println!("  use --force to overwrite existing skill files");
+            for w in &written {
+                println!("  wrote    {w}");
+            }
+            for m in &merged {
+                println!("  merged   {m}  (palugada section)");
+            }
+            for s in &skipped {
+                println!("  skipped  {s}  (exists)");
+            }
+            println!(
+                "skills sync — '{name}' (profile {}): {} wrote, {} merged, {} skipped",
+                pc.profile,
+                written.len(),
+                merged.len(),
+                skipped.len()
+            );
+            if !skipped.is_empty() && !force {
+                println!("  use --force to overwrite existing palugada-owned files");
             }
             Ok(())
         }
