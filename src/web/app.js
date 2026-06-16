@@ -109,12 +109,88 @@ async function renderProjectDetail(name) {
   try { m = await api("/api/project/" + encodeURIComponent(name) + "/skillmap"); }
   catch (e) { toast(e.message, true); return; }
   view.appendChild(h(`<div class="card"><span class="muted">profile:</span> <strong>${esc(m.profile)}</strong></div>`));
+  try {
+    const cfg = await api("/api/project/" + encodeURIComponent(name) + "/config");
+    view.appendChild(credentialsCard(name, cfg));
+  } catch (e) { toast(e.message, true); }
   if (m.warnings && m.warnings.length) {
     view.appendChild(h(`<div class="card warn"><strong>⚠ warnings</strong>${
       m.warnings.map(w => `<div class="muted">• ${esc(w)}</div>`).join("")
     }</div>`));
   }
   m.skills.forEach(s => view.appendChild(skillCard(m.profile, s)));
+}
+
+function credentialsCard(name, cfg) {
+  const card = h(`<div class="card"><h3>Credentials &amp; Integrations</h3>
+    <label>auth profile</label><input id="cd-auth" value="${esc(cfg.auth_profile || "default")}">
+    <div class="muted">Shared by all projects using this auth-profile name.</div></div>`);
+  const CAPS = [
+    ["issue_tracker", "Issue tracker", true],
+    ["wiki", "Wiki", false],
+    ["git_host", "Git host", true],
+    ["design", "Design", false],
+    ["ci", "CI", true],
+    ["chat", "Chat", false],
+  ];
+  const intWrap = h(`<div></div>`);
+  CAPS.forEach(([cap, label, hasRepo]) => {
+    const cur = cfg.integrations[cap] || {};
+    const opts = ["(none)", ...(cfg.providers[cap] || [])]
+      .map(p => `<option${(cur.provider || "(none)") === p ? " selected" : ""}>${esc(p)}</option>`).join("");
+    const row = h(`<div class="cd-int" data-cap="${cap}">
+      <div class="row"><strong style="min-width:110px">${esc(label)}</strong>
+        <select class="cd-prov">${opts}</select>
+        <span class="spacer"></span><a class="link cd-verify">Verify</a> <span class="cd-vres"></span></div>
+      <input class="cd-base" placeholder="base_url" value="${esc(cur.base_url || "")}">
+      ${hasRepo ? `<input class="cd-repo" placeholder="repo (owner/name)" value="${esc(cur.repo || "")}">` : ""}
+    </div>`);
+    row.querySelector(".cd-verify").onclick = async () => {
+      const res = row.querySelector(".cd-vres");
+      res.textContent = "…"; res.className = "cd-vres muted";
+      try {
+        const r = await api(`/api/project/${encodeURIComponent(name)}/verify/${cap}`, "POST", {});
+        res.textContent = r.ok ? ("✓ " + (r.message || "ok")) : ("✗ " + (r.error || "failed"));
+        res.className = "cd-vres " + (r.ok ? "ok-pill" : "warn-pill");
+      } catch (e) { res.textContent = "✗ " + e.message; res.className = "cd-vres warn-pill"; }
+    };
+    intWrap.appendChild(row);
+  });
+  card.appendChild(intWrap);
+
+  const sec = cfg.secrets || {};
+  const tok = (k, label) => `<label>${label}</label><input class="cd-sec" data-k="${k}" type="password" placeholder="${esc(sec[k] || "(unset)")} — blank = keep">`;
+  const txt = (k, label) => `<label>${label}</label><input class="cd-txt" data-k="${k}" value="${esc(sec[k] || "")}">`;
+  card.appendChild(h(`<div style="margin-top:10px;border-top:1px solid #2b313c;padding-top:8px"><strong>Tokens</strong>
+    ${tok("jira_token", "jira_token")}${txt("jira_email", "jira_email")}
+    ${tok("wiki_token", "wiki_token")}${txt("wiki_email", "wiki_email")}
+    ${tok("figma_token", "figma_token")}
+    ${txt("jenkins_user", "jenkins_user")}${tok("jenkins_token", "jenkins_token")}
+    ${tok("git_token", "git_token")}${tok("chat_webhook", "chat_webhook")}
+    <div class="muted">Blank token = unchanged. Stored in ~/.palugada/secrets.yaml (0600); never echoed back in full.</div></div>`));
+
+  const save = h(`<div class="row" style="margin-top:10px"><span class="spacer"></span><button id="cd-save">Save credentials</button></div>`);
+  card.appendChild(save);
+  save.querySelector("#cd-save").onclick = async () => {
+    const integrations = {};
+    intWrap.querySelectorAll(".cd-int").forEach(row => {
+      const repoEl = row.querySelector(".cd-repo");
+      integrations[row.dataset.cap] = {
+        provider: row.querySelector(".cd-prov").value,
+        base_url: row.querySelector(".cd-base").value,
+        repo: repoEl ? repoEl.value : "",
+      };
+    });
+    const secrets = {};
+    card.querySelectorAll(".cd-sec, .cd-txt").forEach(i => { secrets[i.dataset.k] = i.value; });
+    try {
+      await api(`/api/project/${encodeURIComponent(name)}/config`, "POST",
+        { auth_profile: card.querySelector("#cd-auth").value, integrations, secrets });
+      toast("saved credentials");
+      renderProjectDetail(name);
+    } catch (e) { toast(e.message, true); }
+  };
+  return card;
 }
 
 function skillCard(profile, s) {
