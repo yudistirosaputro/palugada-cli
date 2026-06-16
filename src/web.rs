@@ -31,6 +31,9 @@ pub enum Route {
     AddRecipe(String),
     SetProjectProfile(String),
     Init,
+    SkillMap(String),
+    SetConventionBody(String, String),
+    SetRecipeBody(String, String),
     NotFound,
 }
 
@@ -56,6 +59,13 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", ["api", "profile", id, "recipe"]) => Route::AddRecipe((*id).to_string()),
         ("POST", ["api", "project", name, "profile"]) => Route::SetProjectProfile((*name).to_string()),
         ("POST", ["api", "init"]) => Route::Init,
+        ("GET", ["api", "project", name, "skillmap"]) => Route::SkillMap((*name).to_string()),
+        ("POST", ["api", "profile", id, "convention", cid, "body"]) => {
+            Route::SetConventionBody((*id).to_string(), (*cid).to_string())
+        }
+        ("POST", ["api", "profile", id, "recipe", rid, "body"]) => {
+            Route::SetRecipeBody((*id).to_string(), (*rid).to_string())
+        }
         _ => Route::NotFound,
     }
 }
@@ -147,6 +157,13 @@ fn api(route: Route, body: &str) -> (u16, String) {
         }),
         Route::SetProjectProfile(name) => write_op(|| set_project_profile(&name, body)),
         Route::Init => write_op(|| init_op(body)),
+        Route::SkillMap(name) => read(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            Ok(jv(&crate::skillmap::skillmap(&global, &name)?))
+        }),
+        Route::SetConventionBody(id, cid) => write_op(|| set_doc_body(&id, "convention", &cid, body)),
+        Route::SetRecipeBody(id, rid) => write_op(|| set_doc_body(&id, "recipe", &rid, body)),
         _ => (501, err_json("not implemented yet")),
     }
 }
@@ -222,6 +239,22 @@ fn set_project_profile(name: &str, body: &str) -> Result<serde_json::Value, Stri
         .ok_or_else(|| format!("project '{name}' is not registered"))?;
     crate::config::set_profile(&entry.repo_path, &req.profile)?;
     Ok(json!({ "ok": true, "name": name, "profile": req.profile }))
+}
+
+/// Overwrite a convention/recipe markdown body verbatim (edit from the web).
+fn set_doc_body(profile: &str, kind: &str, id: &str, body: &str) -> Result<serde_json::Value, String> {
+    #[derive(serde::Deserialize)]
+    struct Req {
+        markdown: String,
+    }
+    let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let kn = knowledge_dir()?;
+    match kind {
+        "convention" => crate::knowledge::set_convention_body(&kn, profile, id, &req.markdown)?,
+        "recipe" => crate::knowledge::set_recipe_body(&kn, profile, id, &req.markdown)?,
+        other => return Err(format!("unknown doc kind '{other}'")),
+    }
+    Ok(json!({ "ok": true, "id": id }))
 }
 
 fn init_op(body: &str) -> Result<serde_json::Value, String> {
@@ -385,6 +418,15 @@ mod tests {
         assert_eq!(route("POST", "/api/profile/p/convention"), Route::AddConvention("p".into()));
         assert_eq!(route("POST", "/api/init"), Route::Init);
         assert_eq!(route("POST", "/api/project/x/profile"), Route::SetProjectProfile("x".into()));
+        assert_eq!(route("GET", "/api/project/app/skillmap"), Route::SkillMap("app".into()));
+        assert_eq!(
+            route("POST", "/api/profile/p/convention/c/body"),
+            Route::SetConventionBody("p".into(), "c".into())
+        );
+        assert_eq!(
+            route("POST", "/api/profile/p/recipe/r/body"),
+            Route::SetRecipeBody("p".into(), "r".into())
+        );
         assert_eq!(route("GET", "/nope"), Route::NotFound);
     }
 
