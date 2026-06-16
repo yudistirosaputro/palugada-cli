@@ -116,22 +116,24 @@ warning.
   calling `skillmap::skillmap(...)` (name is URL-decoded like
   `set_project_profile`).
 - `POST /api/profile/{id}/convention/{cid}/body` → `Route::SetConventionBody(id, cid)`
-  → write handler calling `knowledge::set_convention_body(kn, id, cid, markdown)`.
-  Body: `{ "markdown": "..." }`.
+  → `knowledge::set_convention_body(kn, id, cid, markdown)`. Body: `{ "markdown": "..." }`.
+- `POST /api/profile/{id}/recipe/{rid}/body` → `Route::SetRecipeBody(id, rid)`
+  → `knowledge::set_recipe_body(kn, id, rid, markdown)`. Body: `{ "markdown": "..." }`.
 
-Recipe edits reuse the existing `POST /api/profile/{id}/recipe` (its writer
-already takes a raw `body` and upserts), pre-filled by the frontend from the
-recipe's current meta + body.
+Both edit the raw `.md` **verbatim** (the editor pre-fills from the existing
+`convention_md`/`recipe_md` GET). Metadata in `_index.json` is intentionally left
+untouched, so `q --list` titles/descriptions stay stable across body edits.
 
-### 4. `src/knowledge.rs` — `set_convention_body`
+### 4. `src/knowledge.rs` — `set_convention_body` / `set_recipe_body`
 
 ```
 pub fn set_convention_body(kn, profile, id, markdown) -> Result<(), String>
+pub fn set_recipe_body(kn, profile, id, markdown) -> Result<(), String>
 ```
-Overwrites `conventions/<id>.md` with `markdown` verbatim, leaving the existing
-`_index.json` metadata (title/desc/tags) untouched. Errors if the convention id
-is not already registered (edit-only; creation stays with the section-based
-`add_convention`). Round-trip unit-tested.
+Each overwrites `conventions/<id>.md` (resp. `recipes/<id>.md`) with `markdown`
+verbatim. Edit-only: errors if the file doesn't already exist (creation stays
+with the section/body-based `add_convention`/`add_recipe`). Round-trip
+unit-tested.
 
 ### 5. `src/web/app.js` — per-project detail view
 
@@ -150,12 +152,9 @@ is not already registered (edit-only; creation stays with the section-based
     - custom skills: name only in phase 1 (no body view endpoint yet).
   - `warnings[]` rendered at top of the section.
 - `[view]` reuses `showBody` against the existing convention/recipe body endpoint.
-- `[edit]`:
-  - convention → editor with one `<textarea>` pre-filled from the body endpoint;
-    Save → `POST /api/profile/<id>/convention/<cid>/body { markdown }` → re-render.
-  - recipe → editor pre-filled from body + carries the recipe's current
-    title/desc/tags (from the profile detail data) → `POST .../recipe` (upsert)
-    → re-render.
+- `[edit]`: editor with one `<textarea>` pre-filled from the body GET endpoint;
+  Save → `POST /api/profile/<id>/convention/<cid>/body` (or `.../recipe/<rid>/body`)
+  `{ markdown }` → re-render. (Verbatim `.md`, including its front-matter.)
   - A muted note: "edits the profile's knowledge in ~/.palugada (shared by all
     projects on this profile); the project repo is not touched."
 
@@ -183,8 +182,8 @@ is not already registered (edit-only; creation stays with the section-based
   - tool-skill gating matches `scaffold` for the same `kinds`.
 - **Route test** (`src/web.rs`): `route("GET", "/api/project/x/skillmap")` and
   `route("POST", "/api/profile/p/convention/c/body")` parse correctly.
-- **knowledge**: `set_convention_body` round-trip (write → `convention` body
-  reflects it; metadata preserved; unknown id errors).
+- **knowledge**: `set_convention_body` / `set_recipe_body` round-trip (write →
+  body GET reflects it; `_index.json` metadata preserved; unknown id errors).
 - **Manual e2e**: `palugada web` → Projects → open a project → verify the map
   renders bugfix/feature/refactor/review with concrete conventions, review
   expands via review_map, a disabled tool skill shows `needs git_host`; edit a
