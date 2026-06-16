@@ -163,6 +163,94 @@ fn write_file(
     Ok(())
 }
 
+const MARK_START: &str = "<!-- palugada:start -->";
+const MARK_END: &str = "<!-- palugada:end -->";
+
+#[derive(Debug, PartialEq)]
+enum SectionWrite {
+    Created,
+    Merged,
+    Unchanged,
+}
+
+fn marked_block(content: &str) -> String {
+    format!("{MARK_START}\n{}\n{MARK_END}\n", content.trim_end())
+}
+
+/// Insert-or-replace a palugada marker block in `path`, preserving any other
+/// content. Creates the file (and parents) if absent.
+fn upsert_marked_section(path: &Path, content: &str) -> Result<SectionWrite, String> {
+    let block = marked_block(content);
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        fs::write(path, &block).map_err(|e| format!("write {}: {e}", path.display()))?;
+        return Ok(SectionWrite::Created);
+    }
+    let existing = fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let updated = match (existing.find(MARK_START), existing.find(MARK_END)) {
+        (Some(s), Some(e)) if e > s => {
+            let end = e + MARK_END.len();
+            format!("{}{}{}", &existing[..s], block.trim_end(), &existing[end..])
+        }
+        _ => {
+            let sep = if existing.ends_with('\n') { "\n" } else { "\n\n" };
+            format!("{existing}{sep}{block}")
+        }
+    };
+    if updated == existing {
+        return Ok(SectionWrite::Unchanged);
+    }
+    fs::write(path, &updated).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(SectionWrite::Merged)
+}
+
+/// Write one generated agent file. The three user-owned root guides
+/// (CLAUDE.md/AGENTS.md/GEMINI.md) upsert a marker block (preserving user
+/// content); every other path uses the write-if-missing/`--force` path.
+pub fn write_agent_file(
+    path: &Path,
+    content: &str,
+    force: bool,
+    written: &mut Vec<String>,
+    skipped: &mut Vec<String>,
+    merged: &mut Vec<String>,
+) -> Result<(), String> {
+    let base = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if matches!(base, "CLAUDE.md" | "AGENTS.md" | "GEMINI.md") {
+        match upsert_marked_section(path, content)? {
+            SectionWrite::Created => written.push(path.display().to_string()),
+            SectionWrite::Merged => merged.push(path.display().to_string()),
+            SectionWrite::Unchanged => skipped.push(path.display().to_string()),
+        }
+        Ok(())
+    } else {
+        write_file(path, content, force, written, skipped)
+    }
+}
+
+/// Agents a repo already uses, by which guide files exist; `["claude"]` if none.
+pub fn detect_agents(repo: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    if repo.join("CLAUDE.md").exists() {
+        out.push("claude".to_string());
+    }
+    if repo.join("AGENTS.md").exists() {
+        out.push("codex".to_string());
+    }
+    if repo.join("GEMINI.md").exists() {
+        out.push("gemini".to_string());
+    }
+    if repo.join(".cursor").exists() {
+        out.push("cursor".to_string());
+    }
+    if out.is_empty() {
+        out.push("claude".to_string());
+    }
+    out
+}
+
 // ── templates (placeholder-substituted to avoid brace escaping) ───────────
 
 fn config_skeleton(name: &str, profile: &str, auth: &str) -> String {
@@ -486,6 +574,42 @@ integrations:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn upsert_marked_section_creates_appends_replaces() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("AGENTS.md");
+
+        assert!(matches!(upsert_marked_section(&p, "hello").unwrap(), SectionWrite::Created));
+        let v1 = std::fs::read_to_string(&p).unwrap();
+        assert!(v1.contains(MARK_START) && v1.contains("hello") && v1.contains(MARK_END));
+
+        assert!(matches!(upsert_marked_section(&p, "hello").unwrap(), SectionWrite::Unchanged));
+
+        assert!(matches!(upsert_marked_section(&p, "world").unwrap(), SectionWrite::Merged));
+        let v2 = std::fs::read_to_string(&p).unwrap();
+        assert!(v2.contains("world") && !v2.contains("hello"));
+        assert_eq!(v2.matches(MARK_START).count(), 1);
+
+        let u = tmp.path().join("CLAUDE.md");
+        std::fs::write(&u, "# My notes\nkeep me\n").unwrap();
+        assert!(matches!(upsert_marked_section(&u, "palu").unwrap(), SectionWrite::Merged));
+        let uv = std::fs::read_to_string(&u).unwrap();
+        assert!(uv.starts_with("# My notes\nkeep me\n"));
+        assert!(uv.contains(MARK_START) && uv.contains("palu"));
+    }
+
+    #[test]
+    fn detect_agents_reads_existing_guides() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = tmp.path();
+        assert_eq!(detect_agents(r), vec!["claude".to_string()]);
+        std::fs::write(r.join("AGENTS.md"), "x").unwrap();
+        assert_eq!(detect_agents(r), vec!["codex".to_string()]);
+        std::fs::write(r.join("CLAUDE.md"), "x").unwrap();
+        std::fs::write(r.join("GEMINI.md"), "x").unwrap();
+        assert_eq!(detect_agents(r), vec!["claude".to_string(), "codex".to_string(), "gemini".to_string()]);
+    }
 
     #[test]
     fn custom_skill_files_reads_profile_skills_dir() {
