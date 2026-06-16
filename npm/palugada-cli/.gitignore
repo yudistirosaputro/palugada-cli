@@ -1,0 +1,4 @@
+vendor/
+vendor.tmp/
+checksums.json
+*.tgz

@@ -1,21 +1,22 @@
 {
   "name": "palugada-cli",
-  "version": "0.0.0",
+  "version": "0.1.1",
   "description": "Project-agnostic developer knowledge & connector CLI — one binary for stack conventions, task recipes, code indexing, and Jira/Confluence/GitLab/GitHub/Figma/Jenkins connectors.",
   "license": "MIT",
   "bin": {
     "palugada": "bin/palugada.js"
   },
+  "scripts": {
+    "postinstall": "node install.js",
+    "test": "node --test"
+  },
   "files": [
     "bin/palugada.js",
+    "install.js",
+    "lib/",
+    "checksums.json",
     "README.md"
   ],
-  "optionalDependencies": {
-    "palugada-cli-linux-x64": "0.0.0",
-    "palugada-cli-darwin-arm64": "0.0.0",
-    "palugada-cli-darwin-x64": "0.0.0",
-    "palugada-cli-win32-x64": "0.0.0"
-  },
   "engines": {
     "node": ">=16"
   },

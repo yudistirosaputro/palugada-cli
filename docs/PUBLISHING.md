@@ -29,13 +29,23 @@ pass the tag as input.
 
 ### npm
 1. Create an npm account; ensure the package name `palugada-cli` is available
-   (or change `name` in `npm/palugada-cli/package.json` and the package names in
-   `npm/build-npm.mjs` + `bin/palugada.js` to a scope like `@you/palugada`).
-2. Create an **automation** access token (npmjs → Access Tokens).
+   (or change `name` in `npm/palugada-cli/package.json` + `OWNER_REPO` in
+   `npm/palugada-cli/lib/resolve.js` to a scope like `@you/palugada-cli`).
+2. Create an **automation** access token (npmjs → Access Tokens). A plain
+   "publish" token fails in CI if your account enforces 2FA.
 3. Add it as the repo secret **`NPM_TOKEN`**.
 
-Publishes `palugada-cli` plus four platform packages (`palugada-cli-linux-x64`,
-`-darwin-arm64`, `-darwin-x64`, `-win32-x64`). Users then:
+> The GitHub repository (or at least its releases) must be **public** — the
+> install downloads release assets anonymously. Private-repo assets 404 for
+> users without a token.
+
+The release job publishes a single `palugada-cli` package (JS only, zero
+dependencies). On install its `postinstall` downloads the matching
+`palugada-<triple>.tar.gz` from this release and verifies it against the
+`checksums.json` bundled in the npm tarball (generated from the release
+`.sha256` files at publish time). The `bin` launcher re-downloads lazily if
+`postinstall` was skipped (`--ignore-scripts`); set `PALUGADA_SKIP_DOWNLOAD=1`
+to opt out. Users then:
 
 ```bash
 npm install -g palugada-cli   # or: npx palugada-cli q --list
@@ -74,8 +84,9 @@ Every channel keeps `knowledge/` next to the binary:
 - **Archive / `install.sh` / Homebrew / Scoop** — the binary canonicalizes its
   own path and walks up to find `knowledge/profiles` (`src/knowledge.rs`), so a
   symlinked launcher on `PATH` still resolves it.
-- **npm** — the JS launcher sets `PALUGADA_KNOWLEDGE` to the bundled dir; Scoop
-  sets it via `env_set`.
+- **npm** — `postinstall` extracts the release tarball (binary + `knowledge/`)
+  into the package's `vendor/`; the launcher sets `PALUGADA_KNOWLEDGE` to
+  `vendor/knowledge`. Scoop sets it via `env_set`.
 
 ## License metadata
 
