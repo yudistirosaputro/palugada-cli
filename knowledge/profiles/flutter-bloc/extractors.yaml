@@ -1,0 +1,25 @@
+schema_version: "1.0"
+ignore_dirs: [".git", ".dart_tool", "build", ".palugada", "node_modules", ".idea"]
+# Fact families use class-suffix regex for precise per-kind lookups (a Cubit must
+# not also surface as a State). The bundled Dart tree-sitter grammar still powers
+# the generic symbols.json (`palugada symbol`) over every class/function.
+families:
+  - id: cubit
+    ext: [dart]
+    regex: 'class\s+(?P<name>\w+Cubit)\b'
+  - id: state
+    ext: [dart]
+    regex: 'class\s+(?P<name>\w+(?:State|Initial|Loading|Loaded|Error))\b'
+  - id: page
+    ext: [dart]
+    regex: 'class\s+(?P<name>\w+Page)\b'
+  - id: repository
+    ext: [dart]
+    regex: 'class\s+(?P<name>\w+Repository(?:Impl)?)\b'
+  - id: datasource
+    ext: [dart]
+    regex: 'class\s+(?P<name>\w+DataSource(?:Impl)?)\b'
+  - id: route
+    ext: [dart]
+    path_contains: routes
+    regex: 'static\s+const\s+(?:String\s+)?(?P<name>\w+)\s*='

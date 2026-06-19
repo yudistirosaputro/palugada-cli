@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "recipes": [
+    {
+      "id": "feature",
+      "title": "Add a subcommand",
+      "file": "feature.md",
+      "description": "End-to-end recipe for a new CLI subcommand — clap variant, cmd_ handler, owning module, dispatch wiring, and inline tests.",
+      "tags": ["feature", "subcommand", "clap"]
+    },
+    {
+      "id": "refactor",
+      "title": "Extract a pure helper",
+      "file": "refactor.md",
+      "description": "Lift pure logic out of an I/O function into a tested helper (or split an overgrown module), keeping tests green throughout.",
+      "tags": ["refactor", "extract", "tdd", "module-split"]
+    }
+  ]
+}

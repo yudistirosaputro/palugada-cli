@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "recipes": [
+    {
+      "id": "feature",
+      "title": "Scaffold a feature package",
+      "file": "feature.md",
+      "description": "End-to-end recipe for a new feature — workspace package, data/domain/presentation layers, Cubit + State, Page, GetIt registration, and a route.",
+      "tags": ["feature", "scaffold", "clean-architecture"]
+    },
+    {
+      "id": "refactor",
+      "title": "Extract a widget / split a Cubit",
+      "file": "refactor.md",
+      "description": "Pull a sub-tree out of a Page into its own View widget, or split an overgrown Cubit, keeping bloc_tests green and DI registration in sync.",
+      "tags": ["refactor", "widget", "cubit"]
+    }
+  ]
+}

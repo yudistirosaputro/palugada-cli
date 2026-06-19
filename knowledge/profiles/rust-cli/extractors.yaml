@@ -1,0 +1,10 @@
+schema_version: "1.0"
+ignore_dirs: [".git", "target", ".palugada", "node_modules", "dist"]
+families:
+  - id: command
+    ext: [rs]
+    regex: 'fn\s+(?P<name>cmd_\w+)'
+  - id: trait
+    ext: [rs]
+    language: rust
+    query: extractors/trait.scm
