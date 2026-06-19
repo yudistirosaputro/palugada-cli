@@ -143,6 +143,17 @@ fn read_conv_index(kn: &Path, profile: &str) -> Result<ConvIndex, String> {
     serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))
 }
 
+/// Read `<conv_dir>/_index.json`; a missing dir/file yields an empty index
+/// (a project with no convention overlay).
+fn read_conv_index_in(conv_dir: &Path) -> Result<ConvIndex, String> {
+    let p = conv_dir.join("_index.json");
+    if !p.exists() {
+        return Ok(ConvIndex::default());
+    }
+    let data = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
+    serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))
+}
+
 fn read_recipe_index(kn: &Path, profile: &str) -> Result<RecipeIndex, String> {
     let p = kn.join("profiles").join(profile).join("recipes").join("_index.json");
     let data = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
@@ -168,9 +179,10 @@ pub struct RecipeMeta {
     pub tags: Vec<String>,
 }
 
-/// The profile's conventions as data (id/title/description/tags + section titles).
-pub fn conventions(kn: &Path, profile: &str) -> Result<Vec<TopicMeta>, String> {
-    Ok(read_conv_index(kn, profile)?
+/// Conventions in an arbitrary conventions dir (profile or per-project overlay)
+/// as data. A missing dir/index yields an empty list.
+pub fn conventions_in(conv_dir: &Path) -> Result<Vec<TopicMeta>, String> {
+    Ok(read_conv_index_in(conv_dir)?
         .topics
         .into_iter()
         .map(|t| TopicMeta {
@@ -183,6 +195,11 @@ pub fn conventions(kn: &Path, profile: &str) -> Result<Vec<TopicMeta>, String> {
         .collect())
 }
 
+/// The profile's conventions as data (id/title/description/tags + section titles).
+pub fn conventions(kn: &Path, profile: &str) -> Result<Vec<TopicMeta>, String> {
+    conventions_in(&kn.join("profiles").join(profile).join("conventions"))
+}
+
 /// The profile's recipes as data.
 pub fn recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
     Ok(read_recipe_index(kn, profile)?
@@ -192,10 +209,15 @@ pub fn recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
         .collect())
 }
 
+/// Raw markdown of one convention file in an arbitrary conventions dir.
+pub fn convention_md_in(conv_dir: &Path, id: &str) -> Result<String, String> {
+    let p = conv_dir.join(format!("{id}.md"));
+    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
+}
+
 /// Raw markdown of one convention file.
 pub fn convention_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
-    let p = kn.join("profiles").join(profile).join("conventions").join(format!("{id}.md"));
-    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
+    convention_md_in(&kn.join("profiles").join(profile).join("conventions"), id)
 }
 
 /// Raw markdown of one recipe file.
@@ -294,9 +316,15 @@ fn upsert_index(path: &Path, array_key: &str, id: &str, entry: serde_json::Value
 /// Author a convention: write `<id>.md` (front-matter + `## Title {#slug}`
 /// sections) and upsert it into `conventions/_index.json`.
 pub fn add_convention(kn: &Path, profile: &str, spec: &ConventionSpec) -> Result<(), String> {
+    add_convention_in(&kn.join("profiles").join(profile).join("conventions"), spec)
+}
+
+/// Author a convention into an arbitrary conventions dir (profile or overlay):
+/// write `<id>.md` (front-matter + `## Title {#slug}` sections) and upsert it
+/// into that dir's `_index.json`.
+pub fn add_convention_in(dir: &Path, spec: &ConventionSpec) -> Result<(), String> {
     validate_doc_id(&spec.id)?;
-    let dir = kn.join("profiles").join(profile).join("conventions");
-    fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
 
     let mut fm = format!(
         "---\nid: {}\ntitle: {}\ndescription: {}\nsections:\n",
@@ -354,7 +382,18 @@ pub fn add_recipe(kn: &Path, profile: &str, spec: &RecipeSpec) -> Result<(), Str
 
 /// Overwrite an existing convention's markdown verbatim (edit-only).
 pub fn set_convention_body(kn: &Path, profile: &str, id: &str, markdown: &str) -> Result<(), String> {
-    set_doc_body(kn, profile, "conventions", id, markdown)
+    set_convention_body_in(&kn.join("profiles").join(profile).join("conventions"), id, markdown)
+}
+
+/// Overwrite an existing convention's markdown verbatim in an arbitrary dir
+/// (edit-only); errors if the file does not already exist.
+pub fn set_convention_body_in(conv_dir: &Path, id: &str, markdown: &str) -> Result<(), String> {
+    validate_doc_id(id)?;
+    let p = conv_dir.join(format!("{id}.md"));
+    if !p.exists() {
+        return Err(format!("convention '{id}' does not exist in {}", conv_dir.display()));
+    }
+    fs::write(&p, markdown).map_err(|e| format!("write {}: {e}", p.display()))
 }
 
 /// Overwrite an existing recipe's markdown verbatim (edit-only).
@@ -454,15 +493,17 @@ fn convention_outline_str(raw: &str, name: &str) -> String {
     out
 }
 
-pub fn convention_outline(kn: &Path, profile: &str, name: &str) -> Result<String, String> {
-    let path = kn
-        .join("profiles")
-        .join(profile)
-        .join("conventions")
-        .join(format!("{name}.md"));
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("no convention '{name}' in profile '{profile}': {e}"))?;
+/// Outline (description + section titles) of one convention in an arbitrary dir.
+pub fn convention_outline_in(conv_dir: &Path, name: &str) -> Result<String, String> {
+    let raw = convention_md_in(conv_dir, name)
+        .map_err(|_| format!("no convention '{name}' in {}", conv_dir.display()))?;
     Ok(convention_outline_str(&raw, name))
+}
+
+pub fn convention_outline(kn: &Path, profile: &str, name: &str) -> Result<String, String> {
+    let conv_dir = kn.join("profiles").join(profile).join("conventions");
+    convention_outline_in(&conv_dir, name)
+        .map_err(|_| format!("no convention '{name}' in profile '{profile}'"))
 }
 
 pub fn recipe_body(kn: &Path, profile: &str, task: &str) -> Result<String, String> {
@@ -689,6 +730,38 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, "arch");
         assert_eq!(v[0].sections, vec!["Overview".to_string()]);
+    }
+
+    #[test]
+    fn conventions_in_missing_dir_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("conventions"); // does not exist
+        assert!(conventions_in(&dir).unwrap().is_empty());
+    }
+
+    #[test]
+    fn add_convention_in_then_read_and_override_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("conventions");
+        let spec = ConventionSpec {
+            id: "ours".into(),
+            title: "Ours".into(),
+            description: "team rule".into(),
+            tags: vec!["kt".into()],
+            sections: vec![SectionSpec { title: "Rule".into(), body: "do X".into(), code: false }],
+        };
+        add_convention_in(&dir, &spec).unwrap();
+        let metas = conventions_in(&dir).unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, "ours");
+        assert!(convention_md_in(&dir, "ours").unwrap().contains("do X"));
+        assert!(convention_outline_in(&dir, "ours").unwrap().contains("team rule"));
+
+        set_convention_body_in(&dir, "ours", "---\nid: ours\n---\n# Ours\nnew body\n").unwrap();
+        assert!(convention_md_in(&dir, "ours").unwrap().contains("new body"));
+
+        // edit-only: unknown id errors
+        assert!(set_convention_body_in(&dir, "nope", "x").is_err());
     }
 
     #[test]
