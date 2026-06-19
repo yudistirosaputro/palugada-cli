@@ -37,6 +37,11 @@ pub enum Route {
     ProjectConfig(String),
     SaveProjectConfig(String),
     VerifyCapability(String, String),
+    ProjectRules(String),
+    OverlayConventionBody(String, String),
+    AddOverlayConvention(String),
+    SetOverlayConventionBody(String, String),
+    SetOverlayReviewMap(String),
     NotFound,
 }
 
@@ -73,6 +78,19 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", ["api", "project", name, "config"]) => Route::SaveProjectConfig((*name).to_string()),
         ("POST", ["api", "project", name, "verify", cap]) => {
             Route::VerifyCapability((*name).to_string(), (*cap).to_string())
+        }
+        ("GET", ["api", "project", name, "rules"]) => Route::ProjectRules((*name).to_string()),
+        ("GET", ["api", "project", name, "convention", id]) => {
+            Route::OverlayConventionBody((*name).to_string(), (*id).to_string())
+        }
+        ("POST", ["api", "project", name, "convention"]) => {
+            Route::AddOverlayConvention((*name).to_string())
+        }
+        ("POST", ["api", "project", name, "convention", id, "body"]) => {
+            Route::SetOverlayConventionBody((*name).to_string(), (*id).to_string())
+        }
+        ("POST", ["api", "project", name, "review-map"]) => {
+            Route::SetOverlayReviewMap((*name).to_string())
         }
         _ => Route::NotFound,
     }
@@ -187,6 +205,49 @@ fn api(route: Route, body: &str) -> (u16, String) {
             let name = crate::http::decode_segment(&name);
             crate::credentials::verify_capability(&global, &name, &cap)
         }),
+        Route::ProjectRules(name) => read(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            Ok(jv(&crate::effective::effective_rules(&global, &name)?))
+        }),
+        Route::OverlayConventionBody(name, id) => read(|| {
+            let repo = project_repo(&name)?;
+            let markdown =
+                crate::knowledge::convention_md_in(&crate::effective::overlay_dir(&repo), &id)?;
+            Ok(json!({ "markdown": markdown }))
+        }),
+        Route::AddOverlayConvention(name) => write_op(|| {
+            let repo = project_repo(&name)?;
+            let spec: crate::knowledge::ConventionSpec =
+                serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            crate::knowledge::add_convention_in(&crate::effective::overlay_dir(&repo), &spec)?;
+            Ok(json!({ "ok": true, "id": spec.id }))
+        }),
+        Route::SetOverlayConventionBody(name, id) => write_op(|| {
+            #[derive(serde::Deserialize)]
+            struct Req {
+                markdown: String,
+            }
+            let repo = project_repo(&name)?;
+            let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            crate::knowledge::set_convention_body_in(
+                &crate::effective::overlay_dir(&repo),
+                &id,
+                &req.markdown,
+            )?;
+            Ok(json!({ "ok": true, "id": id }))
+        }),
+        Route::SetOverlayReviewMap(name) => write_op(|| {
+            #[derive(serde::Deserialize)]
+            struct Req {
+                #[serde(default)]
+                review_map: std::collections::BTreeMap<String, Vec<String>>,
+            }
+            let repo = project_repo(&name)?;
+            let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            crate::config::set_review_map(&repo, req.review_map)?;
+            Ok(json!({ "ok": true }))
+        }),
         _ => (501, err_json("not implemented yet")),
     }
 }
@@ -204,6 +265,19 @@ fn write_op<F: FnOnce() -> Result<serde_json::Value, String>>(f: F) -> (u16, Str
         Ok(v) => (200, v.to_string()),
         Err(e) => (400, err_json(&e)),
     }
+}
+
+/// Resolve a (URL-encoded) project name to its repo path via the registry.
+fn project_repo(name: &str) -> Result<String, String> {
+    let global = crate::config::GlobalConfig::load_or_default()?;
+    let name = crate::http::decode_segment(name);
+    Ok(global
+        .projects
+        .registered
+        .get(&name)
+        .ok_or_else(|| format!("project '{name}' is not registered"))?
+        .repo_path
+        .clone())
 }
 
 fn create_profile(body: &str) -> Result<serde_json::Value, String> {
@@ -456,6 +530,20 @@ mod tests {
             route("POST", "/api/project/app/verify/git_host"),
             Route::VerifyCapability("app".into(), "git_host".into())
         );
+        assert_eq!(route("GET", "/api/project/app/rules"), Route::ProjectRules("app".into()));
+        assert_eq!(
+            route("GET", "/api/project/app/convention/ours"),
+            Route::OverlayConventionBody("app".into(), "ours".into())
+        );
+        assert_eq!(
+            route("POST", "/api/project/app/convention"),
+            Route::AddOverlayConvention("app".into())
+        );
+        assert_eq!(
+            route("POST", "/api/project/app/convention/architecture/body"),
+            Route::SetOverlayConventionBody("app".into(), "architecture".into())
+        );
+        assert_eq!(route("POST", "/api/project/app/review-map"), Route::SetOverlayReviewMap("app".into()));
         assert_eq!(route("GET", "/nope"), Route::NotFound);
     }
 

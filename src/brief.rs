@@ -217,6 +217,17 @@ pub fn run(
         )
     })?;
 
+    // Per-project overlay: review_map override + overlay convention bodies.
+    // brief also works without a project config (local steps), so a missing
+    // `.palugada/config.yaml` just means "follow the profile".
+    let repo_str = repo.to_string_lossy().to_string();
+    let overlay = crate::effective::overlay_dir(&repo_str);
+    let review_map = match ProjectConfig::load_from(&repo_str) {
+        Ok(pc) => crate::effective::apply_review_overlay(&pf.review_map, &pc.review_map),
+        Err(_) => pf.review_map.clone(),
+    };
+    let outline = |id: &str| crate::effective::convention_outline_overlaid(kn, profile, &overlay, id);
+
     let mut packs: Vec<Pack> = Vec::new();
     let mut ctx = BriefContext::default();
     for step in steps {
@@ -228,29 +239,20 @@ pub fn run(
                 } else if ctx.touched_families.is_empty() {
                     "(no fact-family files changed — nothing to check)".to_string()
                 } else {
-                    let topics = mapped_topics(&pf.review_map, &ctx.touched_families);
+                    let topics = mapped_topics(&review_map, &ctx.touched_families);
                     if topics.is_empty() {
                         "(no review_map entries for the touched families)".to_string()
                     } else {
                         topics
                             .iter()
-                            .map(|t| {
-                                format!(
-                                    "### {t}\n{}",
-                                    knowledge::convention_outline(kn, profile, t)
-                                        .unwrap_or_else(|e| format!("({e})"))
-                                )
-                            })
+                            .map(|t| format!("### {t}\n{}", outline(t)))
                             .collect::<Vec<_>>()
                             .join("\n\n")
                     }
                 };
                 ("conventions by file kind".to_string(), content)
             }
-            "convention" => (
-                format!("convention: {arg}"),
-                knowledge::convention_outline(kn, profile, &arg).unwrap_or_else(|e| format!("({e})")),
-            ),
+            "convention" => (format!("convention: {arg}"), outline(&arg)),
             "recipe" => (
                 format!("recipe: {arg}"),
                 knowledge::recipe_body(kn, profile, &arg).unwrap_or_else(|e| format!("({e})")),
@@ -386,6 +388,39 @@ fn git_recent(repo: &Path, target: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_review_map_overrides_profile_for_mapped_topics() {
+        let mut profile = BTreeMap::new();
+        profile.insert("viewmodel".to_string(), vec!["architecture".to_string()]);
+        let mut overlay = BTreeMap::new();
+        overlay.insert("viewmodel".to_string(), vec!["ours".to_string()]);
+        let merged = crate::effective::apply_review_overlay(&profile, &overlay);
+        let touched: BTreeSet<String> = ["viewmodel".to_string()].into_iter().collect();
+        let topics = mapped_topics(&merged, &touched);
+        assert_eq!(topics, vec!["ours".to_string()]);
+    }
+
+    #[test]
+    fn overlay_outline_prefers_overlay_then_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kn = tmp.path().join("kn");
+        let prof_dir = kn.join("profiles/p/conventions");
+        crate::knowledge::add_convention_in(&prof_dir, &crate::knowledge::ConventionSpec {
+            id: "architecture".into(), title: "Arch".into(), description: "profile body".into(),
+            tags: vec![], sections: vec![],
+        }).unwrap();
+        let overlay = tmp.path().join("repo/.palugada/conventions");
+        crate::knowledge::add_convention_in(&overlay, &crate::knowledge::ConventionSpec {
+            id: "architecture".into(), title: "Arch".into(), description: "OVERLAY body".into(),
+            tags: vec![], sections: vec![],
+        }).unwrap();
+        let out = crate::effective::convention_outline_overlaid(&kn, "p", &overlay, "architecture");
+        assert!(out.contains("OVERLAY"), "{out}");
+        // a convention only in the profile falls back to the profile
+        let only_profile = crate::effective::convention_outline_overlaid(&kn, "p", &overlay, "nope-missing");
+        assert!(only_profile.contains("no convention"));
+    }
 
     fn pack(kind: &str, content: &str) -> Pack {
         Pack { step: kind.into(), kind: kind.into(), title: kind.into(), content: content.into(), rerun: "x".into() }

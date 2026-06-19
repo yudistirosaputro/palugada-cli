@@ -8,6 +8,7 @@ mod brief;
 mod clients;
 mod config;
 mod credentials;
+mod effective;
 mod exec;
 mod http;
 mod indexer;
@@ -251,6 +252,8 @@ enum ProjectCmd {
     List,
     /// Set the active project.
     Use { name: String },
+    /// Show the effective rules (profile + per-project overlay) for a project.
+    Rules { name: String },
     /// Remove a project from the registry (files on disk are untouched).
     Remove { name: String },
 }
@@ -897,6 +900,29 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
             global.projects.active = name.clone();
             global.save()?;
             println!("Active project is now '{name}'.");
+            Ok(())
+        }
+        ProjectCmd::Rules { name } => {
+            let global = GlobalConfig::load_or_default()?;
+            let eff = effective::effective_rules(&global, &name)?;
+            println!("Effective rules for '{}' (profile: {})\n", eff.project, eff.profile);
+            println!("Conventions:");
+            for c in &eff.conventions {
+                let tag = match c.origin {
+                    effective::Origin::Profile => "[profile]",
+                    effective::Origin::Project => "[project]",
+                    effective::Origin::Overridden => "[overridden]",
+                };
+                println!("  {:<12} {:<16} {}", tag, c.id, c.description);
+            }
+            println!("\nreview_map:");
+            for e in &eff.review_map {
+                let tag = if e.origin == effective::Origin::Project { "[project]" } else { "[profile]" };
+                println!("  {:<10} {} -> {}", tag, e.family, e.conventions.join(", "));
+            }
+            for w in &eff.warnings {
+                eprintln!("warning: {w}");
+            }
             Ok(())
         }
     }
