@@ -213,6 +213,10 @@ pub struct ProjectConfig {
     /// Per-repo exec verbs; override/extend the profile's `exec:` map.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub exec: BTreeMap<String, VerbSpec>,
+    /// Per-project review_map override (family → convention ids); replaces the
+    /// profile's entry for each listed family. Empty → follow the profile.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub review_map: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -316,6 +320,13 @@ impl ProjectConfig {
 pub fn set_profile(repo_path: &str, profile_id: &str) -> Result<(), String> {
     let mut pc = ProjectConfig::load_from(repo_path)?;
     pc.profile = profile_id.to_string();
+    pc.save_to(repo_path)
+}
+
+/// Set a project's review_map override by editing its `.palugada/config.yaml`.
+pub fn set_review_map(repo_path: &str, map: BTreeMap<String, Vec<String>>) -> Result<(), String> {
+    let mut pc = ProjectConfig::load_from(repo_path)?;
+    pc.review_map = map;
     pc.save_to(repo_path)
 }
 
@@ -464,6 +475,24 @@ pub fn mask_secret(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_config_review_map_roundtrips_and_sets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().to_string_lossy().to_string();
+        // Baseline config without review_map parses and omits the key.
+        let pc = ProjectConfig { project: "p".into(), profile: "android-mvvm".into(), ..Default::default() };
+        pc.save_to(&repo).unwrap();
+        let loaded = ProjectConfig::load_from(&repo).unwrap();
+        assert!(loaded.review_map.is_empty());
+
+        let mut map = BTreeMap::new();
+        map.insert("viewmodel".to_string(), vec!["ours".to_string()]);
+        set_review_map(&repo, map).unwrap();
+        let loaded = ProjectConfig::load_from(&repo).unwrap();
+        assert_eq!(loaded.review_map["viewmodel"], vec!["ours".to_string()]);
+        assert_eq!(loaded.profile, "android-mvvm"); // other fields preserved
+    }
 
     fn global_with(name: &str, repo: &Path) -> GlobalConfig {
         let mut g = GlobalConfig::default();
