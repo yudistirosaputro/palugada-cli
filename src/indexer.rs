@@ -132,16 +132,19 @@ pub fn families_for_path(path_str: &str, ext: &str, families: &[CompiledFamily])
 fn language_for(name: &str) -> Result<tree_sitter::Language, String> {
     match name {
         "kotlin" => Ok(tree_sitter_kotlin_ng::LANGUAGE.into()),
-        other => Err(format!("unsupported language '{other}' (supported: kotlin)")),
+        "rust" => Ok(tree_sitter_rust::LANGUAGE.into()),
+        other => Err(format!("unsupported language '{other}' (supported: kotlin, rust)")),
     }
 }
 
 const KOTLIN_TAGS: &str = include_str!("tags/kotlin.scm");
+const RUST_TAGS: &str = include_str!("tags/rust.scm");
 
 /// Map a file extension to a language that has a generic tags query.
 pub fn language_for_ext(ext: &str) -> Option<&'static str> {
     match ext {
         "kt" | "kts" => Some("kotlin"),
+        "rs" => Some("rust"),
         _ => None,
     }
 }
@@ -150,6 +153,7 @@ pub fn language_for_ext(ext: &str) -> Option<&'static str> {
 pub fn tags_query(lang: &str) -> Option<&'static str> {
     match lang {
         "kotlin" => Some(KOTLIN_TAGS),
+        "rust" => Some(RUST_TAGS),
         _ => None,
     }
 }
@@ -662,6 +666,26 @@ mod tests {
         assert_eq!(tl.scope, "");
         assert!(by("property", "title").is_some());
         assert!(out.iter().all(|s| s.name != "ghost"), "comment fun must not be captured");
+    }
+
+    #[test]
+    fn tags_registry_resolves_rust() {
+        assert_eq!(language_for_ext("rs"), Some("rust"));
+        let q = tags_query("rust").unwrap();
+        let lang = language_for("rust").unwrap();
+        assert!(tree_sitter::Query::new(&lang, q).is_ok(), "rust.scm must compile");
+    }
+
+    #[test]
+    fn extract_symbols_finds_rust_defs() {
+        let src = "pub struct Config { pub a: u32 }\npub fn run(x: u32) -> u32 { x }\npub trait Host { fn ping(&self); }\n// fn ghost() {}\n";
+        let mut out = Vec::new();
+        extract_symbols(src, "lib.rs", "rust", &mut out);
+        let by = |k: &str, n: &str| out.iter().find(|s| s.kind == k && s.name == n).cloned();
+        assert!(by("struct", "Config").is_some());
+        assert!(by("function", "run").is_some());
+        assert!(by("trait", "Host").is_some());
+        assert!(out.iter().all(|s| s.name != "ghost"), "comment fn must not be captured");
     }
 
     #[test]
