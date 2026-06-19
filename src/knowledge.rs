@@ -555,25 +555,6 @@ pub fn search(kn: &Path, profile: &str, kw: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Convention topics whose tags intersect `keys` (lowercased file extensions
-/// or family ids). Used by `brief`'s diff.scan to map changed files to rules.
-pub fn topics_matching_tags(
-    kn: &Path,
-    profile: &str,
-    keys: &std::collections::BTreeSet<String>,
-) -> Vec<(String, String)> {
-    let Ok(idx) = read_conv_index(kn, profile) else {
-        return Vec::new();
-    };
-    let keys_lower: std::collections::BTreeSet<String> =
-        keys.iter().map(|k| k.to_lowercase()).collect();
-    idx.topics
-        .iter()
-        .filter(|t| t.tags.iter().any(|tag| keys_lower.contains(&tag.to_lowercase())))
-        .map(|t| (t.id.clone(), t.description.clone()))
-        .collect()
-}
-
 // ── markdown helpers ────────────────────────────────────────────────────
 
 struct Section {
@@ -774,27 +755,4 @@ mod tests {
         assert_eq!(secs[1].title, "Two");
     }
 
-    #[test]
-    fn topics_matching_tags_filters_by_intersection() {
-        let kn = tempfile::tempdir().unwrap();
-        let conv = kn.path().join("profiles").join("p").join("conventions");
-        std::fs::create_dir_all(&conv).unwrap();
-        std::fs::write(
-            conv.join("_index.json"),
-            r#"{"topics":[
-                {"id":"style","description":"kotlin style","tags":["kt","style"]},
-                {"id":"css","description":"css rules","tags":["css"]},
-                {"id":"mixed","description":"mixed case topic","tags":["KT","Style"]}
-            ]}"#,
-        )
-        .unwrap();
-        let mut keys = std::collections::BTreeSet::new();
-        keys.insert("kt".to_string());
-        let hits = topics_matching_tags(kn.path(), "p", &keys);
-        // Both "style" (tags: ["kt","style"]) and "mixed" (tags: ["KT","Style"]) must match.
-        assert_eq!(hits.len(), 2);
-        assert!(hits.iter().any(|(id, _)| id == "style"));
-        assert!(hits.iter().any(|(id, _)| id == "mixed"),
-            "mixed-case tag 'KT' should match lowercase key 'kt'");
-    }
 }
