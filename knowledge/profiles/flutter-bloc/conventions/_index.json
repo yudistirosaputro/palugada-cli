@@ -1,4 +1,76 @@
 {
   "schema_version": "1.0",
-  "topics": []
+  "topics": [
+    {
+      "id": "architecture",
+      "title": "Architecture",
+      "file": "architecture.md",
+      "description": "Feature-first Clean Architecture in a workspace monorepo — data/domain/presentation layers per feature, GetIt DI registered per feature, GoRouter, and barrel exports.",
+      "tags": ["dart", "flutter", "architecture", "clean-architecture", "getit", "gorouter", "melos"],
+      "sections": [
+        { "id": "overview", "title": "Feature-First Monorepo", "tokens": 150 },
+        { "id": "layers",   "title": "Clean Layers",            "tokens": 180 },
+        { "id": "di",       "title": "GetIt DI",                "tokens": 150 },
+        { "id": "routing",  "title": "GoRouter",                "tokens": 130 },
+        { "id": "barrels",  "title": "Barrel Exports",          "tokens": 110 }
+      ],
+      "related": ["statemanagement", "style", "testing"]
+    },
+    {
+      "id": "statemanagement",
+      "title": "State Management",
+      "file": "statemanagement.md",
+      "description": "flutter_bloc Cubits with sealed-style State classes (Initial/Loading/Loaded/Error via Equatable), emit transitions, and BlocProvider/BlocBuilder in logic-free widgets.",
+      "tags": ["dart", "flutter", "bloc", "cubit", "state", "equatable"],
+      "sections": [
+        { "id": "cubit",         "title": "Cubit per Concern",  "tokens": 130 },
+        { "id": "state-classes", "title": "Sealed-style State", "tokens": 170 },
+        { "id": "emit",          "title": "Emit Transitions",   "tokens": 130 },
+        { "id": "consume",       "title": "Consuming State",    "tokens": 130 }
+      ],
+      "related": ["architecture", "testing"]
+    },
+    {
+      "id": "errorhandling",
+      "title": "Error Handling",
+      "file": "errorhandling.md",
+      "description": "Catch in the Cubit and emit an Error state; never let exceptions reach the widget tree; repositories surface typed failures the Cubit translates to state.",
+      "tags": ["dart", "flutter", "error", "state", "exception"],
+      "sections": [
+        { "id": "cubit-catch",      "title": "Catch in the Cubit",   "tokens": 130 },
+        { "id": "no-throw-to-ui",   "title": "Never Throw to the UI", "tokens": 110 },
+        { "id": "repository-errors", "title": "Repository Failures",  "tokens": 130 },
+        { "id": "messages",         "title": "Errors Live in State",  "tokens": 100 }
+      ],
+      "related": ["statemanagement", "architecture"]
+    },
+    {
+      "id": "testing",
+      "title": "Testing",
+      "file": "testing.md",
+      "description": "bloc_test for Cubit state sequences, mocktail for repositories/datasources, fakes over mocks, and widget tests that keep framework out of pure-logic tests.",
+      "tags": ["dart", "flutter", "testing", "bloc_test", "mocktail"],
+      "sections": [
+        { "id": "bloc-test",    "title": "bloc_test",        "tokens": 150 },
+        { "id": "mocktail",     "title": "mocktail Doubles",  "tokens": 130 },
+        { "id": "fakes",        "title": "Fakes Over Mocks",  "tokens": 100 },
+        { "id": "widget-tests", "title": "Widget Tests",      "tokens": 110 }
+      ],
+      "related": ["statemanagement"]
+    },
+    {
+      "id": "style",
+      "title": "Style",
+      "file": "style.md",
+      "description": "flutter_lints, snake_case filenames, role suffixes (Page/View/Cubit/State/Repository/Impl/DataSource), package-per-feature, and const constructors.",
+      "tags": ["dart", "flutter", "style", "flutter_lints", "naming"],
+      "sections": [
+        { "id": "lints",     "title": "flutter_lints",    "tokens": 100 },
+        { "id": "files",     "title": "File Naming",       "tokens": 100 },
+        { "id": "suffixes",  "title": "Role Suffixes",     "tokens": 120 },
+        { "id": "structure", "title": "Package Structure", "tokens": 100 }
+      ],
+      "related": ["architecture"]
+    }
+  ]
 }
