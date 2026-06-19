@@ -133,18 +133,21 @@ fn language_for(name: &str) -> Result<tree_sitter::Language, String> {
     match name {
         "kotlin" => Ok(tree_sitter_kotlin_ng::LANGUAGE.into()),
         "rust" => Ok(tree_sitter_rust::LANGUAGE.into()),
-        other => Err(format!("unsupported language '{other}' (supported: kotlin, rust)")),
+        "dart" => Ok(tree_sitter_dart::LANGUAGE.into()),
+        other => Err(format!("unsupported language '{other}' (supported: kotlin, rust, dart)")),
     }
 }
 
 const KOTLIN_TAGS: &str = include_str!("tags/kotlin.scm");
 const RUST_TAGS: &str = include_str!("tags/rust.scm");
+const DART_TAGS: &str = include_str!("tags/dart.scm");
 
 /// Map a file extension to a language that has a generic tags query.
 pub fn language_for_ext(ext: &str) -> Option<&'static str> {
     match ext {
         "kt" | "kts" => Some("kotlin"),
         "rs" => Some("rust"),
+        "dart" => Some("dart"),
         _ => None,
     }
 }
@@ -154,6 +157,7 @@ pub fn tags_query(lang: &str) -> Option<&'static str> {
     match lang {
         "kotlin" => Some(KOTLIN_TAGS),
         "rust" => Some(RUST_TAGS),
+        "dart" => Some(DART_TAGS),
         _ => None,
     }
 }
@@ -686,6 +690,23 @@ mod tests {
         assert!(by("function", "run").is_some());
         assert!(by("trait", "Host").is_some());
         assert!(out.iter().all(|s| s.name != "ghost"), "comment fn must not be captured");
+    }
+
+    #[test]
+    fn tags_registry_resolves_dart() {
+        assert_eq!(language_for_ext("dart"), Some("dart"));
+        let q = tags_query("dart").unwrap();
+        let lang = language_for("dart").unwrap();
+        assert!(tree_sitter::Query::new(&lang, q).is_ok(), "dart.scm must compile");
+    }
+
+    #[test]
+    fn extract_symbols_finds_dart_defs() {
+        let src = "class CounterCubit extends Cubit<int> {\n  CounterCubit() : super(0);\n}\nclass HomePage extends StatelessWidget {}\n";
+        let mut out = Vec::new();
+        extract_symbols(src, "home.dart", "dart", &mut out);
+        assert!(out.iter().any(|s| s.name == "CounterCubit"));
+        assert!(out.iter().any(|s| s.name == "HomePage"));
     }
 
     #[test]
