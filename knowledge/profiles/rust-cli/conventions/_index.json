@@ -1,4 +1,61 @@
 {
   "schema_version": "1.0",
-  "topics": []
+  "topics": [
+    {
+      "id": "architecture",
+      "title": "Architecture",
+      "file": "architecture.md",
+      "description": "Single-binary CLI — thin main dispatch over a clap-derive command enum, module-per-concern, and a pure-core / thin-I/O-shell split with Result<T,String>.",
+      "tags": ["rs", "rust", "cli", "clap", "architecture", "module"],
+      "sections": [
+        { "id": "overview",   "title": "CLI Overview",       "tokens": 150 },
+        { "id": "modules",    "title": "Module-per-Concern",  "tokens": 150 },
+        { "id": "core-shell", "title": "Pure Core, I/O Shell", "tokens": 180 },
+        { "id": "results",    "title": "Result Plumbing",      "tokens": 150 }
+      ],
+      "related": ["errorhandling", "testing", "style"]
+    },
+    {
+      "id": "errorhandling",
+      "title": "Error Handling",
+      "file": "errorhandling.md",
+      "description": "Result<T,String> with context via map_err, propagation with ?, no unwrap/panic on non-test paths, and best-effort steps that degrade to an inline note.",
+      "tags": ["rs", "rust", "error", "result", "map-err", "panic"],
+      "sections": [
+        { "id": "result-type", "title": "Result Type",          "tokens": 120 },
+        { "id": "context",     "title": "Adding Context",        "tokens": 140 },
+        { "id": "no-panic",    "title": "No Panics",             "tokens": 130 },
+        { "id": "degrade",     "title": "Degrade, Don't Abort",  "tokens": 130 }
+      ],
+      "related": ["architecture", "testing"]
+    },
+    {
+      "id": "testing",
+      "title": "Testing",
+      "file": "testing.md",
+      "description": "Inline #[cfg(test)] modules, tempfile for filesystem isolation, pure transforms tested directly, real fixtures over mocks, assertions on outcomes.",
+      "tags": ["rs", "rust", "testing", "cargo-test", "tempfile", "cfg-test"],
+      "sections": [
+        { "id": "inline-tests", "title": "Inline Tests",     "tokens": 120 },
+        { "id": "tempfile",     "title": "Tempfile for I/O",  "tokens": 130 },
+        { "id": "pure-first",   "title": "Test Pure First",   "tokens": 120 },
+        { "id": "no-mocks",     "title": "Fakes Over Mocks",  "tokens": 110 }
+      ],
+      "related": ["architecture"]
+    },
+    {
+      "id": "style",
+      "title": "Style",
+      "file": "style.md",
+      "description": "cargo fmt + clippy clean, idiomatic naming, doc-comments on public items, borrow-friendly signatures, and a minimal pub surface.",
+      "tags": ["rs", "rust", "style", "rustfmt", "clippy", "naming"],
+      "sections": [
+        { "id": "fmt-clippy", "title": "fmt + clippy", "tokens": 110 },
+        { "id": "naming",     "title": "Naming",        "tokens": 110 },
+        { "id": "docs",       "title": "Doc Comments",  "tokens": 100 },
+        { "id": "signatures", "title": "Signatures",    "tokens": 120 }
+      ],
+      "related": ["architecture"]
+    }
+  ]
 }
