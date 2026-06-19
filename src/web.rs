@@ -38,6 +38,7 @@ pub enum Route {
     SaveProjectConfig(String),
     VerifyCapability(String, String),
     ProjectRules(String),
+    OverlayConventionBody(String, String),
     AddOverlayConvention(String),
     SetOverlayConventionBody(String, String),
     SetOverlayReviewMap(String),
@@ -79,6 +80,9 @@ pub fn route(method: &str, path: &str) -> Route {
             Route::VerifyCapability((*name).to_string(), (*cap).to_string())
         }
         ("GET", ["api", "project", name, "rules"]) => Route::ProjectRules((*name).to_string()),
+        ("GET", ["api", "project", name, "convention", id]) => {
+            Route::OverlayConventionBody((*name).to_string(), (*id).to_string())
+        }
         ("POST", ["api", "project", name, "convention"]) => {
             Route::AddOverlayConvention((*name).to_string())
         }
@@ -205,6 +209,12 @@ fn api(route: Route, body: &str) -> (u16, String) {
             let global = crate::config::GlobalConfig::load_or_default()?;
             let name = crate::http::decode_segment(&name);
             Ok(jv(&crate::effective::effective_rules(&global, &name)?))
+        }),
+        Route::OverlayConventionBody(name, id) => read(|| {
+            let repo = project_repo(&name)?;
+            let markdown =
+                crate::knowledge::convention_md_in(&crate::effective::overlay_dir(&repo), &id)?;
+            Ok(json!({ "markdown": markdown }))
         }),
         Route::AddOverlayConvention(name) => write_op(|| {
             let repo = project_repo(&name)?;
@@ -521,6 +531,10 @@ mod tests {
             Route::VerifyCapability("app".into(), "git_host".into())
         );
         assert_eq!(route("GET", "/api/project/app/rules"), Route::ProjectRules("app".into()));
+        assert_eq!(
+            route("GET", "/api/project/app/convention/ours"),
+            Route::OverlayConventionBody("app".into(), "ours".into())
+        );
         assert_eq!(
             route("POST", "/api/project/app/convention"),
             Route::AddOverlayConvention("app".into())

@@ -53,4 +53,12 @@ a.link:hover { text-decoration: underline; }
 .ok-pill { color: #7fd1a6; font-size: 12px; margin-left: 6px; }
 .card.warn { border-left: 3px solid #e0a458; }
 .cd-int { border: 1px dashed #313845; border-radius: 6px; padding: 8px; margin: 6px 0; }
+.origin { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; }
+.origin-profile { background: #2b313c; color: #9aa4b2; }
+.origin-project { background: #1f3a2e; color: #7fd1a6; }
+.origin-overridden { background: #312a1f; color: #d1b07f; }
+table.rules { width: 100%; border-collapse: collapse; margin: 8px 0; }
+table.rules th, table.rules td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #2b313c; vertical-align: top; }
+table.rules th { color: #9aa4b2; font-weight: 600; font-size: 12px; }
+.warn { color: #e0a458; margin: 6px 0; }
 .cd-vres { font-size: 12px; }

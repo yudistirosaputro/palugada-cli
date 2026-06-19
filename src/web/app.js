@@ -119,6 +119,145 @@ async function renderProjectDetail(name) {
     }</div>`));
   }
   m.skills.forEach(s => view.appendChild(skillCard(m.profile, s)));
+  try {
+    const rules = await api("/api/project/" + encodeURIComponent(name) + "/rules");
+    view.appendChild(rulesCard(name, rules));
+  } catch (e) { toast(e.message, true); }
+}
+
+const ORIGIN_LABEL = { profile: "profile", project: "project", overridden: "overridden" };
+
+function rulesCard(name, data) {
+  const card = h(`<div class="card"><h3>Effective Rules</h3>
+    <div class="muted">Edits here touch THIS project's overlay in its repo (<code>.palugada/</code>),
+      committed with the project — not the shared profile <strong>${esc(data.profile)}</strong>.</div></div>`);
+  if (data.warnings && data.warnings.length) {
+    card.appendChild(h(`<div class="warn">${data.warnings.map(w => `⚠ ${esc(w)}`).join("<br>")}</div>`));
+  }
+
+  // Conventions table
+  const ctab = h(`<table class="rules"><thead><tr><th>origin</th><th>id</th><th>title</th><th></th></tr></thead><tbody></tbody></table>`);
+  const ctbody = ctab.querySelector("tbody");
+  data.conventions.forEach(c => {
+    const editable = c.origin === "project" || c.origin === "overridden";
+    const row = h(`<tr><td><span class="origin origin-${esc(c.origin)}">${esc(ORIGIN_LABEL[c.origin] || c.origin)}</span></td>
+      <td><code>${esc(c.id)}</code></td><td>${esc(c.title)}</td>
+      <td>${editable ? '<a class="link r-edit">edit</a>' : '<a class="link r-view">view</a>'}</td></tr>`);
+    if (editable) row.querySelector(".r-edit").onclick = () => editOverlayConvention(name, c.id);
+    else row.querySelector(".r-view").onclick = () => viewDoc(data.profile, "convention", c.id);
+    ctbody.appendChild(row);
+  });
+  card.appendChild(ctab);
+
+  const addBtn = h(`<div class="row" style="margin-top:6px"><button class="ghost r-add">+ Add project rule</button></div>`);
+  card.appendChild(addBtn);
+  addBtn.querySelector(".r-add").onclick = () => {
+    if (card.querySelector(".overlay-add")) return;
+    card.insertBefore(addOverlayConventionForm(name), addBtn);
+  };
+
+  // review_map table
+  card.appendChild(h(`<h4 style="margin:12px 0 4px">review_map</h4>`));
+  const rtab = h(`<table class="rules"><thead><tr><th>origin</th><th>family</th><th>conventions</th></tr></thead><tbody></tbody></table>`);
+  const rtbody = rtab.querySelector("tbody");
+  data.review_map.forEach(e => {
+    rtbody.appendChild(h(`<tr><td><span class="origin origin-${esc(e.origin)}">${esc(e.origin)}</span></td>
+      <td><code>${esc(e.family)}</code></td><td>${e.conventions.map(esc).join(", ")}</td></tr>`));
+  });
+  card.appendChild(rtab);
+  const override = {};
+  data.review_map.filter(e => e.origin === "project").forEach(e => { override[e.family] = e.conventions; });
+  const rmBtn = h(`<div class="row" style="margin-top:6px"><button class="ghost r-rm">Edit review_map override</button></div>`);
+  card.appendChild(rmBtn);
+  rmBtn.querySelector(".r-rm").onclick = () => editReviewMap(name, override);
+  return card;
+}
+
+async function editOverlayConvention(name, id) {
+  let b;
+  try { b = await api(`/api/project/${encodeURIComponent(name)}/convention/${encodeURIComponent(id)}`); }
+  catch (e) { toast(e.message, true); return; }
+  let card = document.getElementById("bodyview");
+  if (card) card.remove();
+  card = h(`<div class="card" id="bodyview">
+    <div class="row"><strong>edit overlay convention: ${esc(id)}</strong><span class="spacer"></span><a class="link" id="ed-close">close</a></div>
+    <div class="muted">Edits this project's overlay in <code>.palugada/conventions/${esc(id)}.md</code> (committed with the repo). Whole-file verbatim.</div>
+    <textarea id="ed-body" style="min-height:320px;width:100%"></textarea>
+    <div class="row" style="margin-top:6px"><span class="spacer"></span><button id="ed-save">Save</button></div></div>`);
+  card.querySelector("#ed-body").value = b.markdown;
+  view.insertBefore(card, view.children[1] || null);
+  card.querySelector("#ed-close").onclick = () => card.remove();
+  card.querySelector("#ed-save").onclick = async () => {
+    const markdown = card.querySelector("#ed-body").value;
+    try {
+      await api(`/api/project/${encodeURIComponent(name)}/convention/${encodeURIComponent(id)}/body`, "POST", { markdown });
+      toast(`saved overlay convention ${id}`);
+      renderProjectDetail(name);
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+function addOverlayConventionForm(name) {
+  const box = h(`<div class="overlay-add" style="margin-top:10px;border-top:1px solid #2b313c;padding-top:10px">
+    <strong>+ Add project rule</strong>
+    <label>id</label><input class="oa-id" placeholder="our-extra-rule">
+    <label>title</label><input class="oa-title" placeholder="Our Extra Rule">
+    <label>description</label><input class="oa-desc" placeholder="one-line summary">
+    <label>tags (comma-separated)</label><input class="oa-tags" placeholder="kt, viewmodel">
+    <div class="oa-sections"></div>
+    <div class="row" style="margin-top:6px"><button class="ghost oa-addsec">+ section</button><span class="spacer"></span><button class="oa-save">Save project rule</button></div>
+    <div class="muted" style="margin-top:4px">Written to this project's <code>.palugada/conventions/</code>; overrides the profile if the id matches.</div>
+  </div>`);
+  const secs = box.querySelector(".oa-sections");
+  const addSec = () => secs.appendChild(h(`<div class="section-row">
+    <label>section title</label><input class="sec-title" placeholder="Rule">
+    <label>section body (markdown)</label><textarea class="sec-body"></textarea>
+    <label class="row" style="margin-top:4px"><input type="checkbox" class="sec-code" style="width:auto"> &nbsp;contains code</label>
+  </div>`));
+  box.querySelector(".oa-addsec").onclick = e => { e.preventDefault(); addSec(); };
+  addSec();
+  box.querySelector(".oa-save").onclick = async e => {
+    e.preventDefault();
+    const sections = [...secs.querySelectorAll(".section-row")].map(s => ({
+      title: s.querySelector(".sec-title").value.trim(),
+      body: s.querySelector(".sec-body").value,
+      code: s.querySelector(".sec-code").checked,
+    })).filter(s => s.title);
+    const spec = {
+      id: box.querySelector(".oa-id").value.trim(),
+      title: box.querySelector(".oa-title").value.trim(),
+      description: box.querySelector(".oa-desc").value.trim(),
+      tags: splitCsv(box.querySelector(".oa-tags").value),
+      sections,
+    };
+    if (!spec.id || !spec.title) { toast("id and title required", true); return; }
+    try { await api(`/api/project/${encodeURIComponent(name)}/convention`, "POST", spec); toast("saved project rule " + spec.id); renderProjectDetail(name); }
+    catch (err) { toast(err.message, true); }
+  };
+  return box;
+}
+
+function editReviewMap(name, current) {
+  let card = document.getElementById("bodyview");
+  if (card) card.remove();
+  card = h(`<div class="card" id="bodyview">
+    <div class="row"><strong>edit review_map override</strong><span class="spacer"></span><a class="link" id="rm-close">close</a></div>
+    <div class="muted">JSON object: <code>{ "family": ["convention-id", ...] }</code>. Each listed family REPLACES the profile's mapping for this project. Empty <code>{}</code> clears the override.</div>
+    <textarea id="rm-body" style="min-height:180px;width:100%"></textarea>
+    <div class="row" style="margin-top:6px"><span class="spacer"></span><button id="rm-save">Save</button></div></div>`);
+  card.querySelector("#rm-body").value = JSON.stringify(current, null, 2);
+  view.insertBefore(card, view.children[1] || null);
+  card.querySelector("#rm-close").onclick = () => card.remove();
+  card.querySelector("#rm-save").onclick = async () => {
+    let review_map;
+    try { review_map = JSON.parse(card.querySelector("#rm-body").value || "{}"); }
+    catch (e) { toast("invalid JSON: " + e.message, true); return; }
+    try {
+      await api(`/api/project/${encodeURIComponent(name)}/review-map`, "POST", { review_map });
+      toast("saved review_map override");
+      renderProjectDetail(name);
+    } catch (e) { toast(e.message, true); }
+  };
 }
 
 function credentialsCard(name, cfg) {
