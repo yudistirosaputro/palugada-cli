@@ -1,0 +1,22 @@
+schema_version: "1.0"
+id: rust-cli
+title: "Rust · single-binary CLI (clap)"
+description: >
+  Conventions for a project-agnostic single-binary Rust CLI: clap-derive command
+  surface, module-per-concern, a pure-core / thin-I/O-shell split, Result<T,String>
+  error propagation, and inline #[cfg(test)] tests with tempfile. Modeled on palugada.
+languages: [rust]
+
+fact_families:
+  - { id: command, symbol: true }
+  - { id: trait,   symbol: true }
+
+flows:
+  bugfix:   [code.recent, symbol.find, convention(errorhandling), convention(testing)]
+  feature:  [recipe(feature), module.info, convention(architecture)]
+  refactor: [module.info, convention(architecture), convention(style), recipe(refactor)]
+  review:   [diff.scan, convention(by-file-kind)]
+
+review_map:
+  command: [architecture, errorhandling]
+  trait:   [architecture, testing]
