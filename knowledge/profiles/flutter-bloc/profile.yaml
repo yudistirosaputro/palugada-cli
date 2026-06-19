@@ -1,0 +1,31 @@
+schema_version: "1.0"
+id: flutter-bloc
+title: "Flutter · bloc/cubit · Clean Architecture (melos)"
+description: >
+  Conventions for a feature-first Clean-Architecture Flutter monorepo: workspace
+  feature packages with data/domain/presentation layers, flutter_bloc Cubits with
+  sealed-style State classes, GetIt DI per feature, and GoRouter. Tests via
+  bloc_test + mocktail.
+languages: [dart]
+
+fact_families:
+  - { id: cubit,      symbol: true }
+  - { id: state,      symbol: true }
+  - { id: page,       symbol: true }
+  - { id: repository, symbol: true }
+  - { id: datasource, symbol: true }
+  - { id: route,      symbol: false }
+
+flows:
+  bugfix:   [code.recent, symbol.find, convention(statemanagement), convention(testing)]
+  feature:  [recipe(feature), module.info, convention(architecture)]
+  refactor: [module.info, convention(architecture), convention(style), recipe(refactor)]
+  review:   [diff.scan, convention(by-file-kind)]
+
+review_map:
+  cubit:      [architecture, statemanagement, testing]
+  state:      [statemanagement]
+  page:       [architecture, style]
+  repository: [architecture, errorhandling, testing]
+  datasource: [architecture, errorhandling]
+  route:      [architecture]
