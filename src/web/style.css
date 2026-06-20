@@ -62,3 +62,5 @@ table.rules th, table.rules td { text-align: left; padding: 4px 8px; border-bott
 table.rules th { color: #9aa4b2; font-weight: 600; font-size: 12px; }
 .warn { color: #e0a458; margin: 6px 0; }
 .cd-vres { font-size: 12px; }
+.candidate { border: 1px dashed #313845; border-radius: 6px; padding: 8px; margin: 6px 0; }
+.im-text { width: 100%; min-height: 120px; }

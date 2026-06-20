@@ -768,6 +768,69 @@ fn first_h1(body: &str) -> Option<String> {
     None
 }
 
+/// True if `id` is a valid doc id (`[a-z0-9_-]`, non-empty).
+pub fn valid_doc_id(id: &str) -> bool {
+    validate_doc_id(id).is_ok()
+}
+
+/// A candidate convention parsed out of an uploaded markdown document.
+#[derive(serde::Serialize, Debug, PartialEq)]
+pub struct ConventionDraft {
+    pub id: String,
+    pub title: String,
+    pub sections: Vec<String>,
+    pub body: String,
+}
+
+/// `# Heading` (level-1) but not `## ...`.
+fn is_h1(line: &str) -> bool {
+    line.trim_start().strip_prefix("# ").map(|r| !r.trim().is_empty()).unwrap_or(false)
+}
+
+fn h1_text(line: &str) -> String {
+    line.trim_start().strip_prefix("# ").map(|s| s.trim().to_string()).unwrap_or_default()
+}
+
+/// Split a markdown document into candidate conventions, one per `# H1`
+/// (fence-aware). No `# H1` → a single draft over the whole body, titled from
+/// the file front-matter (else empty). Pure; no I/O.
+pub fn split_markdown_conventions(raw: &str) -> Vec<ConventionDraft> {
+    let file_meta = parse_doc_front_matter(raw).unwrap_or_default();
+    let body = strip_frontmatter(raw);
+    let lines: Vec<&str> = body.lines().collect();
+
+    let mut in_fence = false;
+    let mut h1_idx: Vec<usize> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence && is_h1(line) {
+            h1_idx.push(i);
+        }
+    }
+
+    if h1_idx.is_empty() {
+        let title = file_meta.title.unwrap_or_default();
+        let id = if title.is_empty() { String::new() } else { slug(&title) };
+        let b = body.trim().to_string();
+        let secs = sections(&b).into_iter().map(|s| s.title).collect();
+        return vec![ConventionDraft { id, title, sections: secs, body: b }];
+    }
+
+    let mut drafts = Vec::new();
+    for (k, &start) in h1_idx.iter().enumerate() {
+        let end = h1_idx.get(k + 1).copied().unwrap_or(lines.len());
+        let title = h1_text(lines[start]);
+        let id = slug(&title);
+        let piece_body = lines[start + 1..end].join("\n").trim().to_string();
+        let secs = sections(&piece_body).into_iter().map(|s| s.title).collect();
+        drafts.push(ConventionDraft { id, title, sections: secs, body: piece_body });
+    }
+    drafts
+}
+
 /// Split a markdown body into `## ` sections (anchors stripped from titles).
 /// Lines inside ``` fences are body text, never headers.
 fn sections(body: &str) -> Vec<Section> {
@@ -950,6 +1013,54 @@ mod tests {
         assert!(md.contains("## Result Type"));
         let (_id2, replaced2) = add_convention_from_markdown(&dir, raw).unwrap();
         assert!(replaced2);
+    }
+
+    #[test]
+    fn split_one_h1_into_one_draft_with_sections() {
+        let raw = "---\ntags: [fb]\n---\n\n# Firebase Integration\n> intro\n\n## Setup\na\n\n## Auth\nb\n";
+        let d = split_markdown_conventions(raw);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].id, "firebase-integration");
+        assert_eq!(d[0].title, "Firebase Integration");
+        assert_eq!(d[0].sections, vec!["Setup".to_string(), "Auth".to_string()]);
+        assert!(d[0].body.contains("> intro"));
+        assert!(!d[0].body.starts_with("# "), "H1 line excluded from body");
+    }
+
+    #[test]
+    fn split_multiple_h1_into_separate_drafts() {
+        let raw = "# Firebase Auth\n## Sign In\nx\n# Firestore\n## Query\ny\n";
+        let d = split_markdown_conventions(raw);
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0].id, "firebase-auth");
+        assert_eq!(d[0].sections, vec!["Sign In".to_string()]);
+        assert_eq!(d[1].id, "firestore");
+        assert_eq!(d[1].sections, vec!["Query".to_string()]);
+    }
+
+    #[test]
+    fn split_no_h1_single_draft_title_from_front_matter() {
+        let raw = "---\ntitle: Loose Notes\n---\n\nsome prose\n\n## A\nx\n";
+        let d = split_markdown_conventions(raw);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].title, "Loose Notes");
+        assert_eq!(d[0].id, "loose-notes");
+        assert_eq!(d[0].sections, vec!["A".to_string()]);
+    }
+
+    #[test]
+    fn split_ignores_h1_inside_code_fence() {
+        let raw = "# Real\n```\n# fake heading\n```\n## S\nx\n";
+        let d = split_markdown_conventions(raw);
+        assert_eq!(d.len(), 1, "fenced # must not start a new piece");
+        assert_eq!(d[0].title, "Real");
+    }
+
+    #[test]
+    fn valid_doc_id_rules() {
+        assert!(valid_doc_id("firebase-integration"));
+        assert!(!valid_doc_id(""));
+        assert!(!valid_doc_id("Bad Id"));
     }
 
     #[test]

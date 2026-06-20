@@ -454,6 +454,7 @@ async function renderProfileDetail(id) {
   });
   cv.appendChild(addConventionForm(id));
   view.appendChild(cv);
+  view.appendChild(importCard(id));
 
   const rc = h(`<div class="card"><h3>Recipes</h3>
     <div class="muted">Step-by-step guides for one task (scaffold a feature, add a subcommand, refactor).
@@ -480,6 +481,74 @@ async function renderProfileDetail(id) {
   }</div></div>`));
 
   view.appendChild(generateForm(id));
+}
+
+function importCard(id) {
+  const box = h(`<div class="card"><h3>Import markdown file</h3>
+    <div class="muted">Upload or paste a markdown doc; palugada splits it by <code># H1</code> into candidate
+    conventions (sections come from <code>##</code>). Preview, edit, then import into this profile.</div>
+    <input type="file" class="im-file" accept=".md,.markdown,text/markdown">
+    <label>or paste markdown</label><textarea class="im-text" placeholder="# Firebase Integration&#10;## Setup&#10;..."></textarea>
+    <div class="row" style="margin-top:6px"><button class="im-detect">Detect</button></div>
+    <div class="im-preview"></div></div>`);
+  const fileEl = box.querySelector(".im-file");
+  const textEl = box.querySelector(".im-text");
+  fileEl.onchange = () => {
+    const f = fileEl.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { textEl.value = r.result; };
+    r.readAsText(f);
+  };
+  box.querySelector(".im-detect").onclick = async () => {
+    const markdown = textEl.value;
+    if (!markdown.trim()) { toast("paste or choose a markdown file first", true); return; }
+    try {
+      const res = await api(`/api/profile/${encodeURIComponent(id)}/import/preview`, "POST", { markdown });
+      renderImportPreview(box.querySelector(".im-preview"), id, res);
+    } catch (e) { toast(e.message, true); }
+  };
+  return box;
+}
+
+function renderImportPreview(host, id, res) {
+  host.innerHTML = "";
+  if (res.warnings && res.warnings.length) {
+    host.appendChild(h(`<div class="warn">${res.warnings.map(w => `⚠ ${esc(w)}`).join("<br>")}</div>`));
+  }
+  if (!res.candidates || !res.candidates.length) return;
+  const rows = [];
+  res.candidates.forEach(c => {
+    const badge = c.exists ? `<span class="warn-pill">will update</span>` : `<span class="ok-pill">new</span>`;
+    const row = h(`<div class="candidate">
+      <label class="row"><input type="checkbox" class="im-inc" checked style="width:auto"> &nbsp;include</label> ${badge}
+      <label>id</label><input class="im-id" value="${esc(c.id)}">
+      <label>title</label><input class="im-title" value="${esc(c.title)}">
+      <label>tags (comma-separated)</label><input class="im-tags" value="">
+      <div class="muted">sections: ${c.sections.map(esc).join(", ") || "(none)"}</div>
+    </div>`);
+    row._body = c.body;
+    rows.push(row);
+    host.appendChild(row);
+  });
+  const go = h(`<div class="row" style="margin-top:6px"><span class="spacer"></span><button class="im-go">Import selected</button></div>`);
+  host.appendChild(go);
+  go.querySelector(".im-go").onclick = async () => {
+    const pieces = rows.filter(r => r.querySelector(".im-inc").checked).map(r => ({
+      id: r.querySelector(".im-id").value.trim(),
+      title: r.querySelector(".im-title").value.trim(),
+      description: "",
+      tags: splitCsv(r.querySelector(".im-tags").value),
+      body: r._body,
+    }));
+    if (!pieces.length) { toast("select at least one candidate", true); return; }
+    if (pieces.some(p => !p.id || !p.title)) { toast("every selected piece needs id + title", true); return; }
+    try {
+      const r2 = await api(`/api/profile/${encodeURIComponent(id)}/import/commit`, "POST", { pieces });
+      toast(`imported: ${r2.created} created, ${r2.updated} updated`);
+      renderProfileDetail(id);
+    } catch (e) { toast(e.message, true); }
+  };
 }
 
 function addConventionForm(id) {

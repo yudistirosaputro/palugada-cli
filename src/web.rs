@@ -37,6 +37,8 @@ pub enum Route {
     ProjectConfig(String),
     SaveProjectConfig(String),
     VerifyCapability(String, String),
+    ImportPreview(String),
+    ImportCommit(String),
     ProjectRules(String),
     OverlayConventionBody(String, String),
     AddOverlayConvention(String),
@@ -65,6 +67,8 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", ["api", "profile"]) => Route::CreateProfile,
         ("POST", ["api", "profile", id, "convention"]) => Route::AddConvention((*id).to_string()),
         ("POST", ["api", "profile", id, "recipe"]) => Route::AddRecipe((*id).to_string()),
+        ("POST", ["api", "profile", id, "import", "preview"]) => Route::ImportPreview((*id).to_string()),
+        ("POST", ["api", "profile", id, "import", "commit"]) => Route::ImportCommit((*id).to_string()),
         ("POST", ["api", "project", name, "profile"]) => Route::SetProjectProfile((*name).to_string()),
         ("POST", ["api", "init"]) => Route::Init,
         ("GET", ["api", "project", name, "skillmap"]) => Route::SkillMap((*name).to_string()),
@@ -180,6 +184,87 @@ fn api(route: Route, body: &str) -> (u16, String) {
                 serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
             crate::knowledge::add_recipe(&kn, &id, &spec)?;
             Ok(json!({ "ok": true, "id": spec.id }))
+        }),
+        Route::ImportPreview(id) => write_op(|| {
+            #[derive(serde::Deserialize)]
+            struct Req {
+                markdown: String,
+            }
+            let kn = knowledge_dir()?;
+            let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            let existing: std::collections::BTreeSet<String> =
+                crate::knowledge::conventions(&kn, &id)?.into_iter().map(|c| c.id).collect();
+            let candidates: Vec<serde_json::Value> =
+                crate::knowledge::split_markdown_conventions(&req.markdown)
+                    .into_iter()
+                    .map(|d| {
+                        json!({
+                            "id": d.id, "title": d.title, "sections": d.sections,
+                            "body": d.body, "exists": existing.contains(&d.id),
+                        })
+                    })
+                    .collect();
+            let warnings: Vec<String> = if candidates.is_empty() {
+                vec!["no headings found — add a `# Heading` per topic".to_string()]
+            } else {
+                vec![]
+            };
+            Ok(json!({ "candidates": candidates, "warnings": warnings }))
+        }),
+        Route::ImportCommit(id) => write_op(|| {
+            #[derive(serde::Deserialize)]
+            struct Piece {
+                #[serde(default)]
+                id: String,
+                #[serde(default)]
+                title: String,
+                #[serde(default)]
+                description: String,
+                #[serde(default)]
+                tags: Vec<String>,
+                #[serde(default)]
+                body: String,
+            }
+            #[derive(serde::Deserialize)]
+            struct Req {
+                pieces: Vec<Piece>,
+            }
+            let kn = knowledge_dir()?;
+            let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            if req.pieces.is_empty() {
+                return Err("no pieces selected".to_string());
+            }
+            // Validate ALL before writing (write none on any invalid).
+            for p in &req.pieces {
+                if p.title.trim().is_empty() {
+                    return Err(format!("piece '{}' needs a title", p.id));
+                }
+                if !crate::knowledge::valid_doc_id(p.id.trim()) {
+                    return Err(format!("invalid id '{}' — use only [a-z0-9_-]", p.id));
+                }
+            }
+            let dir = kn.join("profiles").join(&id).join("conventions");
+            let (mut created, mut updated) = (0u32, 0u32);
+            let mut ids: Vec<String> = Vec::new();
+            for p in &req.pieces {
+                let raw = format!(
+                    "---\nid: {}\ntitle: {}\ndescription: {}\ntags: [{}]\n---\n\n# {}\n{}",
+                    p.id.trim(),
+                    p.title.trim(),
+                    p.description,
+                    p.tags.join(", "),
+                    p.title.trim(),
+                    p.body
+                );
+                let (cid, replaced) = crate::knowledge::add_convention_from_markdown(&dir, &raw)?;
+                if replaced {
+                    updated += 1;
+                } else {
+                    created += 1;
+                }
+                ids.push(cid);
+            }
+            Ok(json!({ "created": created, "updated": updated, "ids": ids }))
         }),
         Route::SetProjectProfile(name) => write_op(|| set_project_profile(&name, body)),
         Route::Init => write_op(|| init_op(body)),
@@ -513,6 +598,8 @@ mod tests {
         );
         assert_eq!(route("POST", "/api/profile"), Route::CreateProfile);
         assert_eq!(route("POST", "/api/profile/p/convention"), Route::AddConvention("p".into()));
+        assert_eq!(route("POST", "/api/profile/p/import/preview"), Route::ImportPreview("p".into()));
+        assert_eq!(route("POST", "/api/profile/p/import/commit"), Route::ImportCommit("p".into()));
         assert_eq!(route("POST", "/api/init"), Route::Init);
         assert_eq!(route("POST", "/api/project/x/profile"), Route::SetProjectProfile("x".into()));
         assert_eq!(route("GET", "/api/project/app/skillmap"), Route::SkillMap("app".into()));
