@@ -209,27 +209,6 @@ pub fn recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
         .collect())
 }
 
-/// Recipes in an arbitrary recipes dir. A missing dir/index yields an empty list.
-pub fn recipes_in(dir: &Path) -> Result<Vec<RecipeMeta>, String> {
-    let p = dir.join("_index.json");
-    if !p.exists() {
-        return Ok(Vec::new());
-    }
-    let data = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
-    let idx: RecipeIndex = serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))?;
-    Ok(idx
-        .recipes
-        .into_iter()
-        .map(|r| RecipeMeta { id: r.id, title: r.title, description: r.description, tags: r.tags })
-        .collect())
-}
-
-/// Raw markdown of one recipe file in an arbitrary recipes dir.
-pub fn recipe_md_in(dir: &Path, id: &str) -> Result<String, String> {
-    let p = dir.join(format!("{id}.md"));
-    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
-}
-
 /// Raw markdown of one convention file in an arbitrary conventions dir.
 pub fn convention_md_in(conv_dir: &Path, id: &str) -> Result<String, String> {
     let p = conv_dir.join(format!("{id}.md"));
@@ -957,9 +936,10 @@ mod tests {
         let (id, replaced) = add_recipe_from_markdown(&dir, raw).unwrap();
         assert_eq!(id, "scaffold-x");
         assert!(!replaced);
-        let r = recipes_in(&dir).unwrap();
-        assert!(r.iter().any(|x| x.id == "scaffold-x"));
-        assert!(recipe_md_in(&dir, "scaffold-x").unwrap().contains("step 1"));
+        let md = std::fs::read_to_string(dir.join("scaffold-x.md")).unwrap();
+        assert!(md.contains("step 1"));
+        let idx = std::fs::read_to_string(dir.join("_index.json")).unwrap();
+        assert!(idx.contains("scaffold-x"));
         assert!(add_recipe_from_markdown(&dir, raw).unwrap().1, "re-import → replaced");
     }
 
