@@ -209,6 +209,27 @@ pub fn recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
         .collect())
 }
 
+/// Recipes in an arbitrary recipes dir. A missing dir/index yields an empty list.
+pub fn recipes_in(dir: &Path) -> Result<Vec<RecipeMeta>, String> {
+    let p = dir.join("_index.json");
+    if !p.exists() {
+        return Ok(Vec::new());
+    }
+    let data = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
+    let idx: RecipeIndex = serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))?;
+    Ok(idx
+        .recipes
+        .into_iter()
+        .map(|r| RecipeMeta { id: r.id, title: r.title, description: r.description, tags: r.tags })
+        .collect())
+}
+
+/// Raw markdown of one recipe file in an arbitrary recipes dir.
+pub fn recipe_md_in(dir: &Path, id: &str) -> Result<String, String> {
+    let p = dir.join(format!("{id}.md"));
+    fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
+}
+
 /// Raw markdown of one convention file in an arbitrary conventions dir.
 pub fn convention_md_in(conv_dir: &Path, id: &str) -> Result<String, String> {
     let p = conv_dir.join(format!("{id}.md"));
@@ -324,60 +345,154 @@ pub fn add_convention(kn: &Path, profile: &str, spec: &ConventionSpec) -> Result
 /// into that dir's `_index.json`.
 pub fn add_convention_in(dir: &Path, spec: &ConventionSpec) -> Result<(), String> {
     validate_doc_id(&spec.id)?;
-    fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
-
-    let mut fm = format!(
-        "---\nid: {}\ntitle: {}\ndescription: {}\nsections:\n",
-        spec.id,
-        yaml_scalar(&spec.title),
-        yaml_scalar(&spec.description)
-    );
+    let mut secs: Vec<(String, String, usize, bool)> = Vec::new();
     let mut body = format!("# {}\n", spec.title);
-    let mut sec_meta: Vec<serde_json::Value> = Vec::new();
     for s in &spec.sections {
         let sid = slug(&s.title);
         let tokens = s.body.len() / 4 + 8;
+        body.push_str(&format!("\n## {} {{#{}}}\n{}\n", s.title, sid, s.body.trim()));
+        secs.push((sid, s.title.clone(), tokens, s.code));
+    }
+    let (fm_sections, index_sections) = render_sections(&secs);
+    write_convention_files(
+        dir,
+        &spec.id,
+        &spec.title,
+        &spec.description,
+        &spec.tags,
+        &fm_sections,
+        index_sections,
+        &body,
+    )
+}
+
+/// Render `sections` (sid, title, tokens, code) into the front-matter block lines
+/// and the JSON section metas for the index.
+fn render_sections(secs: &[(String, String, usize, bool)]) -> (String, Vec<serde_json::Value>) {
+    let mut fm = String::new();
+    let mut idx = Vec::new();
+    for (sid, title, tokens, code) in secs {
         fm.push_str(&format!(
             "  - {{ id: {}, title: {}, tokens: {}, code: {} }}\n",
             sid,
-            yaml_scalar(&s.title),
+            yaml_scalar(title),
             tokens,
-            s.code
+            code
         ));
-        body.push_str(&format!("\n## {} {{#{}}}\n{}\n", s.title, sid, s.body.trim()));
-        sec_meta.push(serde_json::json!({ "id": sid, "title": s.title, "tokens": tokens }));
+        idx.push(serde_json::json!({ "id": sid, "title": title, "tokens": tokens }));
     }
-    fm.push_str(&format!("tags: [{}]\n---\n\n", spec.tags.join(", ")));
-    fs::write(dir.join(format!("{}.md", spec.id)), format!("{fm}{body}"))
-        .map_err(|e| format!("write convention: {e}"))?;
+    (fm, idx)
+}
 
+/// Write `<id>.md` (canonical front-matter + the given body, verbatim) and upsert
+/// the conventions index.
+#[allow(clippy::too_many_arguments)]
+fn write_convention_files(
+    dir: &Path,
+    id: &str,
+    title: &str,
+    description: &str,
+    tags: &[String],
+    fm_sections: &str,
+    index_sections: Vec<serde_json::Value>,
+    body: &str,
+) -> Result<(), String> {
+    validate_doc_id(id)?;
+    fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let fm = format!(
+        "---\nid: {}\ntitle: {}\ndescription: {}\nsections:\n{}tags: [{}]\n---\n\n",
+        id,
+        yaml_scalar(title),
+        yaml_scalar(description),
+        fm_sections,
+        tags.join(", ")
+    );
+    fs::write(dir.join(format!("{id}.md")), format!("{fm}{body}"))
+        .map_err(|e| format!("write convention: {e}"))?;
     let entry = serde_json::json!({
-        "id": spec.id, "title": spec.title, "file": format!("{}.md", spec.id),
-        "description": spec.description, "tags": spec.tags, "sections": sec_meta,
+        "id": id, "title": title, "file": format!("{id}.md"),
+        "description": description, "tags": tags, "sections": index_sections,
     });
-    upsert_index(&dir.join("_index.json"), "topics", &spec.id, entry)
+    upsert_index(&dir.join("_index.json"), "topics", id, entry)
+}
+
+/// Import a plain markdown doc as a convention into `dir`. Front-matter supplies
+/// title/description/tags/id (title falls back to the first `# H1`); sections are
+/// derived from `##` headings; the body is stored verbatim. Returns (id, replaced).
+pub fn add_convention_from_markdown(dir: &Path, raw: &str) -> Result<(String, bool), String> {
+    let meta = parse_doc_front_matter(raw)?;
+    let body = strip_frontmatter(raw);
+    let title = meta
+        .title
+        .clone()
+        .or_else(|| first_h1(body))
+        .ok_or_else(|| "convention needs a title: add a `title:` field or a `# Heading`".to_string())?;
+    let id = meta.id.clone().unwrap_or_else(|| slug(&title));
+    validate_doc_id(&id)?;
+    let secs: Vec<(String, String, usize, bool)> = sections(body)
+        .iter()
+        .map(|s| (slug(&s.title), s.title.clone(), s.body.len() / 4 + 8, s.body.contains("```")))
+        .collect();
+    if secs.is_empty() {
+        eprintln!("warning: no `##` sections found in convention '{id}' — added with an empty outline");
+    }
+    let replaced = dir.join(format!("{id}.md")).exists();
+    let (fm_sections, index_sections) = render_sections(&secs);
+    write_convention_files(dir, &id, &title, &meta.description, &meta.tags, &fm_sections, index_sections, body)?;
+    Ok((id, replaced))
 }
 
 /// Author a recipe: write `<id>.md` and upsert it into `recipes/_index.json`.
 pub fn add_recipe(kn: &Path, profile: &str, spec: &RecipeSpec) -> Result<(), String> {
-    validate_doc_id(&spec.id)?;
     let dir = kn.join("profiles").join(profile).join("recipes");
-    fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let body = format!("# {}\n\n{}\n", spec.title, spec.body.trim());
+    write_recipe_files(&dir, &spec.id, &spec.title, &spec.description, &spec.tags, &body)
+}
+
+/// Write `<id>.md` (front-matter + the given body, verbatim) and upsert the
+/// recipes index.
+fn write_recipe_files(
+    dir: &Path,
+    id: &str,
+    title: &str,
+    description: &str,
+    tags: &[String],
+    body: &str,
+) -> Result<(), String> {
+    validate_doc_id(id)?;
+    fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let md = format!(
-        "---\nid: {}\ntitle: {}\ndescription: {}\ntags: [{}]\n---\n\n# {}\n\n{}\n",
-        spec.id,
-        yaml_scalar(&spec.title),
-        yaml_scalar(&spec.description),
-        spec.tags.join(", "),
-        spec.title,
-        spec.body.trim()
+        "---\nid: {}\ntitle: {}\ndescription: {}\ntags: [{}]\n---\n\n{}",
+        id,
+        yaml_scalar(title),
+        yaml_scalar(description),
+        tags.join(", "),
+        body
     );
-    fs::write(dir.join(format!("{}.md", spec.id)), md).map_err(|e| format!("write recipe: {e}"))?;
+    fs::write(dir.join(format!("{id}.md")), md).map_err(|e| format!("write recipe: {e}"))?;
     let entry = serde_json::json!({
-        "id": spec.id, "title": spec.title, "description": spec.description,
-        "file": format!("{}.md", spec.id), "tags": spec.tags,
+        "id": id, "title": title, "description": description,
+        "file": format!("{id}.md"), "tags": tags,
     });
-    upsert_index(&dir.join("_index.json"), "recipes", &spec.id, entry)
+    upsert_index(&dir.join("_index.json"), "recipes", id, entry)
+}
+
+/// Import a plain markdown doc as a recipe into `dir`. Front-matter supplies
+/// title/description/tags/id (title falls back to the first `# H1`); the body is
+/// stored verbatim. Returns (id, replaced).
+pub fn add_recipe_from_markdown(dir: &Path, raw: &str) -> Result<(String, bool), String> {
+    let meta = parse_doc_front_matter(raw)?;
+    let body = strip_frontmatter(raw);
+    let title = meta
+        .title
+        .clone()
+        .or_else(|| first_h1(body))
+        .ok_or_else(|| "recipe needs a title: add a `title:` field or a `# Heading`".to_string())?;
+    let id = meta.id.clone().unwrap_or_else(|| slug(&title));
+    validate_doc_id(&id)?;
+    let replaced = dir.join(format!("{id}.md")).exists();
+    write_recipe_files(dir, &id, &title, &meta.description, &meta.tags, body)?;
+    Ok((id, replaced))
 }
 
 /// Overwrite an existing convention's markdown verbatim (edit-only).
@@ -603,6 +718,44 @@ fn frontmatter_field(raw: &str, key: &str) -> Option<String> {
     None
 }
 
+/// Return the raw YAML front-matter block (between the leading `---` fences), if any.
+fn front_matter_region(raw: &str) -> Option<&str> {
+    let t = raw.trim_start();
+    let rest = t.strip_prefix("---")?;
+    let idx = rest.find("\n---")?;
+    Some(&rest[..idx])
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct DocMeta {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Parse the leading YAML front-matter into DocMeta; no front-matter → defaults.
+pub fn parse_doc_front_matter(raw: &str) -> Result<DocMeta, String> {
+    match front_matter_region(raw) {
+        Some(fm) => serde_yaml::from_str(fm).map_err(|e| format!("parse front-matter: {e}")),
+        None => Ok(DocMeta::default()),
+    }
+}
+
+/// First `# H1` heading text in a markdown body (ignores `##`+).
+fn first_h1(body: &str) -> Option<String> {
+    for line in body.lines() {
+        if let Some(h) = line.trim_start().strip_prefix("# ") {
+            return Some(h.trim().to_string());
+        }
+    }
+    None
+}
+
 /// Split a markdown body into `## ` sections (anchors stripped from titles).
 /// Lines inside ``` fences are body text, never headers.
 fn sections(body: &str) -> Vec<Section> {
@@ -753,6 +906,61 @@ mod tests {
         assert_eq!(secs[0].title, "One");
         assert!(secs[0].body.contains("## not a header"));
         assert_eq!(secs[1].title, "Two");
+    }
+
+    #[test]
+    fn parse_front_matter_reads_fields_and_defaults() {
+        let raw = "---\ntitle: Error Handling\ndescription: do X\ntags: [rs, error]\n---\n\n# Error Handling\nbody\n";
+        let m = parse_doc_front_matter(raw).unwrap();
+        assert_eq!(m.title.as_deref(), Some("Error Handling"));
+        assert_eq!(m.description, "do X");
+        assert_eq!(m.tags, vec!["rs".to_string(), "error".to_string()]);
+        assert_eq!(m.id, None);
+        let m2 = parse_doc_front_matter("# Title\nbody").unwrap();
+        assert_eq!(m2.title, None);
+        assert!(m2.tags.is_empty());
+    }
+
+    #[test]
+    fn import_convention_derives_sections_and_stores_body_verbatim() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("conventions");
+        let raw = "---\ntitle: Error Handling\ndescription: short\ntags: [rs, error]\n---\n\n# Error Handling\n> summary\n\n## Result Type\nuse Result\n\n## With Code\n```rust\nfn f() {}\n```\n";
+        let (id, replaced) = add_convention_from_markdown(&dir, raw).unwrap();
+        assert_eq!(id, "error-handling");
+        assert!(!replaced);
+        let metas = conventions_in(&dir).unwrap();
+        let m = metas.iter().find(|c| c.id == "error-handling").unwrap();
+        assert_eq!(m.title, "Error Handling");
+        assert_eq!(m.sections, vec!["Result Type".to_string(), "With Code".to_string()]);
+        let md = convention_md_in(&dir, "error-handling").unwrap();
+        assert!(md.contains("> summary"), "verbatim body must keep the blockquote: {md}");
+        assert!(md.contains("## Result Type"));
+        let (_id2, replaced2) = add_convention_from_markdown(&dir, raw).unwrap();
+        assert!(replaced2);
+    }
+
+    #[test]
+    fn import_convention_title_falls_back_to_h1_and_errors_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("conventions");
+        let (id, _) = add_convention_from_markdown(&dir, "# My Rule\n## A\nx\n").unwrap();
+        assert_eq!(id, "my-rule");
+        assert!(add_convention_from_markdown(&dir, "no heading here\n").is_err());
+    }
+
+    #[test]
+    fn import_recipe_writes_and_upserts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("recipes");
+        let raw = "---\ntitle: Scaffold X\ndescription: how to\ntags: [scaffold]\n---\n\n# Scaffold X\nstep 1\nstep 2\n";
+        let (id, replaced) = add_recipe_from_markdown(&dir, raw).unwrap();
+        assert_eq!(id, "scaffold-x");
+        assert!(!replaced);
+        let r = recipes_in(&dir).unwrap();
+        assert!(r.iter().any(|x| x.id == "scaffold-x"));
+        assert!(recipe_md_in(&dir, "scaffold-x").unwrap().contains("step 1"));
+        assert!(add_recipe_from_markdown(&dir, raw).unwrap().1, "re-import → replaced");
     }
 
 }
