@@ -4,6 +4,7 @@
 //! `indexer::fact_families`) are reused so validation matches runtime behaviour.
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -153,9 +154,125 @@ pub fn scaffold_new(kn: &Path, id: &str) -> Result<Vec<PathBuf>, String> {
     Ok(written)
 }
 
+fn valid_flow_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+}
+
+/// Replace the `flows:` block of a profile's `profile.yaml` with `flows`,
+/// preserving every other line (comments, description, fact_families,
+/// review_map). Flow names must be `[a-z0-9_-]`; steps are written verbatim.
+pub fn set_flows(kn: &Path, id: &str, flows: &BTreeMap<String, Vec<String>>) -> Result<(), String> {
+    for name in flows.keys() {
+        if !valid_flow_name(name) {
+            return Err(format!("invalid flow name '{name}' — use only [a-z0-9_-]"));
+        }
+    }
+    let path = kn.join("profiles").join(id).join("profile.yaml");
+    let raw = fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+
+    let mut block = String::from("flows:\n");
+    for (name, steps) in flows {
+        block.push_str(&format!("  {}: [{}]\n", name, steps.join(", ")));
+    }
+
+    let lines: Vec<&str> = raw.lines().collect();
+    let new_content = if let Some(start) = lines.iter().position(|l| l.trim_end() == "flows:") {
+        // Replace `flows:` + the contiguous indented lines that follow it.
+        let mut end = start + 1;
+        while end < lines.len() && lines[end].starts_with([' ', '\t']) {
+            end += 1;
+        }
+        let mut out = String::new();
+        for l in &lines[..start] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        out.push_str(&block);
+        for l in &lines[end..] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        out
+    } else if let Some(rm) = lines.iter().position(|l| l.trim_end() == "review_map:") {
+        // No flows block yet: insert before review_map.
+        let mut out = String::new();
+        for l in &lines[..rm] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        out.push_str(&block);
+        out.push('\n');
+        for l in &lines[rm..] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        out
+    } else {
+        // Append at end.
+        let mut out = raw.clone();
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+        out.push_str(&block);
+        out
+    };
+    fs::write(&path, new_content).map_err(|e| format!("write {}: {e}", path.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn set_flows_replaces_block_and_preserves_rest() {
+        let kn = tempfile::tempdir().unwrap();
+        let dir = kn.path().join("profiles").join("p");
+        std::fs::create_dir_all(&dir).unwrap();
+        let original = "schema_version: \"1.0\"\nid: p\ntitle: \"P\"\nlanguages: [kotlin]\n\nfact_families:\n  - { id: vm, symbol: true }\n\n# retrieval flows comment\nflows:\n  bugfix:   [code.recent, convention(errorhandling)]\n  review:   [diff.scan, convention(by-file-kind)]\n\n# review map comment\nreview_map:\n  vm: [architecture]\n";
+        std::fs::write(dir.join("profile.yaml"), original).unwrap();
+
+        let mut flows = BTreeMap::new();
+        flows.insert("bugfix".to_string(), vec!["code.recent".to_string(), "convention(errorhandling)".to_string(), "convention(r8-analyzer)".to_string()]);
+        flows.insert("optimize".to_string(), vec!["convention(r8-analyzer)".to_string()]);
+        set_flows(kn.path(), "p", &flows).unwrap();
+
+        let out = std::fs::read_to_string(dir.join("profile.yaml")).unwrap();
+        assert!(out.contains("bugfix: [code.recent, convention(errorhandling), convention(r8-analyzer)]"), "{out}");
+        assert!(out.contains("optimize: [convention(r8-analyzer)]"));
+        assert!(!out.contains("review:   [diff.scan"), "old review flow line removed");
+        assert!(out.contains("# retrieval flows comment"));
+        assert!(out.contains("# review map comment"));
+        assert!(out.contains("review_map:\n  vm: [architecture]"));
+        assert!(out.contains("fact_families:\n  - { id: vm, symbol: true }"));
+        assert!(out.contains("languages: [kotlin]"));
+    }
+
+    #[test]
+    fn set_flows_rejects_bad_flow_name() {
+        let kn = tempfile::tempdir().unwrap();
+        let dir = kn.path().join("profiles").join("p");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("profile.yaml"), "id: p\nflows:\n  bugfix: [diff.scan]\n").unwrap();
+        let mut flows = BTreeMap::new();
+        flows.insert("Bad Name".to_string(), vec!["diff.scan".to_string()]);
+        assert!(set_flows(kn.path(), "p", &flows).is_err());
+    }
+
+    #[test]
+    fn set_flows_inserts_block_when_absent() {
+        let kn = tempfile::tempdir().unwrap();
+        let dir = kn.path().join("profiles").join("p");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("profile.yaml"), "id: p\nlanguages: [kotlin]\n\nreview_map:\n  vm: [a]\n").unwrap();
+        let mut flows = BTreeMap::new();
+        flows.insert("bugfix".to_string(), vec!["diff.scan".to_string()]);
+        set_flows(kn.path(), "p", &flows).unwrap();
+        let out = std::fs::read_to_string(dir.join("profile.yaml")).unwrap();
+        assert!(out.contains("flows:\n  bugfix: [diff.scan]"), "{out}");
+        assert!(out.contains("review_map:"));
+    }
 
     #[test]
     fn list_finds_profiles_with_titles() {
