@@ -417,7 +417,10 @@ pub fn add_convention_from_markdown(dir: &Path, raw: &str) -> Result<(String, bo
     }
     let replaced = dir.join(format!("{id}.md")).exists();
     let (fm_sections, index_sections) = render_sections(&secs);
-    write_convention_files(dir, &id, &title, &meta.description, &meta.tags, &fm_sections, index_sections, body)?;
+    // Inject `{#slug}` anchors so imported conventions match the hand-authored
+    // anchored style (section ids already use slug(title), so they line up).
+    let body_out = inject_anchors(body);
+    write_convention_files(dir, &id, &title, &meta.description, &meta.tags, &fm_sections, index_sections, &body_out)?;
     Ok((id, replaced))
 }
 
@@ -725,6 +728,36 @@ pub fn parse_doc_front_matter(raw: &str) -> Result<DocMeta, String> {
     }
 }
 
+/// Append `{#slug}` anchors to `## ` headings that lack one (outside code fences),
+/// so imported conventions match the hand-authored anchored style. Other lines —
+/// including the body prose and fenced `## ` — are passed through untouched.
+fn inject_anchors(body: &str) -> String {
+    let mut out = String::new();
+    let mut in_fence = false;
+    for line in body.split_inclusive('\n') {
+        let content = line.trim_end_matches('\n');
+        if content.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            out.push_str(line);
+            continue;
+        }
+        if !in_fence {
+            if let Some(rest) = content.strip_prefix("## ") {
+                let title = rest.trim();
+                if !title.is_empty() && !title.contains("{#") {
+                    out.push_str(&format!("## {} {{#{}}}", title, slug(title)));
+                    if line.ends_with('\n') {
+                        out.push('\n');
+                    }
+                    continue;
+                }
+            }
+        }
+        out.push_str(line);
+    }
+    out
+}
+
 /// First `# H1` heading text in a markdown body (ignores `##`+).
 fn first_h1(body: &str) -> Option<String> {
     for line in body.lines() {
@@ -917,6 +950,19 @@ mod tests {
         assert!(md.contains("## Result Type"));
         let (_id2, replaced2) = add_convention_from_markdown(&dir, raw).unwrap();
         assert!(replaced2);
+    }
+
+    #[test]
+    fn import_convention_injects_anchors_on_h2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("conventions");
+        let raw = "---\ntitle: T\n---\n\n# T\n\n## A Section\nbody\n\n## Pre Anchored {#custom}\nx\n\n```\n## not a heading\n```\n";
+        add_convention_from_markdown(&dir, raw).unwrap();
+        let md = convention_md_in(&dir, "t").unwrap();
+        assert!(md.contains("## A Section {#a-section}"), "h2 without anchor gets one: {md}");
+        assert!(md.contains("## Pre Anchored {#custom}"), "existing anchor preserved");
+        assert!(md.contains("## not a heading\n"), "fenced ## kept");
+        assert!(!md.contains("## not a heading {#"), "fenced ## must NOT be anchored");
     }
 
     #[test]
