@@ -14,3 +14,8 @@ node_modules/
 
 # superpowers brainstorm mockups
 .superpowers/
+
+# palugada self-dogfood: keep the profile binding (config.yaml) but not the
+# generated symbol index (regenerable via `palugada index`) or personal IDE state.
+.palugada/index/
+.claude/settings.local.json
