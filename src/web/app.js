@@ -487,10 +487,8 @@ async function renderProfileDetail(id) {
     <code>palugada fact &lt;family&gt;</code> lists them with file:line. Defined in the profile's
     <code>extractors.yaml</code> (regex / tree-sitter) — not edited here.</div><div>${
     d.fact_families.map(f => `<span class="pill">${esc(f)}</span>`).join("") || '<span class="muted">none</span>'
-  }</div><h3>Flows</h3>
-    <div class="muted">Step sequences <code>palugada brief &lt;flow&gt;</code> assembles for each task type.</div><div>${
-    Object.keys(d.flows).map(f => `<span class="pill">${esc(f)}</span>`).join("") || '<span class="muted">none</span>'
   }</div></div>`));
+  view.appendChild(flowsCard(id, d));
 
   view.appendChild(generateForm(id));
 }
@@ -561,6 +559,81 @@ function renderImportPreview(host, id, res) {
       renderProfileDetail(id);
     } catch (e) { toast(e.message, true); }
   };
+}
+
+function flowsCard(id, d) {
+  const flows = JSON.parse(JSON.stringify(d.flows || {}));
+  const convIds = (d.conventions || []).map(c => c.id);
+  const recipeIds = (d.recipes || []).map(r => r.id);
+  const ENGINE = ["code.recent", "symbol.find", "module.info", "diff.scan", "prd.context"];
+  const card = h(`<div class="card"><h3>Flows</h3>
+    <div class="muted">Steps <code>palugada brief &lt;flow&gt;</code> assembles. Saved to the profile's <code>profile.yaml</code>; <code>brief</code> uses it live — no skill regeneration needed.</div>
+    <div class="flows-body"></div>
+    <div class="row" style="margin-top:8px"><input class="fl-new" placeholder="new flow name (e.g. optimize)">
+      <button class="ghost fl-add-flow">+ add flow</button><span class="spacer"></span><button class="fl-save">Save flows</button></div></div>`);
+  const bodyEl = card.querySelector(".flows-body");
+
+  function rerender() {
+    bodyEl.innerHTML = "";
+    Object.keys(flows).forEach(fname => {
+      const fl = h(`<div class="flow"><div class="row"><strong>${esc(fname)}</strong> <a class="link fl-del-flow">× flow</a></div><div class="fl-steps"></div></div>`);
+      const stepsEl = fl.querySelector(".fl-steps");
+      flows[fname].forEach((step, i) => {
+        const chip = h(`<span class="step-chip"><code>${esc(step)}</code> <a class="link fl-up">↑</a> <a class="link fl-down">↓</a> <a class="link fl-rm">×</a></span>`);
+        chip.querySelector(".fl-rm").onclick = () => { flows[fname].splice(i, 1); rerender(); };
+        chip.querySelector(".fl-up").onclick = () => { if (i > 0) { const a = flows[fname]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; rerender(); } };
+        chip.querySelector(".fl-down").onclick = () => { const a = flows[fname]; if (i < a.length - 1) { [a[i], a[i + 1]] = [a[i + 1], a[i]]; rerender(); } };
+        stepsEl.appendChild(chip);
+      });
+      const add = h(`<div class="row" style="margin-top:4px">
+        <select class="fl-kind"><option value="engine">engine</option><option value="convention">convention(…)</option><option value="recipe">recipe(…)</option><option value="bfk">convention(by-file-kind)</option></select>
+        <select class="fl-val"></select><button class="ghost fl-add-step">add step</button></div>`);
+      const kindEl = add.querySelector(".fl-kind");
+      const valEl = add.querySelector(".fl-val");
+      function fillVal() {
+        const k = kindEl.value;
+        const opts = k === "engine" ? ENGINE : k === "convention" ? convIds : k === "recipe" ? recipeIds : [];
+        valEl.style.display = opts.length ? "" : "none";
+        valEl.innerHTML = opts.map(o => `<option>${esc(o)}</option>`).join("");
+      }
+      kindEl.onchange = fillVal;
+      fillVal();
+      add.querySelector(".fl-add-step").onclick = () => {
+        const k = kindEl.value;
+        let step;
+        if (k === "engine") step = valEl.value;
+        else if (k === "convention") step = valEl.value ? `convention(${valEl.value})` : "";
+        else if (k === "recipe") step = valEl.value ? `recipe(${valEl.value})` : "";
+        else step = "convention(by-file-kind)";
+        if (!step) { toast("nothing to add (no conventions/recipes?)", true); return; }
+        flows[fname].push(step);
+        rerender();
+      };
+      fl.appendChild(add);
+      fl.querySelector(".fl-del-flow").onclick = () => {
+        if (confirm(`delete flow '${fname}'?`)) { delete flows[fname]; rerender(); }
+      };
+      bodyEl.appendChild(fl);
+    });
+  }
+  rerender();
+
+  card.querySelector(".fl-add-flow").onclick = () => {
+    const name = card.querySelector(".fl-new").value.trim();
+    if (!/^[a-z0-9_-]+$/.test(name)) { toast("flow name: a-z 0-9 - _ only", true); return; }
+    if (flows[name]) { toast("flow already exists", true); return; }
+    flows[name] = [];
+    card.querySelector(".fl-new").value = "";
+    rerender();
+  };
+  card.querySelector(".fl-save").onclick = async () => {
+    try {
+      await api(`/api/profile/${encodeURIComponent(id)}/flows`, "POST", { flows });
+      toast("saved flows");
+      renderProfileDetail(id);
+    } catch (e) { toast(e.message, true); }
+  };
+  return card;
 }
 
 function addConventionForm(id) {
