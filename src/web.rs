@@ -39,6 +39,7 @@ pub enum Route {
     VerifyCapability(String, String),
     ImportPreview(String),
     ImportCommit(String),
+    SetFlows(String),
     ProjectRules(String),
     OverlayConventionBody(String, String),
     AddOverlayConvention(String),
@@ -67,6 +68,7 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", ["api", "profile"]) => Route::CreateProfile,
         ("POST", ["api", "profile", id, "convention"]) => Route::AddConvention((*id).to_string()),
         ("POST", ["api", "profile", id, "recipe"]) => Route::AddRecipe((*id).to_string()),
+        ("POST", ["api", "profile", id, "flows"]) => Route::SetFlows((*id).to_string()),
         ("POST", ["api", "profile", id, "import", "preview"]) => Route::ImportPreview((*id).to_string()),
         ("POST", ["api", "profile", id, "import", "commit"]) => Route::ImportCommit((*id).to_string()),
         ("POST", ["api", "project", name, "profile"]) => Route::SetProjectProfile((*name).to_string()),
@@ -184,6 +186,17 @@ fn api(route: Route, body: &str) -> (u16, String) {
                 serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
             crate::knowledge::add_recipe(&kn, &id, &spec)?;
             Ok(json!({ "ok": true, "id": spec.id }))
+        }),
+        Route::SetFlows(id) => write_op(|| {
+            #[derive(serde::Deserialize)]
+            struct Req {
+                #[serde(default)]
+                flows: std::collections::BTreeMap<String, Vec<String>>,
+            }
+            let kn = knowledge_dir()?;
+            let req: Req = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+            crate::profile::set_flows(&kn, &id, &req.flows)?;
+            Ok(json!({ "ok": true, "flows": req.flows.len() }))
         }),
         Route::ImportPreview(id) => write_op(|| {
             #[derive(serde::Deserialize)]
@@ -598,6 +611,7 @@ mod tests {
         );
         assert_eq!(route("POST", "/api/profile"), Route::CreateProfile);
         assert_eq!(route("POST", "/api/profile/p/convention"), Route::AddConvention("p".into()));
+        assert_eq!(route("POST", "/api/profile/p/flows"), Route::SetFlows("p".into()));
         assert_eq!(route("POST", "/api/profile/p/import/preview"), Route::ImportPreview("p".into()));
         assert_eq!(route("POST", "/api/profile/p/import/commit"), Route::ImportCommit("p".into()));
         assert_eq!(route("POST", "/api/init"), Route::Init);
