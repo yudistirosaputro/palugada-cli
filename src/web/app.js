@@ -35,14 +35,26 @@ function esc(s) {
 function splitCsv(s) {
   return (s || "").split(",").map(x => x.trim()).filter(Boolean);
 }
-function showBody(title, md) {
+// Place a view/edit panel right below the row/section the user clicked (its
+// nearest .row/.step/.candidate, or the enclosing table for a <tr>); fall back
+// to the top of the view when there's no anchor.
+function placePanel(card, anchor) {
+  if (anchor && anchor.closest) {
+    const tr = anchor.closest("tr");
+    const host = tr ? tr.closest("table") : anchor.closest(".row, .step, .candidate");
+    if (host && host.parentNode) { host.insertAdjacentElement("afterend", card); return; }
+  }
+  view.insertBefore(card, view.children[1] || null);
+}
+
+function showBody(title, md, anchor) {
   let card = document.getElementById("bodyview");
   if (card) card.remove();
   card = h(`<div class="card" id="bodyview"></div>`);
   card.innerHTML =
     `<div class="row"><strong>${esc(title)}</strong><span class="spacer"></span>` +
     `<a class="link" id="bodyclose">close</a></div><pre>${esc(md)}</pre>`;
-  view.insertBefore(card, view.children[1] || null);
+  placePanel(card, anchor);
   card.querySelector("#bodyclose").onclick = () => card.remove();
 }
 
@@ -143,8 +155,8 @@ function rulesCard(name, data) {
     const row = h(`<tr><td><span class="origin origin-${esc(c.origin)}">${esc(ORIGIN_LABEL[c.origin] || c.origin)}</span></td>
       <td><code>${esc(c.id)}</code></td><td>${esc(c.title)}</td>
       <td>${editable ? '<a class="link r-edit">edit</a>' : '<a class="link r-view">view</a>'}</td></tr>`);
-    if (editable) row.querySelector(".r-edit").onclick = () => editOverlayConvention(name, c.id);
-    else row.querySelector(".r-view").onclick = () => viewDoc(data.profile, "convention", c.id);
+    if (editable) row.querySelector(".r-edit").onclick = () => editOverlayConvention(name, c.id, row);
+    else row.querySelector(".r-view").onclick = () => viewDoc(data.profile, "convention", c.id, row);
     ctbody.appendChild(row);
   });
   card.appendChild(ctab);
@@ -169,11 +181,11 @@ function rulesCard(name, data) {
   data.review_map.filter(e => e.origin === "project").forEach(e => { override[e.family] = e.conventions; });
   const rmBtn = h(`<div class="row" style="margin-top:6px"><button class="ghost r-rm">Edit review_map override</button></div>`);
   card.appendChild(rmBtn);
-  rmBtn.querySelector(".r-rm").onclick = () => editReviewMap(name, override);
+  rmBtn.querySelector(".r-rm").onclick = () => editReviewMap(name, override, rmBtn);
   return card;
 }
 
-async function editOverlayConvention(name, id) {
+async function editOverlayConvention(name, id, anchor) {
   let b;
   try { b = await api(`/api/project/${encodeURIComponent(name)}/convention/${encodeURIComponent(id)}`); }
   catch (e) { toast(e.message, true); return; }
@@ -185,7 +197,7 @@ async function editOverlayConvention(name, id) {
     <textarea id="ed-body" style="min-height:320px;width:100%"></textarea>
     <div class="row" style="margin-top:6px"><span class="spacer"></span><button id="ed-save">Save</button></div></div>`);
   card.querySelector("#ed-body").value = b.markdown;
-  view.insertBefore(card, view.children[1] || null);
+  placePanel(card, anchor);
   card.querySelector("#ed-close").onclick = () => card.remove();
   card.querySelector("#ed-save").onclick = async () => {
     const markdown = card.querySelector("#ed-body").value;
@@ -237,7 +249,7 @@ function addOverlayConventionForm(name) {
   return box;
 }
 
-function editReviewMap(name, current) {
+function editReviewMap(name, current, anchor) {
   let card = document.getElementById("bodyview");
   if (card) card.remove();
   card = h(`<div class="card" id="bodyview">
@@ -246,7 +258,7 @@ function editReviewMap(name, current) {
     <textarea id="rm-body" style="min-height:180px;width:100%"></textarea>
     <div class="row" style="margin-top:6px"><span class="spacer"></span><button id="rm-save">Save</button></div></div>`);
   card.querySelector("#rm-body").value = JSON.stringify(current, null, 2);
-  view.insertBefore(card, view.children[1] || null);
+  placePanel(card, anchor);
   card.querySelector("#rm-close").onclick = () => card.remove();
   card.querySelector("#rm-save").onclick = async () => {
     let review_map;
@@ -364,20 +376,20 @@ function stepRow(profile, st) {
             : ' <a class="link doc-view">view</a> <a class="link doc-edit">edit</a>'
   }</div>`);
   if (!missing) {
-    row.querySelector(".doc-view").onclick = () => viewDoc(profile, st.kind, st.id);
-    row.querySelector(".doc-edit").onclick = () => editDoc(profile, st.kind, st.id);
+    row.querySelector(".doc-view").onclick = () => viewDoc(profile, st.kind, st.id, row);
+    row.querySelector(".doc-edit").onclick = () => editDoc(profile, st.kind, st.id, row);
   }
   return row;
 }
 
-async function viewDoc(profile, kind, id) {
+async function viewDoc(profile, kind, id, anchor) {
   try {
     const b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`);
-    showBody(`${kind}: ${id}`, b.markdown);
+    showBody(`${kind}: ${id}`, b.markdown, anchor);
   } catch (e) { toast(e.message, true); }
 }
 
-async function editDoc(profile, kind, id) {
+async function editDoc(profile, kind, id, anchor) {
   let b;
   try { b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`); }
   catch (e) { toast(e.message, true); return; }
@@ -389,7 +401,7 @@ async function editDoc(profile, kind, id) {
     <textarea id="ed-body" style="min-height:320px;width:100%"></textarea>
     <div class="row" style="margin-top:6px"><span class="spacer"></span><button id="ed-save">Save</button></div></div>`);
   card.querySelector("#ed-body").value = b.markdown;
-  view.insertBefore(card, view.children[1] || null);
+  placePanel(card, anchor);
   card.querySelector("#ed-close").onclick = () => card.remove();
   card.querySelector("#ed-save").onclick = async () => {
     const markdown = card.querySelector("#ed-body").value;
@@ -447,7 +459,7 @@ async function renderProfileDetail(id) {
   d.conventions.forEach(c => {
     const row = h(`<div class="row"><a class="link">${esc(c.id)}</a> <span class="muted">${esc(c.title)} · ${c.sections.length} sections</span></div>`);
     row.querySelector("a").onclick = async () => {
-      try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown); }
+      try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown, row); }
       catch (e) { toast(e.message, true); }
     };
     cv.appendChild(row);
@@ -462,7 +474,7 @@ async function renderProfileDetail(id) {
   d.recipes.forEach(r => {
     const row = h(`<div class="row"><a class="link">${esc(r.id)}</a> <span class="muted">${esc(r.title)}</span></div>`);
     row.querySelector("a").onclick = async () => {
-      try { const b = await api(`/api/profile/${id}/recipe/${r.id}`); showBody(r.id, b.markdown); }
+      try { const b = await api(`/api/profile/${id}/recipe/${r.id}`); showBody(r.id, b.markdown, row); }
       catch (e) { toast(e.message, true); }
     };
     rc.appendChild(row);
@@ -671,14 +683,14 @@ async function renderKnowledge() {
     const cl = h(`<div class="card"><h3>Conventions</h3></div>`);
     pd.conventions.forEach(c => {
       const r = h(`<div class="row"><a class="link">${esc(c.id)}</a> <span class="muted">${esc(c.title)}</span></div>`);
-      r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown); } catch (e) { toast(e.message, true); } };
+      r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown, r); } catch (e) { toast(e.message, true); } };
       cl.appendChild(r);
     });
     out.appendChild(cl);
     const rl = h(`<div class="card"><h3>Recipes</h3></div>`);
     pd.recipes.forEach(c => {
       const r = h(`<div class="row"><a class="link">${esc(c.id)}</a> <span class="muted">${esc(c.title)}</span></div>`);
-      r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/recipe/${c.id}`); showBody(c.id, b.markdown); } catch (e) { toast(e.message, true); } };
+      r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/recipe/${c.id}`); showBody(c.id, b.markdown, r); } catch (e) { toast(e.message, true); } };
       rl.appendChild(r);
     });
     out.appendChild(rl);
