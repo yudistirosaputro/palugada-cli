@@ -64,3 +64,6 @@ table.rules th { color: #9aa4b2; font-weight: 600; font-size: 12px; }
 .cd-vres { font-size: 12px; }
 .candidate { border: 1px dashed #313845; border-radius: 6px; padding: 8px; margin: 6px 0; }
 .im-text { width: 100%; min-height: 120px; }
+.flow { border: 1px dashed #313845; border-radius: 6px; padding: 8px; margin: 6px 0; }
+.step-chip { display: inline-block; background: #2b313c; border-radius: 4px; padding: 2px 7px; margin: 2px; font-size: 12px; }
+.step-chip code { color: #cdd6e0; }
