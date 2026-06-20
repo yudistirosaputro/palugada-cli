@@ -441,7 +441,9 @@ async function renderProfileDetail(id) {
   try { d = await api("/api/profile/" + encodeURIComponent(id)); }
   catch (e) { toast(e.message, true); return; }
 
-  const cv = h(`<div class="card"><h3>Conventions</h3></div>`);
+  const cv = h(`<div class="card"><h3>Conventions</h3>
+    <div class="muted">Standing standards for this stack — the "right way" to write code here (architecture,
+    error handling, testing, style). Pulled automatically by <code>q</code> and <code>brief</code> while you code.</div></div>`);
   d.conventions.forEach(c => {
     const row = h(`<div class="row"><a class="link">${esc(c.id)}</a> <span class="muted">${esc(c.title)} · ${c.sections.length} sections</span></div>`);
     row.querySelector("a").onclick = async () => {
@@ -453,7 +455,9 @@ async function renderProfileDetail(id) {
   cv.appendChild(addConventionForm(id));
   view.appendChild(cv);
 
-  const rc = h(`<div class="card"><h3>Recipes</h3></div>`);
+  const rc = h(`<div class="card"><h3>Recipes</h3>
+    <div class="muted">Step-by-step guides for one task (scaffold a feature, add a subcommand, refactor).
+    Pulled by <code>for &lt;task&gt;</code> and <code>brief feature/refactor</code>.</div></div>`);
   d.recipes.forEach(r => {
     const row = h(`<div class="row"><a class="link">${esc(r.id)}</a> <span class="muted">${esc(r.title)}</span></div>`);
     row.querySelector("a").onclick = async () => {
@@ -465,9 +469,13 @@ async function renderProfileDetail(id) {
   rc.appendChild(addRecipeForm(id));
   view.appendChild(rc);
 
-  view.appendChild(h(`<div class="card"><h3>Fact families</h3><div>${
+  view.appendChild(h(`<div class="card"><h3>Fact families</h3>
+    <div class="muted">Categories of symbols palugada extracts from YOUR code (e.g. viewmodel, repository, command).
+    <code>palugada fact &lt;family&gt;</code> lists them with file:line. Defined in the profile's
+    <code>extractors.yaml</code> (regex / tree-sitter) — not edited here.</div><div>${
     d.fact_families.map(f => `<span class="pill">${esc(f)}</span>`).join("") || '<span class="muted">none</span>'
-  }</div><h3>Flows</h3><div>${
+  }</div><h3>Flows</h3>
+    <div class="muted">Step sequences <code>palugada brief &lt;flow&gt;</code> assembles for each task type.</div><div>${
     Object.keys(d.flows).map(f => `<span class="pill">${esc(f)}</span>`).join("") || '<span class="muted">none</span>'
   }</div></div>`));
 
@@ -477,13 +485,18 @@ async function renderProfileDetail(id) {
 function addConventionForm(id) {
   const box = h(`<div style="margin-top:12px;border-top:1px solid #2b313c;padding-top:10px">
     <strong>+ Add convention</strong>
+    <div class="muted" style="margin:2px 0 6px">A standing standard for this stack. palugada writes the front-matter,
+    section ids, and index for you — you only fill the fields below. (CLI equivalent: <code>palugada convention add &lt;file.md&gt;</code>.)</div>
     <label>id</label><input class="ac-id" placeholder="errorhandling">
+    <div class="muted">lowercase slug — used in <code>palugada q errorhandling</code> (a-z, 0-9, - _).</div>
     <label>title</label><input class="ac-title" placeholder="Error Handling">
     <label>description</label><input class="ac-desc" placeholder="one-line summary">
+    <div class="muted">one line shown in <code>q --list</code> and search.</div>
     <label>tags (comma-separated)</label><input class="ac-tags" placeholder="error, coroutines">
+    <label style="margin-top:8px;display:block"><strong>Sections</strong></label>
+    <div class="muted">Split the rule into titled chunks — each is a token-cheap piece <code>q</code>/<code>brief</code> pull on demand.</div>
     <div class="ac-sections"></div>
     <div class="row" style="margin-top:6px"><button class="ghost ac-addsec">+ section</button><span class="spacer"></span><button class="ac-save">Save convention</button></div>
-    <div class="muted" style="margin-top:4px">Each section becomes a token-cheap chunk that <code>q</code>/<code>brief</code> pull on demand.</div>
   </div>`);
   const secs = box.querySelector(".ac-sections");
   const addSec = () => secs.appendChild(h(`<div class="section-row">
@@ -517,11 +530,14 @@ function addConventionForm(id) {
 function addRecipeForm(id) {
   const box = h(`<div style="margin-top:12px;border-top:1px solid #2b313c;padding-top:10px">
     <strong>+ Add recipe</strong>
+    <div class="muted" style="margin:2px 0 6px">A step-by-step guide for one task. (CLI equivalent: <code>palugada recipe add &lt;file.md&gt;</code>.)</div>
     <label>id</label><input class="ar-id" placeholder="pagination">
+    <div class="muted">lowercase slug — used in <code>palugada for pagination</code>.</div>
     <label>title</label><input class="ar-title" placeholder="Add pagination">
     <label>description</label><input class="ar-desc" placeholder="one-line summary">
     <label>tags (comma-separated)</label><input class="ar-tags" placeholder="recipe, list">
     <label>body (markdown)</label><textarea class="ar-body" placeholder="## When to use this&#10;...&#10;## Steps&#10;1. ..."></textarea>
+    <div class="muted">the full procedure — write it as plain markdown (use <code>## </code> for steps/sections).</div>
     <div class="row" style="margin-top:6px"><span class="spacer"></span><button class="ar-save">Save recipe</button></div>
   </div>`);
   box.querySelector(".ar-save").onclick = async e => {
