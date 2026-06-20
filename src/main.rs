@@ -156,6 +156,16 @@ enum Commands {
         #[command(subcommand)]
         action: ProfileCmd,
     },
+    /// Author a convention from a plain markdown file.
+    Convention {
+        #[command(subcommand)]
+        action: ConventionCmd,
+    },
+    /// Author a recipe from a plain markdown file.
+    Recipe {
+        #[command(subcommand)]
+        action: RecipeCmd,
+    },
     /// (Re)generate this project's agent skill files.
     Skills {
         #[command(subcommand)]
@@ -291,6 +301,31 @@ enum ProfileCmd {
 }
 
 #[derive(Subcommand)]
+enum ConventionCmd {
+    /// Import a markdown file as a convention: `convention add <file.md>`.
+    /// Writes to the profile, or to a project's overlay with global `--project`.
+    Add {
+        /// Path to the markdown file (front-matter + `# Title` + `## Section`s).
+        file: String,
+        /// Profile override (ignored when `--project` selects an overlay).
+        #[arg(long)]
+        profile: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RecipeCmd {
+    /// Import a markdown file as a recipe: `recipe add <file.md>`.
+    Add {
+        /// Path to the markdown file (front-matter + body).
+        file: String,
+        /// Profile override.
+        #[arg(long)]
+        profile: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum IssueCmd {
     /// View an issue by key: `palugada issue view PROJ-123`.
     View { key: String },
@@ -373,6 +408,8 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Commands::Project { action } => cmd_project(action),
         Commands::Profile { action } => cmd_profile(action, project),
+        Commands::Convention { action } => cmd_convention(action, project),
+        Commands::Recipe { action } => cmd_recipe(action, project),
         Commands::Skills { action } => cmd_skills(action, project),
         Commands::Issue { action } => cmd_issue(action, project, cli.insecure),
         Commands::Wiki { action } => cmd_wiki(action, project, cli.insecure),
@@ -985,6 +1022,57 @@ fn cmd_profile(action: ProfileCmd, project: Option<&str>) -> Result<(), String> 
             config::set_profile(&entry.repo_path, &id)?;
             println!("project '{name}' now uses profile '{id}'");
             println!("knowledge & symbols already follow it; run `palugada index` only if this profile adds new fact families.");
+            Ok(())
+        }
+    }
+}
+
+fn cmd_convention(action: ConventionCmd, project: Option<&str>) -> Result<(), String> {
+    match action {
+        ConventionCmd::Add { file, profile } => {
+            if !file.ends_with(".md") {
+                return Err(format!("expected a .md file, got '{file}'"));
+            }
+            let raw = std::fs::read_to_string(&file).map_err(|e| format!("read {file}: {e}"))?;
+            let global = GlobalConfig::load_or_default()?;
+            let kn = knowledge::knowledge_dir(&global)?;
+            let dir = if let Some(name) = project {
+                // Per-project convention overlay (cycle C).
+                let entry = global
+                    .projects
+                    .registered
+                    .get(name)
+                    .ok_or_else(|| format!("project '{name}' is not registered"))?;
+                effective::overlay_dir(&entry.repo_path)
+            } else {
+                let prof = resolve_profile(&global, None, profile.as_deref(), &kn)?;
+                kn.join("profiles").join(&prof).join("conventions")
+            };
+            let (id, replaced) = knowledge::add_convention_from_markdown(&dir, &raw)?;
+            let verb = if replaced { "updated" } else { "created" };
+            println!("{verb} {id} -> {}", dir.join(format!("{id}.md")).display());
+            Ok(())
+        }
+    }
+}
+
+fn cmd_recipe(action: RecipeCmd, project: Option<&str>) -> Result<(), String> {
+    match action {
+        RecipeCmd::Add { file, profile } => {
+            if project.is_some() {
+                return Err("recipes are profile-scoped; drop --project and use --profile".to_string());
+            }
+            if !file.ends_with(".md") {
+                return Err(format!("expected a .md file, got '{file}'"));
+            }
+            let raw = std::fs::read_to_string(&file).map_err(|e| format!("read {file}: {e}"))?;
+            let global = GlobalConfig::load_or_default()?;
+            let kn = knowledge::knowledge_dir(&global)?;
+            let prof = resolve_profile(&global, None, profile.as_deref(), &kn)?;
+            let dir = kn.join("profiles").join(&prof).join("recipes");
+            let (id, replaced) = knowledge::add_recipe_from_markdown(&dir, &raw)?;
+            let verb = if replaced { "updated" } else { "created" };
+            println!("{verb} {id} -> {}", dir.join(format!("{id}.md")).display());
             Ok(())
         }
     }
