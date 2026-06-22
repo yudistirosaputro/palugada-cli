@@ -35,6 +35,16 @@ function esc(s) {
 function splitCsv(s) {
   return (s || "").split(",").map(x => x.trim()).filter(Boolean);
 }
+// Standard view header: comic eyebrow + display title + optional subtitle.
+// `subtitle` may contain trusted markup (e.g. <code>); callers escape user data.
+function viewHead(eyebrow, title, subtitle) {
+  return `<div class="view-head"><div class="eyebrow">${esc(eyebrow)}</div>` +
+    `<h1>${esc(title)}</h1>` + (subtitle ? `<p class="subtitle">${subtitle}</p>` : "") + `</div>`;
+}
+// A back link styled as a comic chip with a chevron.
+function backLink(label) {
+  return `<a class="link back-link" id="back"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>${esc(label)}</a>`;
+}
 // Place a view/edit panel right below the row/section the user clicked (its
 // nearest .row/.step/.candidate, or the enclosing table for a <tr>); fall back
 // to the top of the view when there's no anchor.
@@ -65,26 +75,37 @@ document.querySelectorAll(".nav-item").forEach(a => {
 });
 function setView(name) {
   document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.view === name));
+  const sidebar = document.getElementById("sidebar");
+  if (sidebar) sidebar.classList.remove("open");
   (VIEWS[name] || renderOverview)();
 }
 
 // ── views ───────────────────────────────────────────────────────────────--
 async function renderOverview() {
-  view.innerHTML = "<h2>Overview</h2>";
+  view.innerHTML = viewHead("Workspace", "Overview",
+    "Your engineering know-how, indexed once and served token-cheap to every agent and CLI call.");
   try {
     const o = await api("/api/overview");
     document.getElementById("kn-dir").textContent = o.knowledge_dir;
-    view.appendChild(h(`<div class="card">
-      <div><span class="muted">knowledge dir:</span> ${esc(o.knowledge_dir)}</div>
-      <div><span class="muted">active project:</span> ${esc(o.active_project || "(none)")}</div>
-      <div><span class="muted">default profile:</span> ${esc(o.default_profile || "(none)")}</div>
-      <div><span class="muted">profiles:</span> ${o.profile_count} &nbsp;·&nbsp; <span class="muted">projects:</span> ${o.project_count}</div>
+    view.appendChild(h(`<div class="stat-grid" style="grid-template-columns:repeat(2,1fr);max-width:540px">
+      <div class="stat"><div class="k">Profiles</div><div class="v">${o.profile_count}</div></div>
+      <div class="stat"><div class="k">Projects</div><div class="v">${o.project_count}</div></div>
+    </div>`));
+    view.appendChild(h(`<div class="card"><div class="card-head"><h3>Workspace</h3></div>
+      <div class="kv-row"><span class="kk">Knowledge dir</span><span class="vv mono">${esc(o.knowledge_dir)}</span></div>
+      <div class="kv-row"><span class="kk">Active project</span><span class="vv">${
+        o.active_project ? esc(o.active_project) + ' <span class="sticker active dot">active</span>' : '<span class="muted">(none)</span>'
+      }</span></div>
+      <div class="kv-row"><span class="kk">Default profile</span><span class="vv">${
+        o.default_profile ? '<span class="id-chip">' + esc(o.default_profile) + '</span>' : '<span class="muted">(none)</span>'
+      }</span></div>
     </div>`));
   } catch (e) { toast(e.message, true); }
 }
 
 async function renderProjects() {
-  view.innerHTML = "<h2>Projects</h2>";
+  view.innerHTML = viewHead("Repos", "Projects",
+    "Repositories bound to a profile. Each can override its profile's rules in a committed <code>.palugada/</code> overlay.");
   let d, profs;
   try {
     d = await api("/api/projects");
@@ -96,10 +117,10 @@ async function renderProjects() {
   d.projects.forEach(p => {
     const opts = profs.map(pr =>
       `<option value="${esc(pr.id)}"${pr.id === p.profile ? " selected" : ""}>${esc(pr.id)}</option>`).join("");
-    const card = h(`<div class="card"><a class="link projlink"><strong>${esc(p.name)}</strong></a>${p.active ? ' <span class="pill">active</span>' : ""}
-      <div class="muted">${esc(p.repo_path)}</div>
-      <div class="row" style="margin-top:6px"><label style="margin:0">profile</label>
-        <select class="proj-profile" style="max-width:240px">${opts}</select></div></div>`);
+    const card = h(`<div class="card">
+      <div class="card-head"><h3 class="projlink" style="margin:0;cursor:pointer">${esc(p.name)}</h3>${p.active ? ' <span class="sticker active dot">active</span>' : ""}</div>
+      <div class="kv-row"><span class="kk">Repo path</span><span class="vv mono">${esc(p.repo_path)}</span></div>
+      <div class="kv-row"><span class="kk">Profile</span><span class="vv"><select class="proj-profile" style="max-width:260px">${opts}</select></span></div></div>`);
     card.querySelector(".projlink").onclick = () => renderProjectDetail(p.name);
     card.querySelector(".proj-profile").onchange = async (e) => {
       try {
@@ -115,7 +136,7 @@ async function renderProjects() {
 }
 
 async function renderProjectDetail(name) {
-  view.innerHTML = `<h2>${esc(name)}</h2><p><a class="link" id="back">← projects</a></p>`;
+  view.innerHTML = backLink("Projects") + viewHead("Project", name);
   document.getElementById("back").onclick = renderProjects;
   let m;
   try { m = await api("/api/project/" + encodeURIComponent(name) + "/skillmap"); }
@@ -140,8 +161,8 @@ async function renderProjectDetail(name) {
 const ORIGIN_LABEL = { profile: "profile", project: "project", overridden: "overridden" };
 
 function rulesCard(name, data) {
-  const card = h(`<div class="card"><h3>Effective Rules</h3>
-    <div class="muted">Edits here touch THIS project's overlay in its repo (<code>.palugada/</code>),
+  const card = h(`<div class="card"><div class="card-head"><h3>Effective Rules</h3></div>
+    <div class="card-note">Edits here touch THIS project's overlay in its repo (<code>.palugada/</code>),
       committed with the project — not the shared profile <strong>${esc(data.profile)}</strong>.</div></div>`);
   if (data.warnings && data.warnings.length) {
     card.appendChild(h(`<div class="warn">${data.warnings.map(w => `⚠ ${esc(w)}`).join("<br>")}</div>`));
@@ -159,7 +180,9 @@ function rulesCard(name, data) {
     else row.querySelector(".r-view").onclick = () => viewDoc(data.profile, "convention", c.id, row);
     ctbody.appendChild(row);
   });
-  card.appendChild(ctab);
+  const cwrap = h(`<div class="table-scroll"></div>`);
+  cwrap.appendChild(ctab);
+  card.appendChild(cwrap);
 
   const addBtn = h(`<div class="row" style="margin-top:6px"><button class="ghost r-add">+ Add project rule</button></div>`);
   card.appendChild(addBtn);
@@ -176,7 +199,9 @@ function rulesCard(name, data) {
     rtbody.appendChild(h(`<tr><td><span class="origin origin-${esc(e.origin)}">${esc(e.origin)}</span></td>
       <td><code>${esc(e.family)}</code></td><td>${e.conventions.map(esc).join(", ")}</td></tr>`));
   });
-  card.appendChild(rtab);
+  const rwrap = h(`<div class="table-scroll"></div>`);
+  rwrap.appendChild(rtab);
+  card.appendChild(rwrap);
   const override = {};
   data.review_map.filter(e => e.origin === "project").forEach(e => { override[e.family] = e.conventions; });
   const rmBtn = h(`<div class="row" style="margin-top:6px"><button class="ghost r-rm">Edit review_map override</button></div>`);
@@ -346,12 +371,12 @@ function credentialsCard(name, cfg) {
 
 function skillCard(profile, s) {
   const card = h(`<div class="card"></div>`);
-  const head = h(`<div class="row"><strong>${esc(s.name)}</strong> <span class="pill">${esc(s.kind)}</span><span class="spacer"></span></div>`);
+  const head = h(`<div class="card-head"><h3 style="margin:0">${esc(s.name)}</h3> <span class="pill">${esc(s.kind)}</span><span class="spacer"></span></div>`);
   card.appendChild(head);
-  if (s.command) card.appendChild(h(`<div class="muted"><code>${esc(s.command)}</code></div>`));
+  if (s.command) card.appendChild(h(`<div class="card-note"><code>${esc(s.command)}</code></div>`));
   if (s.kind === "flow") {
     const steps = h(`<div class="steps"></div>`);
-    (s.steps || []).forEach(st => steps.appendChild(stepRow(profile, st)));
+    (s.steps || []).forEach((st, i) => steps.appendChild(stepRow(profile, st, i + 1)));
     if (!s.steps || !s.steps.length) steps.appendChild(h(`<div class="muted">no steps defined for this flow</div>`));
     card.appendChild(steps);
   } else if (s.kind === "tool") {
@@ -362,16 +387,17 @@ function skillCard(profile, s) {
   return card;
 }
 
-function stepRow(profile, st) {
+function stepRow(profile, st, n) {
+  const num = `<span class="num">${n}</span>`;
   if (st.kind === "engine")
-    return h(`<div class="step"><span class="step-tag engine">engine</span> <span class="muted">${esc(st.token)} — ${esc(st.label)}</span></div>`);
+    return h(`<div class="step">${num}<span class="step-tag engine">engine</span> <span class="arg">${esc(st.token)}</span> <span class="hint">— ${esc(st.label)}</span></div>`);
   if (st.kind === "review_map") {
     const rows = (st.expand || []).map(e =>
-      `<div class="muted" style="margin-left:18px">${esc(e.family)} → ${e.conventions.map(esc).join(", ")}</div>`).join("");
-    return h(`<div class="step"><span class="step-tag review">review_map</span> <span class="muted">by changed file kind</span>${rows}</div>`);
+      `<div class="hint" style="margin-left:40px">${esc(e.family)} → ${e.conventions.map(esc).join(", ")}</div>`).join("");
+    return h(`<div class="step">${num}<span class="step-tag review_map">review_map</span> <span class="hint">by changed file kind</span>${rows}</div>`);
   }
   const missing = st.exists === false;
-  const row = h(`<div class="step"><span class="step-tag ${esc(st.kind)}">${esc(st.kind)}</span> <code>${esc(st.id)}</code>${
+  const row = h(`<div class="step">${num}<span class="step-tag ${esc(st.kind)}">${esc(st.kind)}</span> <span class="arg">${esc(st.id)}</span>${
     missing ? ' <span class="warn-pill">⚠ missing</span>'
             : ' <a class="link doc-view">view</a> <a class="link doc-edit">edit</a>'
   }</div>`);
@@ -414,8 +440,9 @@ async function editDoc(profile, kind, id, anchor) {
 }
 
 async function renderProfiles() {
-  view.innerHTML = "<h2>Profiles</h2>";
-  const form = h(`<div class="card"><strong>New profile</strong>
+  view.innerHTML = viewHead("Knowledge", "Profiles",
+    "A profile is one stack's playbook — its conventions, recipes, and the flows your agents assemble. Pick one to edit, or start a new stack.");
+  const form = h(`<div class="card"><div class="card-head"><h3>New profile</h3></div>
     <label>id (a-z0-9-_)</label><input id="np-id" placeholder="web-react">
     <label>title</label><input id="np-title" placeholder="Web · React">
     <label>languages (comma-separated)</label><input id="np-langs" placeholder="typescript, tsx">
@@ -434,50 +461,51 @@ async function renderProfiles() {
       renderProfiles();
     } catch (e) { toast(e.message, true); }
   };
-  const list = h(`<div></div>`);
-  view.appendChild(list);
+  const listCard = h(`<div class="card"><div class="card-head"><h3>Your profiles</h3></div><div class="list" id="prof-list"></div></div>`);
+  view.appendChild(listCard);
+  const list = listCard.querySelector("#prof-list");
   try {
     const d = await api("/api/profiles");
     d.profiles.forEach(p => {
-      const item = h(`<div class="card"><a class="link">${esc(p.id)}</a> <span class="muted">${esc(p.title)}</span></div>`);
-      item.querySelector("a").onclick = () => renderProfileDetail(p.id);
+      const item = h(`<div class="lrow" style="cursor:pointer"><span class="id-chip">${esc(p.id)}</span> <span class="ttl">${esc(p.title)}</span><span class="actions"><a class="link">Open</a></span></div>`);
+      item.onclick = () => renderProfileDetail(p.id);
       list.appendChild(item);
     });
   } catch (e) { toast(e.message, true); }
 }
 
 async function renderProfileDetail(id) {
-  view.innerHTML = `<h2>${esc(id)}</h2><p><a class="link" id="back">← profiles</a></p>`;
+  view.innerHTML = backLink("Profiles") + viewHead("Profile", id);
   document.getElementById("back").onclick = renderProfiles;
   let d;
   try { d = await api("/api/profile/" + encodeURIComponent(id)); }
   catch (e) { toast(e.message, true); return; }
 
-  const cv = h(`<div class="card"><h3>Conventions</h3>
-    <div class="muted">Standing standards for this stack — the "right way" to write code here (architecture,
-    error handling, testing, style). Pulled automatically by <code>q</code> and <code>brief</code> while you code.</div></div>`);
+  const cv = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${d.conventions.length}</span></div>
+    <div class="card-note">Standing standards for this stack — the "right way" to write code here. Agents pull these automatically while you work (CLI: <code>q</code>, <code>brief</code>).</div><div class="list" id="cv-list"></div></div>`);
+  const cvList = cv.querySelector("#cv-list");
   d.conventions.forEach(c => {
-    const row = h(`<div class="row"><a class="link">${esc(c.id)}</a> <span class="muted">${esc(c.title)} · ${c.sections.length} sections</span></div>`);
+    const row = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span> <span class="meta">· ${c.sections.length} sections</span><span class="actions"><a class="link">View</a></span></div>`);
     row.querySelector("a").onclick = async () => {
       try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown, row); }
       catch (e) { toast(e.message, true); }
     };
-    cv.appendChild(row);
+    cvList.appendChild(row);
   });
   cv.appendChild(addConventionForm(id));
   view.appendChild(cv);
   view.appendChild(importCard(id));
 
-  const rc = h(`<div class="card"><h3>Recipes</h3>
-    <div class="muted">Step-by-step guides for one task (scaffold a feature, add a subcommand, refactor).
-    Pulled by <code>for &lt;task&gt;</code> and <code>brief feature/refactor</code>.</div></div>`);
+  const rc = h(`<div class="card"><div class="card-head"><h3>Recipes</h3><span class="count">${d.recipes.length}</span></div>
+    <div class="card-note">Step-by-step guides for one task (scaffold a feature, add a subcommand, refactor). Agents pull these by name (CLI: <code>for &lt;task&gt;</code>, <code>brief feature/refactor</code>).</div><div class="list" id="rc-list"></div></div>`);
+  const rcList = rc.querySelector("#rc-list");
   d.recipes.forEach(r => {
-    const row = h(`<div class="row"><a class="link">${esc(r.id)}</a> <span class="muted">${esc(r.title)}</span></div>`);
+    const row = h(`<div class="lrow"><span class="id-chip">${esc(r.id)}</span> <span class="ttl">${esc(r.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
     row.querySelector("a").onclick = async () => {
       try { const b = await api(`/api/profile/${id}/recipe/${r.id}`); showBody(r.id, b.markdown, row); }
       catch (e) { toast(e.message, true); }
     };
-    rc.appendChild(row);
+    rcList.appendChild(row);
   });
   rc.appendChild(addRecipeForm(id));
   view.appendChild(rc);
@@ -738,11 +766,14 @@ function generateForm(id) {
 }
 
 async function renderKnowledge() {
-  view.innerHTML = "<h2>Knowledge</h2>";
+  view.innerHTML = viewHead("Browse", "Knowledge", "Read-only browser across any profile's conventions and recipes.");
   let d;
   try { d = await api("/api/profiles"); } catch (e) { toast(e.message, true); return; }
-  if (!d.profiles.length) { view.appendChild(h(`<p class="muted">No profiles.</p>`)); return; }
-  const sel = h(`<div class="card"><label>profile</label><select id="kn-prof">${
+  if (!d.profiles.length) {
+    view.appendChild(h(`<div class="empty"><div class="t">No profiles yet</div><div>Create one under Profiles to start browsing.</div></div>`));
+    return;
+  }
+  const sel = h(`<div class="card"><label>Profile</label><select id="kn-prof">${
     d.profiles.map(p => `<option value="${esc(p.id)}">${esc(p.id)} — ${esc(p.title)}</option>`).join("")
   }</select></div>`);
   view.appendChild(sel);
@@ -753,24 +784,47 @@ async function renderKnowledge() {
     out.innerHTML = "";
     let pd;
     try { pd = await api("/api/profile/" + encodeURIComponent(id)); } catch (e) { toast(e.message, true); return; }
-    const cl = h(`<div class="card"><h3>Conventions</h3></div>`);
+    const cl = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${pd.conventions.length}</span></div><div class="list"></div></div>`);
+    const clList = cl.querySelector(".list");
     pd.conventions.forEach(c => {
-      const r = h(`<div class="row"><a class="link">${esc(c.id)}</a> <span class="muted">${esc(c.title)}</span></div>`);
+      const r = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
       r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown, r); } catch (e) { toast(e.message, true); } };
-      cl.appendChild(r);
+      clList.appendChild(r);
     });
     out.appendChild(cl);
-    const rl = h(`<div class="card"><h3>Recipes</h3></div>`);
+    const rl = h(`<div class="card"><div class="card-head"><h3>Recipes</h3><span class="count">${pd.recipes.length}</span></div><div class="list"></div></div>`);
+    const rlList = rl.querySelector(".list");
     pd.recipes.forEach(c => {
-      const r = h(`<div class="row"><a class="link">${esc(c.id)}</a> <span class="muted">${esc(c.title)}</span></div>`);
+      const r = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
       r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/recipe/${c.id}`); showBody(c.id, b.markdown, r); } catch (e) { toast(e.message, true); } };
-      rl.appendChild(r);
+      rlList.appendChild(r);
     });
     out.appendChild(rl);
   };
   document.getElementById("kn-prof").onchange = load;
   load();
 }
+
+// ── chrome: theme toggle (persisted) + mobile drawer ───────────────────────
+(function () {
+  const btn = document.getElementById("themeBtn");
+  const label = document.getElementById("themeLabel");
+  const sync = () => {
+    const dark = document.documentElement.getAttribute("data-theme") === "dark";
+    if (label) label.textContent = dark ? "Light" : "Dark";
+  };
+  if (btn) btn.onclick = () => {
+    const dark = document.documentElement.getAttribute("data-theme") === "dark";
+    const next = dark ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("palugada-theme", next); } catch (e) {}
+    sync();
+  };
+  sync();
+  const sidebar = document.getElementById("sidebar");
+  const menu = document.getElementById("menuBtn");
+  if (menu && sidebar) menu.onclick = () => sidebar.classList.toggle("open");
+})();
 
 // ── boot ──────────────────────────────────────────────────────────────────
 setView("overview");

@@ -166,6 +166,11 @@ h1, h2.head {
   font-family: var(--font-display); font-weight: 400; font-size: 42px; line-height: 1;
   letter-spacing: .01em; margin: 0 0 8px; color: var(--ink);
 }
+h2, h3, h4 {
+  font-family: var(--font-display); font-weight: 400; letter-spacing: .02em;
+  color: var(--ink); line-height: 1.1; margin: var(--s5) 0 var(--s2);
+}
+h2 { font-size: 30px; } h3 { font-size: 22px; } h4 { font-size: 18px; }
 .subtitle { color: var(--ink-soft); font-size: 15.5px; margin: 0; max-width: 62ch; font-weight: 400; }
 .subtitle code, .subtitle .mono { background: var(--surface-2); border: 1.5px solid var(--ink); padding: 0 5px; border-radius: 5px; color: var(--ink); }
 
@@ -189,6 +194,7 @@ h1, h2.head {
   margin: 0; color: var(--ink); line-height: 1;
 }
 .card-head h4 { font-size: 20px; }
+.card > h3:first-child, .card > h4:first-child, .card > strong:first-child { margin-top: 0; display: block; }
 .card-head .count {
   font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: var(--ink-soft);
   background: var(--surface-2); border: var(--bw) solid var(--ink); border-radius: var(--r-pill); padding: 0 8px;
