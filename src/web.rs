@@ -12,6 +12,9 @@ use std::path::PathBuf;
 const INDEX_HTML: &str = include_str!("web/index.html");
 const APP_JS: &str = include_str!("web/app.js");
 const STYLE_CSS: &str = include_str!("web/style.css");
+const FONT_BANGERS: &[u8] = include_bytes!("web/bangers.woff2");
+const FONT_COMIC_400: &[u8] = include_bytes!("web/comic400.woff2");
+const FONT_COMIC_700: &[u8] = include_bytes!("web/comic700.woff2");
 
 type Resp = tiny_http::Response<std::io::Cursor<Vec<u8>>>;
 
@@ -20,6 +23,7 @@ pub enum Route {
     Index,
     AppJs,
     StyleCss,
+    Font(String),
     Overview,
     Projects,
     Profiles,
@@ -55,6 +59,7 @@ pub fn route(method: &str, path: &str) -> Route {
         ("GET", [""]) | ("GET", ["index.html"]) => Route::Index,
         ("GET", ["app.js"]) => Route::AppJs,
         ("GET", ["style.css"]) => Route::StyleCss,
+        ("GET", [name]) if name.ends_with(".woff2") => Route::Font((*name).to_string()),
         ("GET", ["api", "overview"]) => Route::Overview,
         ("GET", ["api", "projects"]) => Route::Projects,
         ("GET", ["api", "profiles"]) => Route::Profiles,
@@ -144,6 +149,19 @@ fn handle(mut request: tiny_http::Request) {
         }
         Route::StyleCss => {
             let _ = request.respond(asset(STYLE_CSS, "text/css; charset=utf-8"));
+        }
+        Route::Font(name) => {
+            let bytes: &[u8] = match name.as_str() {
+                "bangers.woff2" => FONT_BANGERS,
+                "comic400.woff2" => FONT_COMIC_400,
+                "comic700.woff2" => FONT_COMIC_700,
+                _ => &[],
+            };
+            if bytes.is_empty() {
+                let _ = request.respond(json_resp(404, err_json("not found")));
+            } else {
+                let _ = request.respond(font_asset(bytes));
+            }
         }
         Route::NotFound => {
             let _ = request.respond(json_resp(404, err_json("not found")));
@@ -563,6 +581,13 @@ fn asset(s: &str, content_type: &str) -> Resp {
     body(200, content_type, s.to_string())
 }
 
+fn font_asset(bytes: &[u8]) -> Resp {
+    tiny_http::Response::from_data(bytes.to_vec())
+        .with_status_code(200)
+        .with_header(header("Content-Type", "font/woff2"))
+        .with_header(header("Cache-Control", "public, max-age=31536000, immutable"))
+}
+
 fn json_resp(status: u16, s: String) -> Resp {
     body(status, "application/json", s)
 }
@@ -604,6 +629,8 @@ mod tests {
         assert_eq!(route("GET", "/api/overview"), Route::Overview);
         assert_eq!(route("GET", "/"), Route::Index);
         assert_eq!(route("GET", "/app.js"), Route::AppJs);
+        assert_eq!(route("GET", "/bangers.woff2"), Route::Font("bangers.woff2".into()));
+        assert_eq!(route("GET", "/comic700.woff2"), Route::Font("comic700.woff2".into()));
         assert_eq!(route("GET", "/api/profile/android-mvvm"), Route::Profile("android-mvvm".into()));
         assert_eq!(
             route("GET", "/api/profile/p/convention/arch"),
