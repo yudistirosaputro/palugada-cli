@@ -185,7 +185,14 @@ mod tests {
     use crate::config::{GlobalConfig, ProjectConfig, ProjectEntry};
 
     fn meta(id: &str) -> TopicMeta {
-        TopicMeta { id: id.into(), title: id.into(), description: String::new(), tags: vec![], sections: vec![] }
+        TopicMeta {
+            id: id.into(),
+            title: id.into(),
+            description: String::new(),
+            tags: vec![],
+            sections: vec![],
+            related: vec![],
+        }
     }
 
     #[test]
