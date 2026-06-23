@@ -2,60 +2,191 @@
   "schema_version": "1.0",
   "topics": [
     {
-      "id": "architecture",
-      "title": "Architecture",
-      "file": "architecture.md",
       "description": "MVVM with a repository layer, Hilt DI, Coroutines + Flow, and a sealed UiState. UI-toolkit agnostic.",
-      "tags": ["mvvm", "architecture", "hilt", "flow", "stateflow", "repository"],
-      "sections": [
-        { "id": "overview",  "title": "MVVM Overview",             "tokens": 170 },
-        { "id": "layers",    "title": "Layers & Responsibilities", "tokens": 210 },
-        { "id": "uistate",   "title": "Sealed UiState",            "tokens": 190 },
-        { "id": "data-flow", "title": "Unidirectional Data Flow",  "tokens": 230 }
+      "file": "architecture.md",
+      "id": "architecture",
+      "related": [
+        "testing"
       ],
-      "related": ["di", "networking", "concurrency", "testing"]
+      "sections": [
+        {
+          "id": "overview",
+          "title": "MVVM Overview",
+          "tokens": 170
+        },
+        {
+          "id": "layers",
+          "title": "Layers & Responsibilities",
+          "tokens": 210
+        },
+        {
+          "id": "uistate",
+          "title": "Sealed UiState",
+          "tokens": 190
+        },
+        {
+          "id": "data-flow",
+          "title": "Unidirectional Data Flow",
+          "tokens": 230
+        }
+      ],
+      "tags": [
+        "mvvm",
+        "architecture",
+        "hilt",
+        "flow",
+        "stateflow",
+        "repository"
+      ],
+      "title": "Architecture"
     },
     {
-      "id": "errorhandling",
-      "title": "Error Handling",
-      "file": "errorhandling.md",
       "description": "Model failures explicitly, handle coroutine cancellation correctly, and surface errors as UiState rather than crashing or swallowing them.",
-      "tags": ["error", "exception", "result", "coroutines", "flow", "retrofit"],
-      "sections": [
-        { "id": "result",     "title": "Modeling Failures",    "tokens": 180 },
-        { "id": "coroutines", "title": "Errors in Coroutines", "tokens": 210 },
-        { "id": "surfacing",  "title": "Surfacing to the UI",  "tokens": 170 },
-        { "id": "network",    "title": "Network Errors",       "tokens": 190 }
+      "file": "errorhandling.md",
+      "id": "errorhandling",
+      "related": [
+        "architecture",
+        "testing"
       ],
-      "related": ["architecture", "testing", "networking"]
+      "sections": [
+        {
+          "id": "result",
+          "title": "Modeling Failures",
+          "tokens": 180
+        },
+        {
+          "id": "coroutines",
+          "title": "Errors in Coroutines",
+          "tokens": 210
+        },
+        {
+          "id": "surfacing",
+          "title": "Surfacing to the UI",
+          "tokens": 170
+        },
+        {
+          "id": "network",
+          "title": "Network Errors",
+          "tokens": 190
+        }
+      ],
+      "tags": [
+        "error",
+        "exception",
+        "result",
+        "coroutines",
+        "flow",
+        "retrofit"
+      ],
+      "title": "Error Handling"
     },
     {
-      "id": "testing",
-      "title": "Testing",
-      "file": "testing.md",
       "description": "Unit-test ViewModels, repositories, and mappers with coroutines-test and Turbine; prefer fakes over mocks; keep framework code out of pure-logic tests.",
-      "tags": ["testing", "junit", "coroutines-test", "turbine", "flow", "fake"],
-      "sections": [
-        { "id": "scope",      "title": "What to Test",         "tokens": 170 },
-        { "id": "viewmodel",  "title": "Testing ViewModels",   "tokens": 220 },
-        { "id": "repository", "title": "Testing Repositories", "tokens": 170 },
-        { "id": "practices",  "title": "Practices",            "tokens": 150 }
+      "file": "testing.md",
+      "id": "testing",
+      "related": [
+        "architecture",
+        "errorhandling"
       ],
-      "related": ["architecture", "errorhandling", "concurrency"]
+      "sections": [
+        {
+          "id": "scope",
+          "title": "What to Test",
+          "tokens": 170
+        },
+        {
+          "id": "viewmodel",
+          "title": "Testing ViewModels",
+          "tokens": 220
+        },
+        {
+          "id": "repository",
+          "title": "Testing Repositories",
+          "tokens": 170
+        },
+        {
+          "id": "practices",
+          "title": "Practices",
+          "tokens": 150
+        }
+      ],
+      "tags": [
+        "testing",
+        "junit",
+        "coroutines-test",
+        "turbine",
+        "flow",
+        "fake"
+      ],
+      "title": "Testing"
     },
     {
-      "id": "style",
-      "title": "Style",
-      "file": "style.md",
       "description": "Official Kotlin style enforced with ktlint/detekt, consistent naming with role suffixes, idiomatic null-safety, and package-by-feature structure.",
-      "tags": ["style", "kotlin", "ktlint", "naming", "idioms", "formatting"],
-      "sections": [
-        { "id": "formatting", "title": "Formatting",     "tokens": 150 },
-        { "id": "naming",     "title": "Naming",         "tokens": 170 },
-        { "id": "idioms",     "title": "Idioms",         "tokens": 200 },
-        { "id": "structure",  "title": "File Structure", "tokens": 150 }
+      "file": "style.md",
+      "id": "style",
+      "related": [
+        "architecture"
       ],
-      "related": ["architecture"]
+      "sections": [
+        {
+          "id": "formatting",
+          "title": "Formatting",
+          "tokens": 150
+        },
+        {
+          "id": "naming",
+          "title": "Naming",
+          "tokens": 170
+        },
+        {
+          "id": "idioms",
+          "title": "Idioms",
+          "tokens": 200
+        },
+        {
+          "id": "structure",
+          "title": "File Structure",
+          "tokens": 150
+        }
+      ],
+      "tags": [
+        "style",
+        "kotlin",
+        "ktlint",
+        "naming",
+        "idioms",
+        "formatting"
+      ],
+      "title": "Style"
+    },
+    {
+      "description": "",
+      "file": "r8-analyzer.md",
+      "id": "r8-analyzer",
+      "sections": [
+        {
+          "id": "step-1-setup-and-configuration-check",
+          "title": "Step 1. Setup and configuration check",
+          "tokens": 118
+        },
+        {
+          "id": "step-2-analysis-path-selection",
+          "title": "Step 2. Analysis path selection",
+          "tokens": 397
+        },
+        {
+          "id": "step-3-report-generation",
+          "title": "Step 3. Report generation",
+          "tokens": 162
+        },
+        {
+          "id": "constraints",
+          "title": "Constraints",
+          "tokens": 101
+        }
+      ],
+      "tags": [],
+      "title": "R8 Analyzer"
     }
   ]
 }

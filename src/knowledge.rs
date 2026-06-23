@@ -111,13 +111,9 @@ struct ConvTopic {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
-    sections: Vec<ConvSection>,
-}
-
-#[derive(Deserialize, Default)]
-struct ConvSection {
+    sections: Vec<SectionMeta>,
     #[serde(default)]
-    title: String,
+    related: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -135,6 +131,10 @@ struct RecipeEntry {
     description: String,
     #[serde(default)]
     tags: Vec<String>,
+    #[serde(default)]
+    convention_refs: Vec<ConvRef>,
+    #[serde(default)]
+    related_recipes: Vec<String>,
 }
 
 fn read_conv_index(kn: &Path, profile: &str) -> Result<ConvIndex, String> {
@@ -162,13 +162,36 @@ fn read_recipe_index(kn: &Path, profile: &str) -> Result<RecipeIndex, String> {
 
 // ── data accessors (typed; for the web console / programmatic use) ──────────
 
+/// One section of a convention, as stored in `_index.json` and surfaced to the
+/// web console (its `id` is the `{#anchor}` scroll target; `tokens` is a cost estimate).
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct SectionMeta {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub tokens: usize,
+}
+
+/// A recipe → convention cross-reference: `topic` (a convention id) and an
+/// optional `section` (a section id within it).
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct ConvRef {
+    #[serde(default)]
+    pub topic: String,
+    #[serde(default)]
+    pub section: String,
+}
+
 #[derive(serde::Serialize)]
 pub struct TopicMeta {
     pub id: String,
     pub title: String,
     pub description: String,
     pub tags: Vec<String>,
-    pub sections: Vec<String>,
+    pub sections: Vec<SectionMeta>,
+    pub related: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -177,6 +200,8 @@ pub struct RecipeMeta {
     pub title: String,
     pub description: String,
     pub tags: Vec<String>,
+    pub convention_refs: Vec<ConvRef>,
+    pub related_recipes: Vec<String>,
 }
 
 /// Conventions in an arbitrary conventions dir (profile or per-project overlay)
@@ -190,7 +215,8 @@ pub fn conventions_in(conv_dir: &Path) -> Result<Vec<TopicMeta>, String> {
             title: t.title,
             description: t.description,
             tags: t.tags,
-            sections: t.sections.into_iter().map(|s| s.title).collect(),
+            sections: t.sections,
+            related: t.related,
         })
         .collect())
 }
@@ -205,7 +231,14 @@ pub fn recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
     Ok(read_recipe_index(kn, profile)?
         .recipes
         .into_iter()
-        .map(|r| RecipeMeta { id: r.id, title: r.title, description: r.description, tags: r.tags })
+        .map(|r| RecipeMeta {
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            tags: r.tags,
+            convention_refs: r.convention_refs,
+            related_recipes: r.related_recipes,
+        })
         .collect())
 }
 
@@ -922,7 +955,11 @@ mod tests {
         assert!(md.contains("id: errorhandling"));
         let topics = conventions(kn.path(), "p").unwrap();
         assert_eq!(topics.len(), 1);
-        assert_eq!(topics[0].sections, vec!["Modeling Failures".to_string()]);
+        assert_eq!(
+            topics[0].sections.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+            vec!["Modeling Failures".to_string()]
+        );
+        assert_eq!(topics[0].sections[0].id, "modeling-failures");
         // re-adding the same id replaces, not duplicates
         add_convention(kn.path(), "p", &spec).unwrap();
         assert_eq!(conventions(kn.path(), "p").unwrap().len(), 1);
@@ -938,7 +975,11 @@ mod tests {
         let v = conventions(kn.path(), "p").unwrap();
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, "arch");
-        assert_eq!(v[0].sections, vec!["Overview".to_string()]);
+        assert_eq!(
+            v[0].sections.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+            vec!["Overview".to_string()]
+        );
+        assert_eq!(v[0].sections[0].id, "o");
     }
 
     #[test]
@@ -1007,7 +1048,10 @@ mod tests {
         let metas = conventions_in(&dir).unwrap();
         let m = metas.iter().find(|c| c.id == "error-handling").unwrap();
         assert_eq!(m.title, "Error Handling");
-        assert_eq!(m.sections, vec!["Result Type".to_string(), "With Code".to_string()]);
+        assert_eq!(
+            m.sections.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+            vec!["Result Type".to_string(), "With Code".to_string()]
+        );
         let md = convention_md_in(&dir, "error-handling").unwrap();
         assert!(md.contains("> summary"), "verbatim body must keep the blockquote: {md}");
         assert!(md.contains("## Result Type"));

@@ -11,7 +11,7 @@
         { "topic": "architecture", "section": "uistate" },
         { "topic": "architecture", "section": "data-flow" }
       ],
-      "related_recipes": ["viewmodel", "repository"],
+      "related_recipes": [],
       "tags": ["feature", "scaffold", "mvvm"]
     },
     {

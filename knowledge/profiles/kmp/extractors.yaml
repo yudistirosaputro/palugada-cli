@@ -1,0 +1,6 @@
+schema_version: "1.0"
+ignore_dirs: [".git", ".palugada", "target", "node_modules", "build"]
+
+families:
+  - id: symbol
+    regex: 'class\s+(?P<name>\w+)'

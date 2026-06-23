@@ -1,0 +1,16 @@
+schema_version: "1.0"
+id: kmp
+title: "kmp-test"
+languages: [kotlin, swift]
+
+fact_families:
+  - { id: symbol, symbol: true }
+
+flows:
+  bugfix:   [code.recent, symbol.find]
+  feature:  [recipe(feature)]
+  refactor: [convention(architecture)]
+  review:   [diff.scan, convention(by-file-kind)]
+
+review_map:
+  symbol: [architecture]

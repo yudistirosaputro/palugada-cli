@@ -4,7 +4,7 @@
 //! `indexer::fact_families`) are reused so validation matches runtime behaviour.
 
 use serde::Deserialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -114,7 +114,122 @@ pub fn validate(kn: &Path, id: &str) -> Vec<Check> {
         }
     }
 
+    checks.extend(web_render_checks(kn, id));
     checks
+}
+
+/// Hard-fail checks that guarantee a profile renders consistently in the web
+/// console: every topic/section has an id+title, recipe cross-refs and `related`
+/// ids resolve, and every referenced markdown file exists on disk. Any failure
+/// makes `palugada profile validate <id>` exit non-zero (main.rs:991), so a
+/// profile that can't render cleanly cannot pass validation.
+fn web_render_checks(kn: &Path, id: &str) -> Vec<Check> {
+    let dir = kn.join("profiles").join(id);
+    let topics = match crate::knowledge::conventions(kn, id) {
+        Ok(t) => t,
+        Err(e) => return vec![Check { name: "conventions render-shape".into(), ok: false, detail: e }],
+    };
+    let recipes = match crate::knowledge::recipes(kn, id) {
+        Ok(r) => r,
+        Err(e) => return vec![Check { name: "recipes render-shape".into(), ok: false, detail: e }],
+    };
+    let topic_ids: BTreeSet<&str> = topics.iter().map(|t| t.id.as_str()).collect();
+    let recipe_ids: BTreeSet<&str> = recipes.iter().map(|r| r.id.as_str()).collect();
+    let mut out: Vec<Check> = Vec::new();
+
+    // 1. render-shape: every topic and section has a non-empty id + title.
+    let mut shape: Result<String, String> =
+        Ok(format!("{} topics, {} recipes render-ready", topics.len(), recipes.len()));
+    'shape: for t in &topics {
+        if t.id.trim().is_empty() {
+            shape = Err("a topic has an empty id".into());
+            break;
+        }
+        if t.title.trim().is_empty() {
+            shape = Err(format!("topic '{}' has an empty title", t.id));
+            break;
+        }
+        for s in &t.sections {
+            if s.id.trim().is_empty() {
+                shape = Err(format!("topic '{}' has a section with an empty id", t.id));
+                break 'shape;
+            }
+            if s.title.trim().is_empty() {
+                shape = Err(format!("topic '{}' section '{}' has an empty title", t.id, s.id));
+                break 'shape;
+            }
+        }
+    }
+    out.push(check("conventions render-shape", shape));
+
+    // 2. recipe convention_refs resolve to a real topic and (if given) section.
+    let mut refs: Result<String, String> =
+        Ok(format!("{} recipes: all convention_refs resolve", recipes.len()));
+    'refs: for r in &recipes {
+        for cr in &r.convention_refs {
+            if !topic_ids.contains(cr.topic.as_str()) {
+                refs = Err(format!("recipe '{}' references unknown convention '{}'", r.id, cr.topic));
+                break 'refs;
+            }
+            if !cr.section.trim().is_empty() {
+                let section_ok = topics
+                    .iter()
+                    .find(|t| t.id == cr.topic)
+                    .map(|t| t.sections.iter().any(|s| s.id == cr.section))
+                    .unwrap_or(false);
+                if !section_ok {
+                    refs = Err(format!(
+                        "recipe '{}' references '{}#{}' but that section does not exist",
+                        r.id, cr.topic, cr.section
+                    ));
+                    break 'refs;
+                }
+            }
+        }
+    }
+    out.push(check("recipe cross-refs resolve", refs));
+
+    // 3. `related` (conventions) and `related_recipes` ids resolve.
+    let mut rel: Result<String, String> = Ok("all related ids resolve".into());
+    'rel: {
+        for t in &topics {
+            for rid in &t.related {
+                if !topic_ids.contains(rid.as_str()) {
+                    rel = Err(format!("convention '{}' lists related '{}' which is not a convention", t.id, rid));
+                    break 'rel;
+                }
+            }
+        }
+        for r in &recipes {
+            for rid in &r.related_recipes {
+                if !recipe_ids.contains(rid.as_str()) {
+                    rel = Err(format!("recipe '{}' lists related_recipes '{}' which is not a recipe", r.id, rid));
+                    break 'rel;
+                }
+            }
+        }
+    }
+    out.push(check("related ids resolve", rel));
+
+    // 4. every topic/recipe has its `<id>.md` on disk (the reader fetches it raw).
+    let mut files: Result<String, String> = Ok("all convention/recipe files present".into());
+    'files: {
+        for t in &topics {
+            if !dir.join("conventions").join(format!("{}.md", t.id)).exists() {
+                files = Err(format!("convention '{}' has no conventions/{}.md", t.id, t.id));
+                break 'files;
+            }
+        }
+        for r in &recipes {
+            if !dir.join("recipes").join(format!("{}.md", r.id)).exists() {
+                files = Err(format!("recipe '{}' has no recipes/{}.md", r.id, r.id));
+                break 'files;
+            }
+        }
+    }
+    out.push(check("doc files present", files));
+
+    out
 }
 
 /// Scaffold a minimal but valid profile under `kn/profiles/<id>/`. Refuses if it
@@ -295,6 +410,31 @@ mod tests {
         let checks = validate(kn.path(), "broken");
         let ex = checks.iter().find(|c| c.name == "extractors.yaml").unwrap();
         assert!(!ex.ok, "broken regex should fail validation: {}", ex.detail);
+    }
+
+    #[test]
+    fn validate_flags_dangling_recipe_section_ref() {
+        let kn = tempfile::tempdir().unwrap();
+        let p = kn.path().join("profiles").join("d");
+        fs::create_dir_all(p.join("conventions")).unwrap();
+        fs::create_dir_all(p.join("recipes")).unwrap();
+        fs::write(p.join("profile.yaml"), "id: d\nfact_families:\n  - { id: symbol, symbol: true }\n").unwrap();
+        fs::write(p.join("extractors.yaml"), "families:\n  - id: symbol\n    regex: 'x'\n").unwrap();
+        fs::write(
+            p.join("conventions/_index.json"),
+            r#"{"topics":[{"id":"arch","title":"Arch","sections":[{"id":"o","title":"Overview","tokens":10}]}]}"#,
+        ).unwrap();
+        fs::write(p.join("conventions/arch.md"), "# Arch\n").unwrap();
+        // recipe points at a section id that does not exist on `arch`
+        fs::write(
+            p.join("recipes/_index.json"),
+            r#"{"recipes":[{"id":"feat","title":"Feat","convention_refs":[{"topic":"arch","section":"nope"}]}]}"#,
+        ).unwrap();
+        fs::write(p.join("recipes/feat.md"), "# Feat\n").unwrap();
+
+        let checks = validate(kn.path(), "d");
+        let c = checks.iter().find(|c| c.name == "recipe cross-refs resolve").unwrap();
+        assert!(!c.ok, "a dangling section ref must fail validation: {}", c.detail);
     }
 
     #[test]
