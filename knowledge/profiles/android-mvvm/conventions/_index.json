@@ -6,9 +6,6 @@
       "file": "architecture.md",
       "id": "architecture",
       "related": [
-        "di",
-        "networking",
-        "concurrency",
         "testing"
       ],
       "sections": [
@@ -49,8 +46,7 @@
       "id": "errorhandling",
       "related": [
         "architecture",
-        "testing",
-        "networking"
+        "testing"
       ],
       "sections": [
         {
@@ -90,8 +86,7 @@
       "id": "testing",
       "related": [
         "architecture",
-        "errorhandling",
-        "concurrency"
+        "errorhandling"
       ],
       "sections": [
         {
