@@ -627,10 +627,10 @@ async function editDoc(profile, kind, id, anchor) {
     try {
       await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}/body`, "POST", { markdown });
       toast(`saved ${kind} ${id}`);
-      card.querySelector(".row .spacer").insertAdjacentElement("afterend", h(`<span class="ok-pill ed-result">saved ✓</span>`));
+      card.querySelector("#ed-save").insertAdjacentElement("beforebegin", h(`<span class="ok-pill ed-result">saved ✓</span>`));
     } catch (e) {
       toast(e.message, true);
-      card.querySelector(".row .spacer").insertAdjacentElement("afterend", h(`<span class="warn-pill ed-result">✗ ${esc(e.message)}</span>`));
+      card.querySelector("#ed-save").insertAdjacentElement("beforebegin", h(`<span class="warn-pill ed-result">✗ ${esc(e.message)}</span>`));
     }
   };
 }
