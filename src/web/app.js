@@ -198,6 +198,44 @@ async function renderDoc(meta, kind, profileId, anchor) {
   card.appendChild(prose);
   renderBody();
 
+  // Conventions: a numbered Sections panel (reuses the flow .step language).
+  if (kind === "convention" && Array.isArray(meta.sections) && meta.sections.length) {
+    const panel = h(`<div class="doc-sections"><h4 style="margin:0 0 6px">Sections</h4><div class="steps"></div></div>`);
+    const steps = panel.querySelector(".steps");
+    meta.sections.forEach((s, i) => {
+      const sid = s.id || slugify(s.title);
+      const tok = s.tokens ? ` <span class="hint">~${s.tokens} tok</span>` : "";
+      const stepRowEl = h(`<div class="step" style="cursor:pointer"><span class="num">${i + 1}</span><span class="id-chip">#${esc(sid)}</span> <span class="arg">${esc(s.title)}</span>${tok}</div>`);
+      stepRowEl.onclick = () => {
+        const el = prose.querySelector("#sec-" + (window.CSS && CSS.escape ? CSS.escape(sid) : sid));
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      };
+      steps.appendChild(stepRowEl);
+    });
+    card.insertBefore(panel, prose);
+  }
+
+  // Recipes: clickable convention cross-refs + related-recipe chips.
+  if (kind === "recipe") {
+    const chips = [];
+    (meta.convention_refs || []).forEach(cr => {
+      const label = cr.section ? `${cr.topic}#${cr.section}` : cr.topic;
+      const chip = h(`<span class="step-tag convention" style="cursor:pointer;min-width:0">${esc(label)}</span>`);
+      chip.onclick = () => openConventionAt(profileId, cr.topic, cr.section, card);
+      chips.push(chip);
+    });
+    (meta.related_recipes || []).forEach(rid => {
+      const chip = h(`<span class="step-tag recipe" style="cursor:pointer;min-width:0">${esc(rid)}</span>`);
+      chip.onclick = () => renderDoc({ id: rid, title: rid }, "recipe", profileId, card);
+      chips.push(chip);
+    });
+    if (chips.length) {
+      const refRow = h(`<div class="row" style="margin-top:6px"><span class="muted" style="font-weight:700;margin-right:4px">refs:</span></div>`);
+      chips.forEach(c => refRow.appendChild(c));
+      card.insertBefore(refRow, prose);
+    }
+  }
+
   head.querySelector(".doc-mode").onclick = (e) => {
     full = !full;
     e.target.textContent = full ? "FULL" : "BRIEF";
@@ -206,6 +244,23 @@ async function renderDoc(meta, kind, profileId, anchor) {
   head.querySelector("#bodyclose").onclick = () => card.remove();
   placePanel(card, anchor);
   return card;
+}
+
+// Open the convention reader (with its Sections panel) and scroll to a section.
+async function openConventionAt(profileId, topic, section, anchor) {
+  let meta = { id: topic, title: topic };
+  try {
+    const pd = await api("/api/profile/" + encodeURIComponent(profileId));
+    const found = (pd.conventions || []).find(c => c.id === topic);
+    if (found) meta = found;
+  } catch (e) { /* fall back to the minimal meta */ }
+  const card = await renderDoc(meta, "convention", profileId, anchor);
+  if (card && section) {
+    setTimeout(() => {
+      const el = card.querySelector("#sec-" + (window.CSS && CSS.escape ? CSS.escape(section) : section));
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  }
 }
 
 // ── nav ─────────────────────────────────────────────────────────────────--

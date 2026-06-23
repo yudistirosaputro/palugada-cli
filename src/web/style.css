@@ -441,3 +441,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .prev pre.code code { background: none; border: 0; padding: 0; color: var(--ink); font-size: 13px; line-height: 1.55; }
 .prev blockquote { margin: var(--s3) 0; padding: 6px var(--s4); border-left: 4px solid var(--pow); background: var(--surface-2); border-radius: var(--r-sm); color: var(--ink-soft); }
 .prev table.rules { margin-top: 0; }
+.doc-sections { margin: var(--s2) 0 var(--s4); padding: var(--s3); border: var(--bw) dashed var(--ink); border-radius: var(--r); background: var(--surface-2); }
+.doc-sections h4 { font-family: var(--font-display); font-weight: 400; font-size: 18px; color: var(--ink); }
+.doc-sections .step { padding: 5px 0; }
