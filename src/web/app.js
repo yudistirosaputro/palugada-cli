@@ -32,6 +32,116 @@ function esc(s) {
   return (s == null ? "" : String(s)).replace(/[&<>"]/g,
     c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
+function slugify(s) {
+  return String(s == null ? "" : s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+// Strip a leading `---\n...\n---` YAML front-matter block.
+function stripFrontMatter(md) {
+  const m = String(md || "");
+  if (m.startsWith("---")) {
+    const end = m.indexOf("\n---", 3);
+    if (end !== -1) {
+      const nl = m.indexOf("\n", end + 1);
+      return (nl === -1 ? "" : m.slice(nl + 1)).replace(/^\s+/, "");
+    }
+  }
+  return m;
+}
+// Brief view: drop fenced code blocks (keep a marker). FULL view keeps everything.
+function briefMarkdown(md) {
+  return String(md || "").replace(/```[\s\S]*?```/g, "\n_(code — switch to FULL)_\n");
+}
+// Inline spans on already-escaped text: `code`, **bold**.
+function mdInline(s) {
+  let t = esc(s);
+  t = t.replace(/`([^`]+)`/g, (_, c) => "<code>" + c + "</code>");
+  t = t.replace(/\*\*([^*]+)\*\*/g, (_, b) => "<strong>" + b + "</strong>");
+  return t;
+}
+// Minimal, safe markdown → HTML for the Doc Reader. Escapes all text; supports
+// #/##/### headings (slug ids for scroll targets), fenced code, inline code,
+// bold, unordered/ordered lists, GFM tables, blockquotes, and paragraphs.
+// Not full CommonMark — covers palugada convention/recipe bodies.
+function mdToHtml(md) {
+  const lines = String(md || "").replace(/\r\n/g, "\n").split("\n");
+  let html = "";
+  let para = [];
+  let i = 0;
+  const flush = () => { if (para.length) { html += "<p>" + mdInline(para.join(" ")) + "</p>"; para = []; } };
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = line.match(/^```/);
+    if (fence) {
+      flush();
+      const code = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i])) { code.push(lines[i]); i++; }
+      i++; // closing fence
+      html += '<pre class="code"><code>' + esc(code.join("\n")) + "</code></pre>";
+      continue;
+    }
+    const head = line.match(/^(#{1,4})\s+(.*?)(?:\s*\{#([a-z0-9-]+)\})?\s*$/);
+    if (head) {
+      flush();
+      const level = head[1].length;
+      const text = head[2].trim();
+      const id = head[3] || slugify(text);
+      const tag = level <= 2 ? "h2" : level === 3 ? "h3" : "h4";
+      html += "<" + tag + ' id="sec-' + id + '">' + mdInline(text) + "</" + tag + ">";
+      i++;
+      continue;
+    }
+    const isTableHead = /^\s*\|.*\|\s*$/.test(line)
+      && i + 1 < lines.length
+      && /^\s*\|?[\s:\-|]+\|?\s*$/.test(lines[i + 1])
+      && lines[i + 1].includes("-");
+    if (isTableHead) {
+      flush();
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
+      const ths = cells(line).map(c => "<th>" + mdInline(c) + "</th>").join("");
+      i += 2;
+      let rows = "";
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+        rows += "<tr>" + cells(lines[i]).map(c => "<td>" + mdInline(c) + "</td>").join("") + "</tr>";
+        i++;
+      }
+      html += '<div class="table-scroll"><table class="rules"><thead><tr>' + ths + "</tr></thead><tbody>" + rows + "</tbody></table></div>";
+      continue;
+    }
+    if (/^\s*[-*]\s+/.test(line)) {
+      flush();
+      let items = "";
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        items += "<li>" + mdInline(lines[i].replace(/^\s*[-*]\s+/, "")) + "</li>";
+        i++;
+      }
+      html += "<ul>" + items + "</ul>";
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      flush();
+      let items = "";
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        items += "<li>" + mdInline(lines[i].replace(/^\s*\d+\.\s+/, "")) + "</li>";
+        i++;
+      }
+      html += "<ol>" + items + "</ol>";
+      continue;
+    }
+    if (/^\s*>\s?/.test(line)) {
+      flush();
+      const quote = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { quote.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+      html += "<blockquote>" + mdInline(quote.join(" ")) + "</blockquote>";
+      continue;
+    }
+    if (/^\s*$/.test(line)) { flush(); i++; continue; }
+    para.push(line.trim());
+    i++;
+  }
+  flush();
+  return html;
+}
 function splitCsv(s) {
   return (s || "").split(",").map(x => x.trim()).filter(Boolean);
 }
@@ -57,15 +167,45 @@ function placePanel(card, anchor) {
   view.insertBefore(card, view.children[1] || null);
 }
 
-function showBody(title, md, anchor) {
+// The comic Doc Reader: rendered markdown for one convention/recipe. Opens FULL
+// (entire doc incl. code) by default; a pill toggles a brief (code-stripped) view.
+// `meta` carries id/title/description and (for the structured panels in Task 5)
+// sections + cross-refs; the markdown body is fetched here.
+async function renderDoc(meta, kind, profileId, anchor) {
+  let body;
+  try {
+    const b = await api(`/api/profile/${encodeURIComponent(profileId)}/${kind}/${encodeURIComponent(meta.id)}`);
+    body = b.markdown;
+  } catch (e) { toast(e.message, true); return null; }
+
   let card = document.getElementById("bodyview");
   if (card) card.remove();
   card = h(`<div class="card" id="bodyview"></div>`);
-  card.innerHTML =
-    `<div class="row"><strong>${esc(title)}</strong><span class="spacer"></span>` +
-    `<a class="link" id="bodyclose">close</a></div><pre>${esc(md)}</pre>`;
+  const head = h(`<div class="card-head">
+    <span class="id-chip">${esc(meta.id)}</span>
+    <h3 style="margin:0">${esc(meta.title || meta.id)}</h3>
+    <span class="spacer"></span>
+    <span class="pill doc-mode" style="cursor:pointer" title="toggle full / brief">FULL</span>
+    <a class="link" id="bodyclose">close</a>
+  </div>`);
+  card.appendChild(head);
+  if (meta.description) card.appendChild(h(`<div class="card-note">${esc(meta.description)}</div>`));
+
+  const prose = h(`<div class="prev"></div>`);
+  const stripped = stripFrontMatter(body);
+  let full = true; // FULL by default (user decision)
+  const renderBody = () => { prose.innerHTML = mdToHtml(full ? stripped : briefMarkdown(stripped)); };
+  card.appendChild(prose);
+  renderBody();
+
+  head.querySelector(".doc-mode").onclick = (e) => {
+    full = !full;
+    e.target.textContent = full ? "FULL" : "BRIEF";
+    renderBody();
+  };
+  head.querySelector("#bodyclose").onclick = () => card.remove();
   placePanel(card, anchor);
-  card.querySelector("#bodyclose").onclick = () => card.remove();
+  return card;
 }
 
 // ── nav ─────────────────────────────────────────────────────────────────--
@@ -409,10 +549,7 @@ function stepRow(profile, st, n) {
 }
 
 async function viewDoc(profile, kind, id, anchor) {
-  try {
-    const b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`);
-    showBody(`${kind}: ${id}`, b.markdown, anchor);
-  } catch (e) { toast(e.message, true); }
+  await renderDoc({ id, title: id }, kind, profile, anchor);
 }
 
 async function editDoc(profile, kind, id, anchor) {
@@ -486,10 +623,7 @@ async function renderProfileDetail(id) {
   const cvList = cv.querySelector("#cv-list");
   d.conventions.forEach(c => {
     const row = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span> <span class="meta">· ${c.sections.length} sections</span><span class="actions"><a class="link">View</a></span></div>`);
-    row.querySelector("a").onclick = async () => {
-      try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown, row); }
-      catch (e) { toast(e.message, true); }
-    };
+    row.querySelector("a").onclick = () => renderDoc(c, "convention", id, row);
     cvList.appendChild(row);
   });
   cv.appendChild(addConventionForm(id));
@@ -501,10 +635,7 @@ async function renderProfileDetail(id) {
   const rcList = rc.querySelector("#rc-list");
   d.recipes.forEach(r => {
     const row = h(`<div class="lrow"><span class="id-chip">${esc(r.id)}</span> <span class="ttl">${esc(r.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
-    row.querySelector("a").onclick = async () => {
-      try { const b = await api(`/api/profile/${id}/recipe/${r.id}`); showBody(r.id, b.markdown, row); }
-      catch (e) { toast(e.message, true); }
-    };
+    row.querySelector("a").onclick = () => renderDoc(r, "recipe", id, row);
     rcList.appendChild(row);
   });
   rc.appendChild(addRecipeForm(id));
@@ -788,7 +919,7 @@ async function renderKnowledge() {
     const clList = cl.querySelector(".list");
     pd.conventions.forEach(c => {
       const r = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
-      r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/convention/${c.id}`); showBody(c.id, b.markdown, r); } catch (e) { toast(e.message, true); } };
+      r.querySelector("a").onclick = () => renderDoc(c, "convention", id, r);
       clList.appendChild(r);
     });
     out.appendChild(cl);
@@ -796,7 +927,7 @@ async function renderKnowledge() {
     const rlList = rl.querySelector(".list");
     pd.recipes.forEach(c => {
       const r = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
-      r.querySelector("a").onclick = async () => { try { const b = await api(`/api/profile/${id}/recipe/${c.id}`); showBody(c.id, b.markdown, r); } catch (e) { toast(e.message, true); } };
+      r.querySelector("a").onclick = () => renderDoc(c, "recipe", id, r);
       rlList.appendChild(r);
     });
     out.appendChild(rl);
