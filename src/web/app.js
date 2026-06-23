@@ -430,7 +430,7 @@ async function editOverlayConvention(name, id, anchor) {
 }
 
 function addOverlayConventionForm(name) {
-  const box = h(`<div class="overlay-add" style="margin-top:10px;border-top:1px solid #2b313c;padding-top:10px">
+  const box = h(`<div class="overlay-add" style="margin-top:10px;border-top:1px solid var(--ink);padding-top:10px">
     <strong>+ Add project rule</strong>
     <label>id</label><input class="oa-id" placeholder="our-extra-rule">
     <label>title</label><input class="oa-title" placeholder="Our Extra Rule">
@@ -532,7 +532,7 @@ function credentialsCard(name, cfg) {
   const sec = cfg.secrets || {};
   const tok = (k, label) => `<label>${label}</label><input class="cd-sec" data-k="${k}" type="password" placeholder="${esc(sec[k] || "(unset)")} — blank = keep">`;
   const txt = (k, label) => `<label>${label}</label><input class="cd-txt" data-k="${k}" value="${esc(sec[k] || "")}">`;
-  card.appendChild(h(`<div style="margin-top:10px;border-top:1px solid #2b313c;padding-top:8px"><strong>Tokens</strong>
+  card.appendChild(h(`<div style="margin-top:10px;border-top:1px solid var(--ink);padding-top:8px"><strong>Tokens</strong>
     ${tok("jira_token", "jira_token")}${txt("jira_email", "jira_email")}
     ${tok("wiki_token", "wiki_token")}${txt("wiki_email", "wiki_email")}
     ${tok("figma_token", "figma_token")}
@@ -623,11 +623,15 @@ async function editDoc(profile, kind, id, anchor) {
   card.querySelector("#ed-close").onclick = () => card.remove();
   card.querySelector("#ed-save").onclick = async () => {
     const markdown = card.querySelector("#ed-body").value;
+    card.querySelectorAll(".ed-result").forEach(el => el.remove());
     try {
       await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}/body`, "POST", { markdown });
       toast(`saved ${kind} ${id}`);
-      card.remove();
-    } catch (e) { toast(e.message, true); }
+      card.querySelector(".row .spacer").insertAdjacentElement("afterend", h(`<span class="ok-pill ed-result">saved ✓</span>`));
+    } catch (e) {
+      toast(e.message, true);
+      card.querySelector(".row .spacer").insertAdjacentElement("afterend", h(`<span class="warn-pill ed-result">✗ ${esc(e.message)}</span>`));
+    }
   };
 }
 
@@ -666,6 +670,17 @@ async function renderProfiles() {
   } catch (e) { toast(e.message, true); }
 }
 
+// One convention/recipe list row, shared by Profile detail and Knowledge so both
+// read identically. Convention rows show section count; recipe rows show ref count.
+function docRow(meta, kind, profileId) {
+  const metaBits = kind === "convention"
+    ? `${(meta.sections || []).length} sections`
+    : `${(meta.convention_refs || []).length} refs`;
+  const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span> <span class="meta">· ${metaBits}</span><span class="actions"><a class="link">View</a></span></div>`);
+  row.querySelector("a").onclick = () => renderDoc(meta, kind, profileId, row);
+  return row;
+}
+
 async function renderProfileDetail(id) {
   view.innerHTML = backLink("Profiles") + viewHead("Profile", id);
   document.getElementById("back").onclick = renderProfiles;
@@ -673,29 +688,41 @@ async function renderProfileDetail(id) {
   try { d = await api("/api/profile/" + encodeURIComponent(id)); }
   catch (e) { toast(e.message, true); return; }
 
+  // ── Browse: conventions ──
   const cv = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${d.conventions.length}</span></div>
-    <div class="card-note">Standing standards for this stack — the "right way" to write code here. Agents pull these automatically while you work (CLI: <code>q</code>, <code>brief</code>).</div><div class="list" id="cv-list"></div></div>`);
+    <div class="card-note">Standing standards for this stack — the "right way" to write code here. Agents pull these automatically (CLI: <code>q</code>, <code>brief</code>).</div>
+    <div class="list" id="cv-list"></div>
+    <div class="row" id="cv-addrow" style="margin-top:6px"><button class="ghost cv-add">+ Add convention</button></div></div>`);
   const cvList = cv.querySelector("#cv-list");
-  d.conventions.forEach(c => {
-    const row = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span> <span class="meta">· ${c.sections.length} sections</span><span class="actions"><a class="link">View</a></span></div>`);
-    row.querySelector("a").onclick = () => renderDoc(c, "convention", id, row);
-    cvList.appendChild(row);
-  });
-  cv.appendChild(addConventionForm(id));
+  if (!d.conventions.length) cvList.appendChild(h(`<div class="muted">No conventions yet — add one to start this profile's playbook.</div>`));
+  d.conventions.forEach(c => cvList.appendChild(docRow(c, "convention", id)));
+  cv.querySelector(".cv-add").onclick = () => {
+    if (cv.querySelector(".ac-host")) return;
+    const host = h(`<div class="ac-host"></div>`);
+    host.appendChild(addConventionForm(id));
+    cv.querySelector("#cv-addrow").insertAdjacentElement("beforebegin", host);
+  };
   view.appendChild(cv);
-  view.appendChild(importCard(id));
 
+  // ── Browse: recipes ──
   const rc = h(`<div class="card"><div class="card-head"><h3>Recipes</h3><span class="count">${d.recipes.length}</span></div>
-    <div class="card-note">Step-by-step guides for one task (scaffold a feature, add a subcommand, refactor). Agents pull these by name (CLI: <code>for &lt;task&gt;</code>, <code>brief feature/refactor</code>).</div><div class="list" id="rc-list"></div></div>`);
+    <div class="card-note">Step-by-step guides for one task. Agents pull these by name (CLI: <code>for &lt;task&gt;</code>, <code>brief feature/refactor</code>).</div>
+    <div class="list" id="rc-list"></div>
+    <div class="row" id="rc-addrow" style="margin-top:6px"><button class="ghost rc-add">+ Add recipe</button></div></div>`);
   const rcList = rc.querySelector("#rc-list");
-  d.recipes.forEach(r => {
-    const row = h(`<div class="lrow"><span class="id-chip">${esc(r.id)}</span> <span class="ttl">${esc(r.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
-    row.querySelector("a").onclick = () => renderDoc(r, "recipe", id, row);
-    rcList.appendChild(row);
-  });
-  rc.appendChild(addRecipeForm(id));
+  if (!d.recipes.length) rcList.appendChild(h(`<div class="muted">No recipes yet.</div>`));
+  d.recipes.forEach(r => rcList.appendChild(docRow(r, "recipe", id)));
+  rc.querySelector(".rc-add").onclick = () => {
+    if (rc.querySelector(".ar-host")) return;
+    const host = h(`<div class="ar-host"></div>`);
+    host.appendChild(addRecipeForm(id));
+    rc.querySelector("#rc-addrow").insertAdjacentElement("beforebegin", host);
+  };
   view.appendChild(rc);
 
+  // ── Author & configure (separated lower region) ──
+  view.appendChild(h(`<div class="view-head" style="margin-top:var(--s7)"><div class="eyebrow">Author &amp; configure</div><h2 class="head" style="font-size:30px">Build this profile</h2></div>`));
+  view.appendChild(importCard(id));
   view.appendChild(h(`<div class="card"><h3>Fact families</h3>
     <div class="muted">Categories of symbols palugada extracts from YOUR code (e.g. viewmodel, repository, command).
     <code>palugada fact &lt;family&gt;</code> lists them with file:line. Defined in the profile's
@@ -703,7 +730,6 @@ async function renderProfileDetail(id) {
     d.fact_families.map(f => `<span class="pill">${esc(f)}</span>`).join("") || '<span class="muted">none</span>'
   }</div></div>`));
   view.appendChild(flowsCard(id, d));
-
   view.appendChild(generateForm(id));
 }
 
@@ -851,7 +877,7 @@ function flowsCard(id, d) {
 }
 
 function addConventionForm(id) {
-  const box = h(`<div style="margin-top:12px;border-top:1px solid #2b313c;padding-top:10px">
+  const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
     <strong>+ Add convention</strong>
     <div class="muted" style="margin:2px 0 6px">A standing standard for this stack. palugada writes the front-matter,
     section ids, and index for you — you only fill the fields below. (CLI equivalent: <code>palugada convention add &lt;file.md&gt;</code>.)</div>
@@ -896,7 +922,7 @@ function addConventionForm(id) {
 }
 
 function addRecipeForm(id) {
-  const box = h(`<div style="margin-top:12px;border-top:1px solid #2b313c;padding-top:10px">
+  const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
     <strong>+ Add recipe</strong>
     <div class="muted" style="margin:2px 0 6px">A step-by-step guide for one task. (CLI equivalent: <code>palugada recipe add &lt;file.md&gt;</code>.)</div>
     <label>id</label><input class="ar-id" placeholder="pagination">
@@ -972,19 +998,11 @@ async function renderKnowledge() {
     try { pd = await api("/api/profile/" + encodeURIComponent(id)); } catch (e) { toast(e.message, true); return; }
     const cl = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${pd.conventions.length}</span></div><div class="list"></div></div>`);
     const clList = cl.querySelector(".list");
-    pd.conventions.forEach(c => {
-      const r = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
-      r.querySelector("a").onclick = () => renderDoc(c, "convention", id, r);
-      clList.appendChild(r);
-    });
+    pd.conventions.forEach(c => clList.appendChild(docRow(c, "convention", id)));
     out.appendChild(cl);
     const rl = h(`<div class="card"><div class="card-head"><h3>Recipes</h3><span class="count">${pd.recipes.length}</span></div><div class="list"></div></div>`);
     const rlList = rl.querySelector(".list");
-    pd.recipes.forEach(c => {
-      const r = h(`<div class="lrow"><span class="id-chip">${esc(c.id)}</span> <span class="ttl">${esc(c.title)}</span><span class="actions"><a class="link">View</a></span></div>`);
-      r.querySelector("a").onclick = () => renderDoc(c, "recipe", id, r);
-      rlList.appendChild(r);
-    });
+    pd.recipes.forEach(c => rlList.appendChild(docRow(c, "recipe", id)));
     out.appendChild(rl);
   };
   document.getElementById("kn-prof").onchange = load;
