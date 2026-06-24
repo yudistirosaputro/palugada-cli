@@ -206,7 +206,7 @@ async function renderDoc(meta, kind, profileId, anchor) {
       const sid = s.id || slugify(s.title);
       const tok = s.tokens ? ` <span class="hint">~${s.tokens} tok</span>` : "";
       const sectionBadge = s.origin === "inherited"
-        ? ` <span class="sticker">${esc("inherited · " + (s.from || ""))}</span>`
+        ? ` <span class="sticker">${"inherited · " + esc(s.from || "")}</span>`
         : s.origin === "overridden"
         ? ` <span class="sticker">overridden</span>`
         : "";
@@ -692,12 +692,30 @@ function docRow(meta, kind, profileId) {
     ? `${(meta.sections || []).length} sections`
     : `${(meta.convention_refs || []).length} refs`;
   const originBadge = meta.origin === "inherited"
-    ? ` <span class="sticker">${esc("inherited · " + (meta.from || ""))}</span>`
+    ? ` <span class="sticker">${"inherited · " + esc(meta.from || "")}</span>`
     : meta.origin === "overridden"
     ? ` <span class="sticker">overridden</span>`
     : "";
-  const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span>${originBadge} <span class="meta">· ${metaBits}</span><span class="actions"><a class="link">View</a></span></div>`);
-  row.querySelector("a").onclick = () => renderDoc(meta, kind, profileId, row);
+  const isInherited = meta.origin === "inherited";
+  const secondAction = isInherited
+    ? ` <a class="link doc-override">Override</a>`
+    : ` <a class="link doc-edit">Edit</a>`;
+  const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span>${originBadge} <span class="meta">· ${metaBits}</span><span class="actions"><a class="link doc-view">View</a>${secondAction}</span></div>`);
+  row.querySelector(".doc-view").onclick = () => renderDoc(meta, kind, profileId, row);
+  if (isInherited) {
+    row.querySelector(".doc-override").onclick = () => {
+      // Find the nearest add-form host or create one after the row's parent list
+      const list = row.parentElement;
+      const existingHost = list.querySelector(".doc-override-host-" + CSS.escape(meta.id));
+      if (existingHost) { existingHost.remove(); return; }
+      const host = h(`<div class="doc-override-host-${esc(meta.id)}"></div>`);
+      const form = kind === "convention" ? addConventionForm(profileId, meta.id) : addRecipeForm(profileId, meta.id);
+      host.appendChild(form);
+      row.insertAdjacentElement("afterend", host);
+    };
+  } else {
+    row.querySelector(".doc-edit").onclick = () => editDoc(profileId, kind, meta.id, row);
+  }
   return row;
 }
 
@@ -900,12 +918,12 @@ function flowsCard(id, d) {
   return card;
 }
 
-function addConventionForm(id) {
+function addConventionForm(id, presetId) {
   const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>+ Add convention</strong>
+    <strong>${presetId ? "Override convention: " + esc(presetId) : "+ Add convention"}</strong>
     <div class="muted" style="margin:2px 0 6px">A standing standard for this stack. palugada writes the front-matter,
     section ids, and index for you — you only fill the fields below. (CLI equivalent: <code>palugada convention add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ac-id" placeholder="errorhandling">
+    <label>id</label><input class="ac-id" placeholder="errorhandling"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
     <div class="muted">lowercase slug — used in <code>palugada q errorhandling</code> (a-z, 0-9, - _).</div>
     <label>title</label><input class="ac-title" placeholder="Error Handling">
     <label>description</label><input class="ac-desc" placeholder="one-line summary">
@@ -916,6 +934,7 @@ function addConventionForm(id) {
     <div class="ac-sections"></div>
     <div class="row" style="margin-top:6px"><button class="ghost ac-addsec">+ section</button><span class="spacer"></span><button class="ac-save">Save convention</button></div>
   </div>`);
+  if (presetId) box.querySelector(".ac-id").setAttribute("readonly", "readonly");
   const secs = box.querySelector(".ac-sections");
   const addSec = () => secs.appendChild(h(`<div class="section-row">
     <label>section title</label><input class="sec-title" placeholder="Modeling Failures">
@@ -945,11 +964,11 @@ function addConventionForm(id) {
   return box;
 }
 
-function addRecipeForm(id) {
+function addRecipeForm(id, presetId) {
   const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>+ Add recipe</strong>
+    <strong>${presetId ? "Override recipe: " + esc(presetId) : "+ Add recipe"}</strong>
     <div class="muted" style="margin:2px 0 6px">A step-by-step guide for one task. (CLI equivalent: <code>palugada recipe add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ar-id" placeholder="pagination">
+    <label>id</label><input class="ar-id" placeholder="pagination"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
     <div class="muted">lowercase slug — used in <code>palugada for pagination</code>.</div>
     <label>title</label><input class="ar-title" placeholder="Add pagination">
     <label>description</label><input class="ar-desc" placeholder="one-line summary">
@@ -958,6 +977,7 @@ function addRecipeForm(id) {
     <div class="muted">the full procedure — write it as plain markdown (use <code>## </code> for steps/sections).</div>
     <div class="row" style="margin-top:6px"><span class="spacer"></span><button class="ar-save">Save recipe</button></div>
   </div>`);
+  if (presetId) box.querySelector(".ar-id").setAttribute("readonly", "readonly");
   box.querySelector(".ar-save").onclick = async e => {
     e.preventDefault();
     const spec = {
