@@ -12,6 +12,7 @@ mod effective;
 mod exec;
 mod http;
 mod indexer;
+mod inherit;
 mod knowledge;
 mod personal;
 mod profile;
@@ -68,7 +69,7 @@ enum Commands {
     /// Read a convention from the active profile: `q <topic>[.N]`.
     #[command(name = "q")]
     Query {
-        /// Topic id, optionally `.N` for one section (e.g. `architecture.2`).
+        /// Topic id; `.N` for the N-th section or `#id` for a section by anchor (e.g. `architecture.2` or `architecture#data-flow`).
         topic: Option<String>,
         /// Brief: show the section outline only.
         #[arg(short, long)]
@@ -295,7 +296,12 @@ enum ProfileCmd {
     /// Lint a profile against the schema: `profile validate <id>`.
     Validate { id: String },
     /// Scaffold a new profile from a minimal template: `profile new <id>`.
-    New { id: String },
+    New {
+        id: String,
+        /// Inherit conventions/recipes from a base profile: `--extends <id>`.
+        #[arg(long)]
+        extends: Option<String>,
+    },
     /// Bind the active (or `--project`) project to a profile: `profile use <id>`.
     Use { id: String },
 }
@@ -995,11 +1001,14 @@ fn cmd_profile(action: ProfileCmd, project: Option<&str>) -> Result<(), String> 
                 Ok(())
             }
         }
-        ProfileCmd::New { id } => {
-            let written = profile::scaffold_new(&kn, &id)?;
+        ProfileCmd::New { id, extends } => {
+            let written = profile::scaffold_new(&kn, &id, extends.as_deref())?;
             println!("scaffolded profile '{id}':");
             for p in written {
                 println!("  {}", p.display());
+            }
+            if let Some(parent) = &extends {
+                println!("inherits conventions/recipes from '{parent}' (author only what differs)");
             }
             println!("validate with:  palugada profile validate {id}");
             Ok(())

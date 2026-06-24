@@ -407,7 +407,7 @@ fn create_profile(body: &str) -> Result<serde_json::Value, String> {
     }
     let np: NewProfile = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
     let kn = knowledge_dir()?;
-    crate::profile::scaffold_new(&kn, &np.id)?;
+    crate::profile::scaffold_new(&kn, &np.id, None)?;
     // Apply the chosen title / languages over the scaffold's defaults.
     if !np.title.is_empty() || !np.languages.is_empty() {
         let pf = kn.join("profiles").join(&np.id).join("profile.yaml");
