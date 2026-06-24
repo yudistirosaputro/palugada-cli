@@ -267,6 +267,9 @@ fn reid_with_extends(parent_yaml: &str, id: &str, parent: &str) -> String {
             out.push_str(&format!("title: \"{id} profile\"\n"));
             continue;
         }
+        if trimmed.starts_with("extends:") {
+            continue; // parent's own extends is superseded by the child's
+        }
         out.push_str(line);
         out.push('\n');
     }
@@ -311,7 +314,11 @@ pub fn scaffold_new(kn: &Path, id: &str, extends: Option<&str>) -> Result<Vec<Pa
             let praw = fs::read_to_string(pdir.join("profile.yaml"))
                 .map_err(|e| format!("read parent profile.yaml: {e}"))?;
             let child_yaml = reid_with_extends(&praw, id, parent);
-            let pextr = fs::read_to_string(pdir.join("extractors.yaml")).unwrap_or(default_extractors);
+            let pextr = if pdir.join("extractors.yaml").is_file() {
+                fs::read_to_string(pdir.join("extractors.yaml")).map_err(|e| format!("read parent extractors.yaml: {e}"))?
+            } else {
+                default_extractors
+            };
             // copy parent extractors/*.scm if present
             let scm_dir = pdir.join("extractors");
             if scm_dir.is_dir() {
@@ -625,5 +632,44 @@ mod tests {
         let checks = validate(kn.path(), "child");
         let c = checks.iter().find(|c| c.name == "extends chain").unwrap();
         assert!(!c.ok && c.detail.contains("ghost"), "{}", c.detail);
+    }
+
+    /// Chained scaffold: android-base → android-mvvm → android-mvi.
+    /// The parent (android-mvvm) already has `extends: android-base` in its
+    /// profile.yaml. Scaffolding android-mvi from android-mvvm must yield
+    /// exactly ONE `extends:` line in the child — `extends: android-mvvm` —
+    /// and must NOT carry the grandparent's `extends: android-base` through.
+    #[test]
+    fn scaffold_extends_does_not_duplicate_parent_extends() {
+        let kn = tempfile::tempdir().unwrap();
+
+        // android-base (grandparent) — minimal valid profile
+        base_profile(kn.path(), "android-base", None);
+
+        // android-mvvm (parent) — already extends android-base
+        let mvvm_dir = kn.path().join("profiles").join("android-mvvm");
+        fs::create_dir_all(mvvm_dir.join("conventions")).unwrap();
+        fs::create_dir_all(mvvm_dir.join("recipes")).unwrap();
+        fs::write(
+            mvvm_dir.join("profile.yaml"),
+            "schema_version: \"1.0\"\nid: android-mvvm\nextends: android-base\ntitle: \"MVVM\"\nlanguages: [kotlin]\nfact_families:\n  - { id: viewmodel, symbol: true }\n",
+        ).unwrap();
+        fs::write(mvvm_dir.join("extractors.yaml"), "families:\n  - id: viewmodel\n    regex: 'x'\n").unwrap();
+        fs::write(mvvm_dir.join("conventions/_index.json"), r#"{"topics":[]}"#).unwrap();
+        fs::write(mvvm_dir.join("recipes/_index.json"), r#"{"recipes":[]}"#).unwrap();
+
+        // scaffold android-mvi from android-mvvm
+        scaffold_new(kn.path(), "android-mvi", Some("android-mvvm")).unwrap();
+
+        let child_yaml = fs::read_to_string(kn.path().join("profiles/android-mvi/profile.yaml")).unwrap();
+        // correct id
+        assert!(child_yaml.contains("id: android-mvi"), "id line missing: {child_yaml}");
+        // correct parent reference
+        assert!(child_yaml.contains("extends: android-mvvm"), "extends: android-mvvm missing: {child_yaml}");
+        // grandparent's extends must NOT appear
+        assert!(!child_yaml.contains("extends: android-base"), "duplicate grandparent extends present: {child_yaml}");
+        // exactly one extends: line
+        let extends_count = child_yaml.lines().filter(|l| l.trim_start().starts_with("extends:")).count();
+        assert_eq!(extends_count, 1, "expected exactly 1 extends: line, got {extends_count}: {child_yaml}");
     }
 }
