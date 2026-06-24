@@ -120,16 +120,29 @@ pub fn validate(kn: &Path, id: &str) -> Vec<Check> {
 
 /// Hard-fail checks that guarantee a profile renders consistently in the web
 /// console: every topic/section has an id+title, recipe cross-refs and `related`
-/// ids resolve, and every referenced markdown file exists on disk. Any failure
-/// makes `palugada profile validate <id>` exit non-zero (main.rs:991), so a
-/// profile that can't render cleanly cannot pass validation.
+/// ids resolve against the MERGED (inherited + own) sets, every LOCALLY-declared
+/// doc has its `<id>.md` on disk, and the extends chain is valid. Any failure
+/// makes `palugada profile validate <id>` exit non-zero (main.rs:991).
 fn web_render_checks(kn: &Path, id: &str) -> Vec<Check> {
     let dir = kn.join("profiles").join(id);
-    let topics = match crate::knowledge::conventions(kn, id) {
+
+    // 0. extends chain resolves (cycle / depth / missing parent).
+    let chain = match crate::inherit::resolve_chain(kn, id) {
+        Ok(c) => c,
+        Err(e) => return vec![Check { name: "extends chain".into(), ok: false, detail: e }],
+    };
+    let chain_detail = if chain.len() > 1 {
+        format!("extends: {}", chain[1..].join(" \u{2192} "))
+    } else {
+        "no extends".into()
+    };
+
+    // Merged (inherited + own) sets — cross-refs resolve across the chain.
+    let topics = match crate::inherit::merged_conventions(kn, id) {
         Ok(t) => t,
         Err(e) => return vec![Check { name: "conventions render-shape".into(), ok: false, detail: e }],
     };
-    let recipes = match crate::knowledge::recipes(kn, id) {
+    let recipes = match crate::inherit::merged_recipes(kn, id) {
         Ok(r) => r,
         Err(e) => return vec![Check { name: "recipes render-shape".into(), ok: false, detail: e }],
     };
@@ -189,7 +202,7 @@ fn web_render_checks(kn: &Path, id: &str) -> Vec<Check> {
     }
     out.push(check("recipe cross-refs resolve", refs));
 
-    // 3. `related` (conventions) and `related_recipes` ids resolve.
+    // 3. `related` (conventions) and `related_recipes` ids resolve (against merged sets).
     let mut rel: Result<String, String> = Ok("all related ids resolve".into());
     'rel: {
         for t in &topics {
@@ -211,16 +224,19 @@ fn web_render_checks(kn: &Path, id: &str) -> Vec<Check> {
     }
     out.push(check("related ids resolve", rel));
 
-    // 4. every topic/recipe has its `<id>.md` on disk (the reader fetches it raw).
-    let mut files: Result<String, String> = Ok("all convention/recipe files present".into());
+    // 4. every LOCALLY-declared topic/recipe has its `<id>.md` on disk in THIS
+    //    profile. Inherited-only docs need not exist locally.
+    let local_topics = crate::knowledge::conventions(kn, id).unwrap_or_default();
+    let local_recipes = crate::knowledge::recipes(kn, id).unwrap_or_default();
+    let mut files: Result<String, String> = Ok("all local convention/recipe files present".into());
     'files: {
-        for t in &topics {
+        for t in &local_topics {
             if !dir.join("conventions").join(format!("{}.md", t.id)).exists() {
                 files = Err(format!("convention '{}' has no conventions/{}.md", t.id, t.id));
                 break 'files;
             }
         }
-        for r in &recipes {
+        for r in &local_recipes {
             if !dir.join("recipes").join(format!("{}.md", r.id)).exists() {
                 files = Err(format!("recipe '{}' has no recipes/{}.md", r.id, r.id));
                 break 'files;
@@ -229,6 +245,7 @@ fn web_render_checks(kn: &Path, id: &str) -> Vec<Check> {
     }
     out.push(check("doc files present", files));
 
+    out.push(Check { name: "extends chain".into(), ok: true, detail: chain_detail });
     out
 }
 
@@ -449,5 +466,65 @@ mod tests {
         assert!(scaffold_new(kn.path(), "fresh").is_err());
         // and the new profile shows up in list
         assert!(list(kn.path()).unwrap().iter().any(|(id, _)| id == "fresh"));
+    }
+
+    /// Minimal valid profile dir (profile.yaml + extractors.yaml + empty indexes).
+    fn base_profile(kn: &Path, id: &str, extends: Option<&str>) {
+        let dir = kn.join("profiles").join(id);
+        fs::create_dir_all(dir.join("conventions")).unwrap();
+        fs::create_dir_all(dir.join("recipes")).unwrap();
+        let mut y = format!("id: {id}\nfact_families:\n  - {{ id: symbol, symbol: true }}\n");
+        if let Some(e) = extends {
+            y.push_str(&format!("extends: {e}\n"));
+        }
+        fs::write(dir.join("profile.yaml"), y).unwrap();
+        fs::write(dir.join("extractors.yaml"), "families:\n  - id: symbol\n    regex: 'x'\n").unwrap();
+        fs::write(dir.join("conventions/_index.json"), r#"{"topics":[]}"#).unwrap();
+        fs::write(dir.join("recipes/_index.json"), r#"{"recipes":[]}"#).unwrap();
+    }
+
+    #[test]
+    fn validate_child_resolves_inherited_cross_refs() {
+        let kn = tempfile::tempdir().unwrap();
+        base_profile(kn.path(), "parent", None);
+        // parent owns `architecture` with section `data-flow`
+        fs::write(
+            kn.path().join("profiles/parent/conventions/_index.json"),
+            r#"{"topics":[{"id":"architecture","title":"Arch","sections":[{"id":"data-flow","title":"Data Flow","tokens":10}]}]}"#,
+        ).unwrap();
+        fs::write(kn.path().join("profiles/parent/conventions/architecture.md"),
+            "# Arch\n## Data Flow {#data-flow}\nx\n").unwrap();
+
+        base_profile(kn.path(), "child", Some("parent"));
+        // child owns ONLY a recipe that references the INHERITED architecture#data-flow
+        fs::write(
+            kn.path().join("profiles/child/recipes/_index.json"),
+            r#"{"recipes":[{"id":"feature","title":"Feature","convention_refs":[{"topic":"architecture","section":"data-flow"}]}]}"#,
+        ).unwrap();
+        fs::write(kn.path().join("profiles/child/recipes/feature.md"), "# Feature\n").unwrap();
+
+        let checks = validate(kn.path(), "child");
+        for c in &checks {
+            assert!(c.ok, "check '{}' failed: {}", c.name, c.detail);
+        }
+    }
+
+    #[test]
+    fn validate_fails_on_cycle() {
+        let kn = tempfile::tempdir().unwrap();
+        base_profile(kn.path(), "a", Some("b"));
+        base_profile(kn.path(), "b", Some("a"));
+        let checks = validate(kn.path(), "a");
+        let c = checks.iter().find(|c| c.name == "extends chain").unwrap();
+        assert!(!c.ok && c.detail.contains("cycle"), "{}", c.detail);
+    }
+
+    #[test]
+    fn validate_fails_on_missing_parent() {
+        let kn = tempfile::tempdir().unwrap();
+        base_profile(kn.path(), "child", Some("ghost"));
+        let checks = validate(kn.path(), "child");
+        let c = checks.iter().find(|c| c.name == "extends chain").unwrap();
+        assert!(!c.ok && c.detail.contains("ghost"), "{}", c.detail);
     }
 }
