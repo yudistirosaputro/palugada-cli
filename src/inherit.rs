@@ -638,6 +638,40 @@ mod tests {
     }
 
     #[test]
+    fn end_to_end_three_level_mvvm_to_mvi() {
+        let kn = tempfile::tempdir().unwrap();
+        // android-base: architecture (layers) + testing
+        profile(kn.path(), "android-base", None);
+        conv(kn.path(), "android-base", "architecture",
+            "---\nid: architecture\ntitle: Architecture\n---\n\n# Architecture\n\n## Layers {#layers}\nlayer rules\n");
+        conv(kn.path(), "android-base", "testing",
+            "---\nid: testing\ntitle: Testing\n---\n\n# Testing\n\n## Unit {#unit}\nunit rules\n");
+        // android-mvvm extends base: adds data-flow (LiveData)
+        profile(kn.path(), "android-mvvm", Some("android-base"));
+        conv(kn.path(), "android-mvvm", "architecture",
+            "---\nid: architecture\ntitle: Architecture\n---\n\n# Architecture\n\n## Data Flow {#data-flow}\nLiveData wiring\n");
+        // android-mvi extends mvvm: overrides data-flow (StateFlow)
+        profile(kn.path(), "android-mvi", Some("android-mvvm"));
+        conv(kn.path(), "android-mvi", "architecture",
+            "---\nid: architecture\ntitle: Architecture\n---\n\n# Architecture\n\n## Data Flow {#data-flow}\nStateFlow + reducer\n");
+
+        // chain
+        assert_eq!(
+            resolve_chain(kn.path(), "android-mvi").unwrap(),
+            vec!["android-mvi".to_string(), "android-mvvm".to_string(), "android-base".to_string()]
+        );
+        // merged architecture: layers (grandparent) + data-flow (child override)
+        let arch = resolve_convention_raw(kn.path(), "android-mvi", "architecture").unwrap().unwrap();
+        assert!(arch.contains("## Layers {#layers}") && arch.contains("layer rules"));
+        assert!(arch.contains("StateFlow + reducer"));
+        assert!(!arch.contains("LiveData wiring"));
+        assert!(arch.find("{#layers}").unwrap() < arch.find("{#data-flow}").unwrap());
+        // testing inherited verbatim from grandparent
+        let testing = resolve_convention_raw(kn.path(), "android-mvi", "testing").unwrap().unwrap();
+        assert!(testing.contains("unit rules"));
+    }
+
+    #[test]
     fn merged_recipes_union_child_overrides_whole() {
         let kn = tempfile::tempdir().unwrap();
         profile(kn.path(), "base", None);
