@@ -175,6 +175,11 @@ pub struct SectionMeta {
     pub title: String,
     #[serde(default)]
     pub tokens: usize,
+    /// Provenance (filled only by inherit::*_provenance; empty for plain reads).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub origin: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub from: String,
 }
 
 /// A recipe → convention cross-reference: `topic` (a convention id) and an
@@ -187,7 +192,7 @@ pub struct ConvRef {
     pub section: String,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Default)]
 pub struct TopicMeta {
     pub id: String,
     pub title: String,
@@ -195,9 +200,13 @@ pub struct TopicMeta {
     pub tags: Vec<String>,
     pub sections: Vec<SectionMeta>,
     pub related: Vec<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub origin: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub from: String,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Default)]
 pub struct RecipeMeta {
     pub id: String,
     pub title: String,
@@ -205,6 +214,10 @@ pub struct RecipeMeta {
     pub tags: Vec<String>,
     pub convention_refs: Vec<ConvRef>,
     pub related_recipes: Vec<String>,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub origin: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub from: String,
 }
 
 /// Conventions in an arbitrary conventions dir (profile or per-project overlay)
@@ -220,6 +233,8 @@ pub fn conventions_in(conv_dir: &Path) -> Result<Vec<TopicMeta>, String> {
             tags: t.tags,
             sections: t.sections,
             related: t.related,
+            origin: String::new(),
+            from: String::new(),
         })
         .collect())
 }
@@ -241,6 +256,8 @@ pub fn recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
             tags: r.tags,
             convention_refs: r.convention_refs,
             related_recipes: r.related_recipes,
+            origin: String::new(),
+            from: String::new(),
         })
         .collect())
 }
@@ -251,12 +268,16 @@ pub fn convention_md_in(conv_dir: &Path, id: &str) -> Result<String, String> {
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
-/// Raw markdown of one convention file.
+/// Raw markdown of one convention file (the profile's OWN local body, un-merged).
+/// Used by the web `…/convention/<id>/raw` route so edits read/write the child's
+/// verbatim file; merged reads go through inherit::resolve_convention_raw.
 pub fn convention_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
     convention_md_in(&kn.join("profiles").join(profile).join("conventions"), id)
 }
 
-/// Raw markdown of one recipe file.
+/// Raw markdown of one recipe file (the profile's OWN local body, un-merged).
+/// Used by the web `…/recipe/<id>/raw` route; merged reads go through
+/// inherit::resolve_recipe_raw.
 pub fn recipe_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
     let p = kn
         .join("profiles")

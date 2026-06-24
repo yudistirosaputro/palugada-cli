@@ -330,6 +330,109 @@ pub fn merged_recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, Strin
         .collect())
 }
 
+/// Like `merged_conventions` but fills each topic's and section's `origin`/`from`
+/// provenance relative to the active profile (`chain[0]`).
+pub fn merged_conventions_provenance(kn: &Path, profile: &str) -> Result<Vec<TopicMeta>, String> {
+    let chain = resolve_chain(kn, profile)?;
+    let active = chain.first().cloned().unwrap_or_default();
+    // Per topic id: ordered build + the set of profiles that define it, and per
+    // section id: the set of profiles that define that section.
+    let mut order: Vec<String> = Vec::new();
+    let mut by_id: BTreeMap<String, TopicMeta> = BTreeMap::new();
+    let mut topic_levels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut sec_levels: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    let mut sec_owner: BTreeMap<(String, String), String> = BTreeMap::new();
+    for p in chain.iter().rev() {
+        // root → child: later (more-derived) wins
+        for t in crate::knowledge::conventions(kn, p)? {
+            topic_levels.entry(t.id.clone()).or_default().push(p.clone());
+            for s in &t.sections {
+                sec_levels.entry((t.id.clone(), s.id.clone())).or_default().push(p.clone());
+                sec_owner.insert((t.id.clone(), s.id.clone()), p.clone());
+            }
+            match by_id.get_mut(&t.id) {
+                Some(existing) => {
+                    existing.sections = merge_section_metas(&existing.sections, &t.sections);
+                    existing.title = t.title;
+                    existing.description = t.description;
+                    existing.tags = t.tags;
+                    existing.related = t.related;
+                }
+                None => {
+                    order.push(t.id.clone());
+                    by_id.insert(t.id.clone(), t);
+                }
+            }
+        }
+    }
+    let mut out: Vec<TopicMeta> = Vec::new();
+    for id in order {
+        let mut t = match by_id.remove(&id) { Some(t) => t, None => continue };
+        let levels = topic_levels.get(&id).cloned().unwrap_or_default();
+        let (origin, from) = classify(&active, &levels);
+        t.origin = origin;
+        t.from = from;
+        for s in &mut t.sections {
+            let key = (id.clone(), s.id.clone());
+            let slevels = sec_levels.get(&key).cloned().unwrap_or_default();
+            let (so, _sf) = classify(&active, &slevels);
+            s.origin = so;
+            s.from = sec_owner.get(&key).cloned().unwrap_or_default();
+        }
+        out.push(t);
+    }
+    Ok(out)
+}
+
+/// Like `merged_recipes` but fills each recipe's `origin`/`from` (whole-doc).
+pub fn merged_recipes_provenance(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
+    let chain = resolve_chain(kn, profile)?;
+    let active = chain.first().cloned().unwrap_or_default();
+    let mut order: Vec<String> = Vec::new();
+    let mut by_id: BTreeMap<String, RecipeMeta> = BTreeMap::new();
+    let mut levels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut owner: BTreeMap<String, String> = BTreeMap::new();
+    for p in chain.iter().rev() {
+        for r in crate::knowledge::recipes(kn, p)? {
+            levels.entry(r.id.clone()).or_default().push(p.clone());
+            owner.insert(r.id.clone(), p.clone());
+            if !by_id.contains_key(&r.id) {
+                order.push(r.id.clone());
+            }
+            by_id.insert(r.id.clone(), r);
+        }
+    }
+    let mut out: Vec<RecipeMeta> = Vec::new();
+    for id in order {
+        let mut r = match by_id.remove(&id) { Some(r) => r, None => continue };
+        let lv = levels.get(&id).cloned().unwrap_or_default();
+        let (origin, _from) = classify(&active, &lv);
+        r.origin = origin;
+        r.from = owner.get(&id).cloned().unwrap_or_default();
+        out.push(r);
+    }
+    Ok(out)
+}
+
+/// Classify provenance from the set of profiles (in any order) that define a
+/// topic/section, relative to the active profile id.
+/// own = only active; overridden = active + ≥1 ancestor; inherited = only ancestor(s).
+/// `from` = active when active is present, else the most-derived ancestor (last in
+/// the root→child push order = the winning ancestor).
+fn classify(active: &str, levels: &[String]) -> (String, String) {
+    let has_active = levels.iter().any(|p| p == active);
+    if has_active {
+        if levels.iter().any(|p| p != active) {
+            ("overridden".to_string(), active.to_string())
+        } else {
+            ("own".to_string(), active.to_string())
+        }
+    } else {
+        let from = levels.last().cloned().unwrap_or_default();
+        ("inherited".to_string(), from)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -724,5 +827,55 @@ mod tests {
         assert_eq!(merged.len(), 2);
         let feature = merged.iter().find(|r| r.id == "feature").unwrap();
         assert_eq!(feature.title, "Child Feature"); // child wins
+    }
+
+    #[test]
+    fn provenance_marks_own_overridden_inherited() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "base", None);
+        profile(kn.path(), "child", Some("base"));
+        // base: architecture(layers, data-flow) + testing(unit)
+        conv_indexed(kn.path(), "base", "architecture", &[("layers", "Layers"), ("data-flow", "Data Flow")]);
+        conv_indexed(kn.path(), "base", "testing", &[("unit", "Unit")]);
+        // child: overrides architecture's data-flow + adds reducer; adds own `style`
+        conv_indexed(kn.path(), "child", "architecture", &[("data-flow", "Data Flow"), ("reducer", "Reducer")]);
+        conv_indexed(kn.path(), "child", "style", &[("naming", "Naming")]);
+
+        let topics = merged_conventions_provenance(kn.path(), "child").unwrap();
+        let arch = topics.iter().find(|t| t.id == "architecture").unwrap();
+        assert_eq!(arch.origin, "overridden"); // in both child and base
+        let testing = topics.iter().find(|t| t.id == "testing").unwrap();
+        assert_eq!(testing.origin, "inherited");
+        assert_eq!(testing.from, "base");
+        let style = topics.iter().find(|t| t.id == "style").unwrap();
+        assert_eq!(style.origin, "own");
+        // section-level provenance within architecture
+        let layers = arch.sections.iter().find(|s| s.id == "layers").unwrap();
+        assert_eq!(layers.origin, "inherited");
+        assert_eq!(layers.from, "base");
+        let df = arch.sections.iter().find(|s| s.id == "data-flow").unwrap();
+        assert_eq!(df.origin, "overridden");
+        let reducer = arch.sections.iter().find(|s| s.id == "reducer").unwrap();
+        assert_eq!(reducer.origin, "own");
+    }
+
+    #[test]
+    fn provenance_recipe_whole_doc() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "base", None);
+        profile(kn.path(), "child", Some("base"));
+        let bdir = kn.path().join("profiles/base/recipes");
+        std::fs::create_dir_all(&bdir).unwrap();
+        crate::knowledge::add_recipe_from_markdown(&bdir, "---\nid: feature\ntitle: Base F\n---\n# F\nb\n").unwrap();
+        crate::knowledge::add_recipe_from_markdown(&bdir, "---\nid: refactor\ntitle: R\n---\n# R\nr\n").unwrap();
+        let cdir = kn.path().join("profiles/child/recipes");
+        std::fs::create_dir_all(&cdir).unwrap();
+        crate::knowledge::add_recipe_from_markdown(&cdir, "---\nid: feature\ntitle: Child F\n---\n# F\nc\n").unwrap();
+
+        let recipes = merged_recipes_provenance(kn.path(), "child").unwrap();
+        assert_eq!(recipes.iter().find(|r| r.id == "feature").unwrap().origin, "overridden");
+        let refac = recipes.iter().find(|r| r.id == "refactor").unwrap();
+        assert_eq!(refac.origin, "inherited");
+        assert_eq!(refac.from, "base");
     }
 }

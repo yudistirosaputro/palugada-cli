@@ -205,7 +205,12 @@ async function renderDoc(meta, kind, profileId, anchor) {
     meta.sections.forEach((s, i) => {
       const sid = s.id || slugify(s.title);
       const tok = s.tokens ? ` <span class="hint">~${s.tokens} tok</span>` : "";
-      const stepRowEl = h(`<div class="step" style="cursor:pointer"><span class="num">${i + 1}</span><span class="id-chip">#${esc(sid)}</span> <span class="arg">${esc(s.title)}</span>${tok}</div>`);
+      const sectionBadge = s.origin === "inherited"
+        ? ` <span class="sticker">${"inherited · " + esc(s.from || "")}</span>`
+        : s.origin === "overridden"
+        ? ` <span class="sticker">overridden</span>`
+        : "";
+      const stepRowEl = h(`<div class="step" style="cursor:pointer"><span class="num">${i + 1}</span><span class="id-chip">#${esc(sid)}</span> <span class="arg">${esc(s.title)}</span>${tok}${sectionBadge}</div>`);
       stepRowEl.onclick = () => {
         const el = prose.querySelector("#sec-" + (window.CSS && CSS.escape ? CSS.escape(sid) : sid));
         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -609,7 +614,10 @@ async function viewDoc(profile, kind, id, anchor) {
 
 async function editDoc(profile, kind, id, anchor) {
   let b;
-  try { b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`); }
+  // Prefill from the LOCAL (un-merged) body via /raw — editing the merged view
+  // would let Save overwrite an overridden child's file with the whole merged
+  // body, silently freezing its per-section inheritance. viewDoc keeps merged.
+  try { b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}/raw`); }
   catch (e) { toast(e.message, true); return; }
   let card = document.getElementById("bodyview");
   if (card) card.remove();
@@ -641,17 +649,20 @@ async function renderProfiles() {
   const form = h(`<div class="card"><div class="card-head"><h3>New profile</h3></div>
     <label>id (a-z0-9-_)</label><input id="np-id" placeholder="web-react">
     <label>title</label><input id="np-title" placeholder="Web · React">
+    <label>Extends (optional base profile)<select id="np-extends"><option value="">(none — standalone)</option></select></label>
     <label>languages (comma-separated)</label><input id="np-langs" placeholder="typescript, tsx">
     <div class="row" style="margin-top:8px"><button id="np-create">Create profile</button></div></div>`);
   view.appendChild(form);
   form.querySelector("#np-create").onclick = async () => {
     const id = form.querySelector("#np-id").value.trim();
     if (!id) { toast("id required", true); return; }
+    const extendsVal = form.querySelector("#np-extends").value;
     try {
       await api("/api/profile", "POST", {
         id,
         title: form.querySelector("#np-title").value.trim(),
         languages: splitCsv(form.querySelector("#np-langs").value),
+        extends: extendsVal || undefined,
       });
       toast("created profile: " + id);
       renderProfiles();
@@ -662,6 +673,13 @@ async function renderProfiles() {
   const list = listCard.querySelector("#prof-list");
   try {
     const d = await api("/api/profiles");
+    const extendsSelect = form.querySelector("#np-extends");
+    d.profiles.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = `${esc(p.id)} — ${esc(p.title)}`;
+      extendsSelect.appendChild(opt);
+    });
     d.profiles.forEach(p => {
       const item = h(`<div class="lrow" style="cursor:pointer"><span class="id-chip">${esc(p.id)}</span> <span class="ttl">${esc(p.title)}</span><span class="actions"><a class="link">Open</a></span></div>`);
       item.onclick = () => renderProfileDetail(p.id);
@@ -676,8 +694,31 @@ function docRow(meta, kind, profileId) {
   const metaBits = kind === "convention"
     ? `${(meta.sections || []).length} sections`
     : `${(meta.convention_refs || []).length} refs`;
-  const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span> <span class="meta">· ${metaBits}</span><span class="actions"><a class="link">View</a></span></div>`);
-  row.querySelector("a").onclick = () => renderDoc(meta, kind, profileId, row);
+  const originBadge = meta.origin === "inherited"
+    ? ` <span class="sticker">${"inherited · " + esc(meta.from || "")}</span>`
+    : meta.origin === "overridden"
+    ? ` <span class="sticker">overridden</span>`
+    : "";
+  const isInherited = meta.origin === "inherited";
+  const secondAction = isInherited
+    ? ` <a class="link doc-override">Override</a>`
+    : ` <a class="link doc-edit">Edit</a>`;
+  const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span>${originBadge} <span class="meta">· ${metaBits}</span><span class="actions"><a class="link doc-view">View</a>${secondAction}</span></div>`);
+  row.querySelector(".doc-view").onclick = () => renderDoc(meta, kind, profileId, row);
+  if (isInherited) {
+    row.querySelector(".doc-override").onclick = () => {
+      // Find the nearest add-form host or create one after the row's parent list
+      const list = row.parentElement;
+      const existingHost = list.querySelector(".doc-override-host-" + CSS.escape(meta.id));
+      if (existingHost) { existingHost.remove(); return; }
+      const host = h(`<div class="doc-override-host-${esc(meta.id)}"></div>`);
+      const form = kind === "convention" ? addConventionForm(profileId, meta.id) : addRecipeForm(profileId, meta.id);
+      host.appendChild(form);
+      row.insertAdjacentElement("afterend", host);
+    };
+  } else {
+    row.querySelector(".doc-edit").onclick = () => editDoc(profileId, kind, meta.id, row);
+  }
   return row;
 }
 
@@ -687,6 +728,10 @@ async function renderProfileDetail(id) {
   let d;
   try { d = await api("/api/profile/" + encodeURIComponent(id)); }
   catch (e) { toast(e.message, true); return; }
+
+  if (d.extends) {
+    view.appendChild(h(`<div class="muted" style="margin:-8px 0 12px">extends <span class="id-chip">${esc(d.extends)}</span></div>`));
+  }
 
   // ── Browse: conventions ──
   const cv = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${d.conventions.length}</span></div>
@@ -876,12 +921,12 @@ function flowsCard(id, d) {
   return card;
 }
 
-function addConventionForm(id) {
+function addConventionForm(id, presetId) {
   const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>+ Add convention</strong>
+    <strong>${presetId ? "Override convention: " + esc(presetId) : "+ Add convention"}</strong>
     <div class="muted" style="margin:2px 0 6px">A standing standard for this stack. palugada writes the front-matter,
     section ids, and index for you — you only fill the fields below. (CLI equivalent: <code>palugada convention add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ac-id" placeholder="errorhandling">
+    <label>id</label><input class="ac-id" placeholder="errorhandling"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
     <div class="muted">lowercase slug — used in <code>palugada q errorhandling</code> (a-z, 0-9, - _).</div>
     <label>title</label><input class="ac-title" placeholder="Error Handling">
     <label>description</label><input class="ac-desc" placeholder="one-line summary">
@@ -892,6 +937,7 @@ function addConventionForm(id) {
     <div class="ac-sections"></div>
     <div class="row" style="margin-top:6px"><button class="ghost ac-addsec">+ section</button><span class="spacer"></span><button class="ac-save">Save convention</button></div>
   </div>`);
+  if (presetId) box.querySelector(".ac-id").setAttribute("readonly", "readonly");
   const secs = box.querySelector(".ac-sections");
   const addSec = () => secs.appendChild(h(`<div class="section-row">
     <label>section title</label><input class="sec-title" placeholder="Modeling Failures">
@@ -921,11 +967,11 @@ function addConventionForm(id) {
   return box;
 }
 
-function addRecipeForm(id) {
+function addRecipeForm(id, presetId) {
   const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>+ Add recipe</strong>
+    <strong>${presetId ? "Override recipe: " + esc(presetId) : "+ Add recipe"}</strong>
     <div class="muted" style="margin:2px 0 6px">A step-by-step guide for one task. (CLI equivalent: <code>palugada recipe add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ar-id" placeholder="pagination">
+    <label>id</label><input class="ar-id" placeholder="pagination"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
     <div class="muted">lowercase slug — used in <code>palugada for pagination</code>.</div>
     <label>title</label><input class="ar-title" placeholder="Add pagination">
     <label>description</label><input class="ar-desc" placeholder="one-line summary">
@@ -934,6 +980,7 @@ function addRecipeForm(id) {
     <div class="muted">the full procedure — write it as plain markdown (use <code>## </code> for steps/sections).</div>
     <div class="row" style="margin-top:6px"><span class="spacer"></span><button class="ar-save">Save recipe</button></div>
   </div>`);
+  if (presetId) box.querySelector(".ar-id").setAttribute("readonly", "readonly");
   box.querySelector(".ar-save").onclick = async e => {
     e.preventDefault();
     const spec = {
@@ -978,7 +1025,7 @@ function generateForm(id) {
 }
 
 async function renderKnowledge() {
-  view.innerHTML = viewHead("Browse", "Knowledge", "Read-only browser across any profile's conventions and recipes.");
+  view.innerHTML = viewHead("Browse", "Knowledge", "Browse and edit any profile's conventions and recipes.");
   let d;
   try { d = await api("/api/profiles"); } catch (e) { toast(e.message, true); return; }
   if (!d.profiles.length) {
