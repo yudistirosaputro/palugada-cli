@@ -30,6 +30,8 @@ pub enum Route {
     Profile(String),
     Convention(String, String),
     Recipe(String, String),
+    ConventionRaw(String, String),
+    RecipeRaw(String, String),
     CreateProfile,
     AddConvention(String),
     AddRecipe(String),
@@ -69,6 +71,12 @@ pub fn route(method: &str, path: &str) -> Route {
         }
         ("GET", ["api", "profile", id, "recipe", rid]) => {
             Route::Recipe((*id).to_string(), (*rid).to_string())
+        }
+        ("GET", ["api", "profile", id, "convention", cid, "raw"]) => {
+            Route::ConventionRaw((*id).to_string(), (*cid).to_string())
+        }
+        ("GET", ["api", "profile", id, "recipe", rid, "raw"]) => {
+            Route::RecipeRaw((*id).to_string(), (*rid).to_string())
         }
         ("POST", ["api", "profile"]) => Route::CreateProfile,
         ("POST", ["api", "profile", id, "convention"]) => Route::AddConvention((*id).to_string()),
@@ -193,6 +201,17 @@ fn api(route: Route, body: &str) -> (u16, String) {
             let md = crate::inherit::resolve_recipe_raw(&kn, &id, &rid)?
                 .ok_or_else(|| format!("no recipe '{rid}' in profile '{id}' or its parents"))?;
             Ok(json!({ "markdown": md }))
+        }),
+        // The LOCAL (un-merged) body of the profile's own file — what `editDoc`
+        // prefills, so Save writes back the child's verbatim body and never
+        // freezes the merged inheritance into a whole-body copy.
+        Route::ConventionRaw(id, cid) => read(|| {
+            let kn = knowledge_dir()?;
+            Ok(json!({ "markdown": crate::knowledge::convention_md(&kn, &id, &cid)? }))
+        }),
+        Route::RecipeRaw(id, rid) => read(|| {
+            let kn = knowledge_dir()?;
+            Ok(json!({ "markdown": crate::knowledge::recipe_md(&kn, &id, &rid)? }))
         }),
         Route::CreateProfile => write_op(|| create_profile(body)),
         Route::AddConvention(id) => write_op(|| {
@@ -420,10 +439,16 @@ fn create_profile(body: &str) -> Result<serde_json::Value, String> {
         let pf = kn.join("profiles").join(&np.id).join("profile.yaml");
         let mut raw = std::fs::read_to_string(&pf).map_err(|e| e.to_string())?;
         if !np.title.is_empty() {
-            raw = raw.replace(
-                &format!("title: \"{} profile\"", np.id),
-                &format!("title: \"{}\"", np.title.replace('"', "'")),
-            );
+            // Flat profiles scaffold `title: "{id} profile"`; an extends-child is
+            // copy-seeded from the parent, so its title line carries the PARENT's
+            // title. A literal replace would no-op there and silently drop the
+            // chosen title — so replace the whole `title:` line (like languages).
+            let title = format!("title: \"{}\"", np.title.replace('"', "'"));
+            if let Some(start) = raw.find("\ntitle:") {
+                let line_start = start + 1;
+                let line_end = raw[line_start..].find('\n').map(|i| line_start + i).unwrap_or(raw.len());
+                raw.replace_range(line_start..line_end, &title);
+            }
         }
         if !np.languages.is_empty() {
             // Flat profiles scaffold `languages: []`; an extends-child copies the
@@ -653,6 +678,14 @@ mod tests {
             route("GET", "/api/profile/p/convention/arch"),
             Route::Convention("p".into(), "arch".into())
         );
+        assert_eq!(
+            route("GET", "/api/profile/p/convention/arch/raw"),
+            Route::ConventionRaw("p".into(), "arch".into())
+        );
+        assert_eq!(
+            route("GET", "/api/profile/p/recipe/feature/raw"),
+            Route::RecipeRaw("p".into(), "feature".into())
+        );
         assert_eq!(route("POST", "/api/profile"), Route::CreateProfile);
         assert_eq!(route("POST", "/api/profile/p/convention"), Route::AddConvention("p".into()));
         assert_eq!(route("POST", "/api/profile/p/flows"), Route::SetFlows("p".into()));
@@ -729,5 +762,41 @@ mod tests {
         let arch = v["conventions"].as_array().unwrap().iter().find(|c| c["id"] == "arch").unwrap();
         assert_eq!(arch["origin"], "inherited");
         assert_eq!(arch["from"], "base");
+    }
+
+    /// editDoc must prefill from the child's LOCAL body, not the merged view.
+    /// `convention_md` (what the `/raw` route returns) shows ONLY the child's own
+    /// section; `resolve_convention_raw` (what viewDoc/renderDoc shows) merges in
+    /// the parent's. Pinning this prevents Save from freezing inheritance into a
+    /// whole-body copy of the merged view.
+    #[test]
+    fn raw_convention_body_is_local_not_merged() {
+        let kn = tempfile::tempdir().unwrap();
+        // base defines `arch` with a `Layers` section; child overrides `arch`
+        // with only a `DataFlow` section.
+        for (p, ext) in [("base", None), ("child", Some("base"))] {
+            let d = kn.path().join("profiles").join(p);
+            std::fs::create_dir_all(d.join("conventions")).unwrap();
+            std::fs::create_dir_all(d.join("recipes")).unwrap();
+            let mut y = format!("id: {p}\nfact_families:\n  - {{ id: symbol, symbol: true }}\n");
+            if let Some(e) = ext { y.push_str(&format!("extends: {e}\n")); }
+            std::fs::write(d.join("profile.yaml"), y).unwrap();
+        }
+        crate::knowledge::add_convention_in(&kn.path().join("profiles/base/conventions"),
+            &crate::knowledge::ConventionSpec { id: "arch".into(), title: "Arch".into(), description: "d".into(), tags: vec![],
+                sections: vec![crate::knowledge::SectionSpec { title: "Layers".into(), body: "L".into(), code: false }] }).unwrap();
+        crate::knowledge::add_convention_in(&kn.path().join("profiles/child/conventions"),
+            &crate::knowledge::ConventionSpec { id: "arch".into(), title: "Arch".into(), description: "d".into(), tags: vec![],
+                sections: vec![crate::knowledge::SectionSpec { title: "DataFlow".into(), body: "F".into(), code: false }] }).unwrap();
+
+        // RAW (what edit prefills): child's own body only — no parent's Layers.
+        let raw = crate::knowledge::convention_md(kn.path(), "child", "arch").unwrap();
+        assert!(raw.contains("DataFlow"), "raw should contain the child's section");
+        assert!(!raw.contains("Layers"), "raw must NOT contain the parent's section");
+
+        // MERGED (what viewDoc shows): both the child's and the parent's sections.
+        let merged = crate::inherit::resolve_convention_raw(kn.path(), "child", "arch").unwrap().unwrap();
+        assert!(merged.contains("DataFlow"), "merged should contain the child's section");
+        assert!(merged.contains("Layers"), "merged should contain the parent's section");
     }
 }

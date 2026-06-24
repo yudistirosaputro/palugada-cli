@@ -614,7 +614,10 @@ async function viewDoc(profile, kind, id, anchor) {
 
 async function editDoc(profile, kind, id, anchor) {
   let b;
-  try { b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}`); }
+  // Prefill from the LOCAL (un-merged) body via /raw — editing the merged view
+  // would let Save overwrite an overridden child's file with the whole merged
+  // body, silently freezing its per-section inheritance. viewDoc keeps merged.
+  try { b = await api(`/api/profile/${encodeURIComponent(profile)}/${kind}/${encodeURIComponent(id)}/raw`); }
   catch (e) { toast(e.message, true); return; }
   let card = document.getElementById("bodyview");
   if (card) card.remove();
@@ -1022,7 +1025,7 @@ function generateForm(id) {
 }
 
 async function renderKnowledge() {
-  view.innerHTML = viewHead("Browse", "Knowledge", "Read-only browser across any profile's conventions and recipes.");
+  view.innerHTML = viewHead("Browse", "Knowledge", "Browse and edit any profile's conventions and recipes.");
   let d;
   try { d = await api("/api/profiles"); } catch (e) { toast(e.message, true); return; }
   if (!d.profiles.length) {

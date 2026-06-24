@@ -268,16 +268,16 @@ pub fn convention_md_in(conv_dir: &Path, id: &str) -> Result<String, String> {
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
-/// Raw markdown of one convention file.
-// Retained as a test helper; production convention reads go through inherit::resolve_convention_raw.
-#[allow(dead_code)]
+/// Raw markdown of one convention file (the profile's OWN local body, un-merged).
+/// Used by the web `…/convention/<id>/raw` route so edits read/write the child's
+/// verbatim file; merged reads go through inherit::resolve_convention_raw.
 pub fn convention_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
     convention_md_in(&kn.join("profiles").join(profile).join("conventions"), id)
 }
 
-/// Raw markdown of one recipe file.
-// Retained as a test helper; production recipe reads go through inherit::resolve_recipe_raw.
-#[allow(dead_code)]
+/// Raw markdown of one recipe file (the profile's OWN local body, un-merged).
+/// Used by the web `…/recipe/<id>/raw` route; merged reads go through
+/// inherit::resolve_recipe_raw.
 pub fn recipe_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
     let p = kn
         .join("profiles")
