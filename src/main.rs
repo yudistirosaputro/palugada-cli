@@ -69,7 +69,7 @@ enum Commands {
     /// Read a convention from the active profile: `q <topic>[.N]`.
     #[command(name = "q")]
     Query {
-        /// Topic id, optionally `.N` for one section (e.g. `architecture.2`).
+        /// Topic id; `.N` for the N-th section or `#id` for a section by anchor (e.g. `architecture.2` or `architecture#data-flow`).
         topic: Option<String>,
         /// Brief: show the section outline only.
         #[arg(short, long)]

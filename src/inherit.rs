@@ -50,10 +50,10 @@ pub fn resolve_chain(kn: &Path, id: &str) -> Result<Vec<String>, String> {
                 break;
             } else {
                 // A parent referenced via extends must have a profile.yaml.
-                return Err(format!(
-                    "profile '{}' extends '{cur}' which does not exist",
-                    chain.last().unwrap()
-                ));
+                match chain.last() {
+                    Some(child) => return Err(format!("profile '{child}' extends '{cur}' which does not exist")),
+                    None => return Err(format!("profile '{cur}' has no profile.yaml at {}", yaml_path.display())),
+                }
             }
         }
         chain.push(cur.clone());
@@ -208,11 +208,13 @@ pub fn resolve_convention_raw(
         .last()
         .map(|p| p.preamble.clone())
         .unwrap_or_default();
-    // Metadata from the most-derived (child-first => present[0]) definition.
-    let child_raw = &present[0];
-    let title = crate::knowledge::frontmatter_field(child_raw, "title").unwrap_or_default();
-    let description =
-        crate::knowledge::frontmatter_field(child_raw, "description").unwrap_or_default();
+    // Metadata: nearest non-empty value scanning child-first, so a child that
+    // overrides a topic but omits title/description still shows the parent's.
+    let pick = |key: &str| {
+        present.iter().find_map(|raw| crate::knowledge::frontmatter_field(raw, key).filter(|s| !s.is_empty())).unwrap_or_default()
+    };
+    let title = pick("title");
+    let description = pick("description");
     Ok(Some(render_merged(
         topic,
         &title,
@@ -519,6 +521,30 @@ mod tests {
         );
         // order: Layers before Data Flow (spine preserved)
         assert!(raw.find("{#layers}").unwrap() < raw.find("{#data-flow}").unwrap());
+    }
+
+    #[test]
+    fn child_without_description_inherits_parents() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "android-mvvm", None);
+        profile(kn.path(), "android-mvi", Some("android-mvvm"));
+        // parent defines the topic WITH a description
+        conv(kn.path(), "android-mvvm", "architecture",
+            "---\nid: architecture\ntitle: Architecture\ndescription: How layers wire together\n---\n\n# Architecture\n\n## Layers {#layers}\nlayers body\n\n## Data Flow {#data-flow}\nLiveData wiring\n");
+        // child overrides one section but omits description: in its front-matter
+        conv(kn.path(), "android-mvi", "architecture",
+            "---\nid: architecture\ntitle: Architecture\n---\n\n# Architecture\n\n## Data Flow {#data-flow}\nStateFlow + reducer\n");
+        let raw = resolve_convention_raw(kn.path(), "android-mvi", "architecture")
+            .unwrap()
+            .unwrap();
+        // merged front-matter still carries the parent's description
+        assert_eq!(
+            crate::knowledge::frontmatter_field(&raw, "description").as_deref(),
+            Some("How layers wire together"),
+            "child without description inherits parent's: {raw}"
+        );
+        // and it appears before the first section heading (in the front-matter block)
+        assert!(raw.find("How layers wire together").unwrap() < raw.find("## ").unwrap());
     }
 
     #[test]

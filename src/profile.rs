@@ -293,6 +293,14 @@ pub fn scaffold_new(kn: &Path, id: &str, extends: Option<&str>) -> Result<Vec<Pa
     if dir.exists() {
         return Err(format!("profile '{id}' already exists at {}", dir.display()));
     }
+    // Validate the --extends parent BEFORE creating any directories, so a bad
+    // parent never leaves a half-scaffolded profiles/<id>/ that wedges retries.
+    if let Some(parent) = extends {
+        let pdir = kn.join("profiles").join(parent);
+        if !pdir.join("profile.yaml").is_file() {
+            return Err(format!("base profile '{parent}' does not exist at {}", pdir.display()));
+        }
+    }
 
     let default_profile = format!(
         "schema_version: \"1.0\"\nid: {id}\ntitle: \"{id} profile\"\nlanguages: []\n\nfact_families:\n  - {{ id: symbol, symbol: true }}\n\nflows:\n  bugfix:   [code.recent, symbol.find]\n  feature:  [recipe(feature)]\n  refactor: [convention(architecture)]\n  review:   [diff.scan, convention(by-file-kind)]\n\nreview_map:\n  symbol: [architecture]\n"
@@ -572,6 +580,14 @@ mod tests {
     fn scaffold_with_missing_base_errors() {
         let kn = tempfile::tempdir().unwrap();
         assert!(scaffold_new(kn.path(), "child", Some("ghost")).is_err());
+    }
+
+    #[test]
+    fn scaffold_missing_base_creates_no_dir() {
+        let kn = tempfile::tempdir().unwrap();
+        assert!(scaffold_new(kn.path(), "child", Some("ghost")).is_err());
+        // a bad parent must leave no orphan profiles/child/ behind (retry not wedged)
+        assert!(!kn.path().join("profiles").join("child").exists());
     }
 
     /// Minimal valid profile dir (profile.yaml + extractors.yaml + empty indexes).

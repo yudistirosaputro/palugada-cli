@@ -731,7 +731,7 @@ pub fn convention_outline_in(conv_dir: &Path, name: &str) -> Result<String, Stri
 
 pub fn convention_outline(kn: &Path, profile: &str, name: &str) -> Result<String, String> {
     let raw = crate::inherit::resolve_convention_raw(kn, profile, name)?
-        .ok_or_else(|| format!("no convention '{name}' in profile '{profile}'"))?;
+        .ok_or_else(|| format!("no convention '{name}' in profile '{profile}' or its parents"))?;
     Ok(convention_outline_str(&raw, name))
 }
 
