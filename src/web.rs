@@ -408,11 +408,14 @@ fn create_profile(body: &str) -> Result<serde_json::Value, String> {
         title: String,
         #[serde(default)]
         languages: Vec<String>,
+        #[serde(default)]
+        extends: Option<String>,
     }
     let np: NewProfile = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
     let kn = knowledge_dir()?;
-    crate::profile::scaffold_new(&kn, &np.id, None)?;
-    // Apply the chosen title / languages over the scaffold's defaults.
+    let extends = np.extends.as_deref().filter(|s| !s.is_empty());
+    crate::profile::scaffold_new(&kn, &np.id, extends)?;
+    // Apply the chosen title / languages over the generated profile.yaml.
     if !np.title.is_empty() || !np.languages.is_empty() {
         let pf = kn.join("profiles").join(&np.id).join("profile.yaml");
         let mut raw = std::fs::read_to_string(&pf).map_err(|e| e.to_string())?;
@@ -423,7 +426,14 @@ fn create_profile(body: &str) -> Result<serde_json::Value, String> {
             );
         }
         if !np.languages.is_empty() {
-            raw = raw.replace("languages: []", &format!("languages: [{}]", np.languages.join(", ")));
+            // Flat profiles scaffold `languages: []`; an extends-child copies the
+            // parent's `languages: [...]`. Replace whichever line is present.
+            let langs = format!("languages: [{}]", np.languages.join(", "));
+            if let Some(start) = raw.find("\nlanguages:") {
+                let line_start = start + 1;
+                let line_end = raw[line_start..].find('\n').map(|i| line_start + i).unwrap_or(raw.len());
+                raw.replace_range(line_start..line_end, &langs);
+            }
         }
         std::fs::write(&pf, raw).map_err(|e| e.to_string())?;
     }

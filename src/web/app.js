@@ -641,17 +641,20 @@ async function renderProfiles() {
   const form = h(`<div class="card"><div class="card-head"><h3>New profile</h3></div>
     <label>id (a-z0-9-_)</label><input id="np-id" placeholder="web-react">
     <label>title</label><input id="np-title" placeholder="Web · React">
+    <label>Extends (optional base profile)<select id="np-extends"><option value="">(none — standalone)</option></select></label>
     <label>languages (comma-separated)</label><input id="np-langs" placeholder="typescript, tsx">
     <div class="row" style="margin-top:8px"><button id="np-create">Create profile</button></div></div>`);
   view.appendChild(form);
   form.querySelector("#np-create").onclick = async () => {
     const id = form.querySelector("#np-id").value.trim();
     if (!id) { toast("id required", true); return; }
+    const extendsVal = form.querySelector("#np-extends").value;
     try {
       await api("/api/profile", "POST", {
         id,
         title: form.querySelector("#np-title").value.trim(),
         languages: splitCsv(form.querySelector("#np-langs").value),
+        extends: extendsVal || undefined,
       });
       toast("created profile: " + id);
       renderProfiles();
@@ -662,6 +665,13 @@ async function renderProfiles() {
   const list = listCard.querySelector("#prof-list");
   try {
     const d = await api("/api/profiles");
+    const extendsSelect = form.querySelector("#np-extends");
+    d.profiles.forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = `${esc(p.id)} — ${esc(p.title)}`;
+      extendsSelect.appendChild(opt);
+    });
     d.profiles.forEach(p => {
       const item = h(`<div class="lrow" style="cursor:pointer"><span class="id-chip">${esc(p.id)}</span> <span class="ttl">${esc(p.title)}</span><span class="actions"><a class="link">Open</a></span></div>`);
       item.onclick = () => renderProfileDetail(p.id);
