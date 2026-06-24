@@ -184,11 +184,15 @@ fn api(route: Route, body: &str) -> (u16, String) {
         Route::Profile(id) => read(|| profile_json(&id)),
         Route::Convention(id, cid) => read(|| {
             let kn = knowledge_dir()?;
-            Ok(json!({ "markdown": crate::knowledge::convention_md(&kn, &id, &cid)? }))
+            let md = crate::inherit::resolve_convention_raw(&kn, &id, &cid)?
+                .ok_or_else(|| format!("no convention '{cid}' in profile '{id}' or its parents"))?;
+            Ok(json!({ "markdown": md }))
         }),
         Route::Recipe(id, rid) => read(|| {
             let kn = knowledge_dir()?;
-            Ok(json!({ "markdown": crate::knowledge::recipe_md(&kn, &id, &rid)? }))
+            let md = crate::inherit::resolve_recipe_raw(&kn, &id, &rid)?
+                .ok_or_else(|| format!("no recipe '{rid}' in profile '{id}' or its parents"))?;
+            Ok(json!({ "markdown": md }))
         }),
         Route::CreateProfile => write_op(|| create_profile(body)),
         Route::AddConvention(id) => write_op(|| {
@@ -543,10 +547,13 @@ fn profiles_json() -> Result<serde_json::Value, String> {
 
 fn profile_json(id: &str) -> Result<serde_json::Value, String> {
     let kn = knowledge_dir()?;
+    let chain = crate::inherit::resolve_chain(&kn, id)?;
     Ok(json!({
         "id": id,
-        "conventions": jv(&crate::knowledge::conventions(&kn, id)?),
-        "recipes": jv(&crate::knowledge::recipes(&kn, id)?),
+        "extends": crate::inherit::read_extends(&kn, id),
+        "chain": chain,
+        "conventions": jv(&crate::inherit::merged_conventions_provenance(&kn, id)?),
+        "recipes": jv(&crate::inherit::merged_recipes_provenance(&kn, id)?),
         "fact_families": crate::indexer::fact_families(&kn, id).unwrap_or_default(),
         "flows": jv(&flows(&kn, id).unwrap_or_default()),
     }))
@@ -682,5 +689,35 @@ mod tests {
         assert!(host_ok("localhost"));
         assert!(!host_ok("evil.example.com"));
         assert!(!host_ok(""));
+    }
+
+    #[test]
+    fn profile_json_exposes_extends_chain_and_provenance() {
+        let kn = tempfile::tempdir().unwrap();
+        // base + child(extends base), child overrides a section
+        for (p, ext) in [("base", None), ("kid", Some("base"))] {
+            let d = kn.path().join("profiles").join(p);
+            std::fs::create_dir_all(d.join("conventions")).unwrap();
+            std::fs::create_dir_all(d.join("recipes")).unwrap();
+            let mut y = format!("id: {p}\nfact_families:\n  - {{ id: symbol, symbol: true }}\n");
+            if let Some(e) = ext { y.push_str(&format!("extends: {e}\n")); }
+            std::fs::write(d.join("profile.yaml"), y).unwrap();
+            std::fs::write(d.join("extractors.yaml"), "families:\n  - id: symbol\n    regex: 'x'\n").unwrap();
+            std::fs::write(d.join("recipes/_index.json"), r#"{"recipes":[]}"#).unwrap();
+        }
+        crate::knowledge::add_convention_in(&kn.path().join("profiles/base/conventions"),
+            &crate::knowledge::ConventionSpec { id: "arch".into(), title: "Arch".into(), description: "d".into(), tags: vec![],
+                sections: vec![crate::knowledge::SectionSpec { title: "Layers".into(), body: "L".into(), code: false }] }).unwrap();
+        std::fs::write(kn.path().join("profiles/kid/conventions/_index.json"), r#"{"topics":[]}"#).unwrap();
+
+        std::env::set_var("PALUGADA_KNOWLEDGE", kn.path());
+        let v = profile_json("kid").unwrap();
+        std::env::remove_var("PALUGADA_KNOWLEDGE");
+
+        assert_eq!(v["extends"], "base");
+        assert_eq!(v["chain"][0], "kid");
+        let arch = v["conventions"].as_array().unwrap().iter().find(|c| c["id"] == "arch").unwrap();
+        assert_eq!(arch["origin"], "inherited");
+        assert_eq!(arch["from"], "base");
     }
 }
