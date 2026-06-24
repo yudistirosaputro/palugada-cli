@@ -192,6 +192,8 @@ mod tests {
             tags: vec![],
             sections: vec![],
             related: vec![],
+            origin: String::new(),
+            from: String::new(),
         }
     }
 
