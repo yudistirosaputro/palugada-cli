@@ -269,11 +269,15 @@ pub fn convention_md_in(conv_dir: &Path, id: &str) -> Result<String, String> {
 }
 
 /// Raw markdown of one convention file.
+// Retained as a test helper; production convention reads go through inherit::resolve_convention_raw.
+#[allow(dead_code)]
 pub fn convention_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
     convention_md_in(&kn.join("profiles").join(profile).join("conventions"), id)
 }
 
 /// Raw markdown of one recipe file.
+// Retained as a test helper; production recipe reads go through inherit::resolve_recipe_raw.
+#[allow(dead_code)]
 pub fn recipe_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
     let p = kn
         .join("profiles")
