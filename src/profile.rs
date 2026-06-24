@@ -249,9 +249,38 @@ fn web_render_checks(kn: &Path, id: &str) -> Vec<Check> {
     out
 }
 
-/// Scaffold a minimal but valid profile under `kn/profiles/<id>/`. Refuses if it
-/// already exists. Returns the written file paths.
-pub fn scaffold_new(kn: &Path, id: &str) -> Result<Vec<PathBuf>, String> {
+/// Rewrite a parent's `profile.yaml` text for a child: set `id:` to the child,
+/// insert `extends: <parent>` right after it, and retitle. Other lines (flows,
+/// review_map, fact_families, exec) are copied verbatim.
+fn reid_with_extends(parent_yaml: &str, id: &str, parent: &str) -> String {
+    let mut out = String::new();
+    let mut did_id = false;
+    for line in parent_yaml.lines() {
+        let trimmed = line.trim_start();
+        if !did_id && trimmed.starts_with("id:") {
+            out.push_str(&format!("id: {id}\n"));
+            out.push_str(&format!("extends: {parent}\n"));
+            did_id = true;
+            continue;
+        }
+        if trimmed.starts_with("title:") {
+            out.push_str(&format!("title: \"{id} profile\"\n"));
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !did_id {
+        out = format!("id: {id}\nextends: {parent}\n{out}");
+    }
+    out
+}
+
+/// Scaffold a profile under `kn/profiles/<id>/`. With `extends`, the manifest
+/// (profile.yaml minus knowledge) and `extractors.yaml` (+ `extractors/`) are
+/// copy-seeded from the parent so the child is immediately valid; conventions
+/// and recipes are left empty (they are live-inherited). Refuses if `id` exists.
+pub fn scaffold_new(kn: &Path, id: &str, extends: Option<&str>) -> Result<Vec<PathBuf>, String> {
     let ok_id = !id.is_empty()
         && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
     if !ok_id {
@@ -261,28 +290,60 @@ pub fn scaffold_new(kn: &Path, id: &str) -> Result<Vec<PathBuf>, String> {
     if dir.exists() {
         return Err(format!("profile '{id}' already exists at {}", dir.display()));
     }
+
+    let default_profile = format!(
+        "schema_version: \"1.0\"\nid: {id}\ntitle: \"{id} profile\"\nlanguages: []\n\nfact_families:\n  - {{ id: symbol, symbol: true }}\n\nflows:\n  bugfix:   [code.recent, symbol.find]\n  feature:  [recipe(feature)]\n  refactor: [convention(architecture)]\n  review:   [diff.scan, convention(by-file-kind)]\n\nreview_map:\n  symbol: [architecture]\n"
+    );
+    let default_extractors =
+        "schema_version: \"1.0\"\nignore_dirs: [\".git\", \".palugada\", \"target\", \"node_modules\", \"build\"]\n\nfamilies:\n  - id: symbol\n    regex: 'class\\s+(?P<name>\\w+)'\n".to_string();
+
     fs::create_dir_all(dir.join("conventions")).map_err(|e| format!("create dirs: {e}"))?;
     fs::create_dir_all(dir.join("recipes")).map_err(|e| format!("create dirs: {e}"))?;
 
-    let profile_yaml = format!(
-        "schema_version: \"1.0\"\nid: {id}\ntitle: \"{id} profile\"\nlanguages: []\n\nfact_families:\n  - {{ id: symbol, symbol: true }}\n\nflows:\n  bugfix:   [code.recent, symbol.find]\n  feature:  [recipe(feature)]\n  refactor: [convention(architecture)]\n  review:   [diff.scan, convention(by-file-kind)]\n\nreview_map:\n  symbol: [architecture]\n"
-    );
-    let extractors_yaml =
-        "schema_version: \"1.0\"\nignore_dirs: [\".git\", \".palugada\", \"target\", \"node_modules\", \"build\"]\n\nfamilies:\n  - id: symbol\n    regex: 'class\\s+(?P<name>\\w+)'\n";
+    let mut written: Vec<PathBuf> = Vec::new();
+
+    let (profile_yaml, extractors_yaml) = match extends {
+        Some(parent) => {
+            let pdir = kn.join("profiles").join(parent);
+            if !pdir.join("profile.yaml").is_file() {
+                return Err(format!("base profile '{parent}' does not exist at {}", pdir.display()));
+            }
+            let praw = fs::read_to_string(pdir.join("profile.yaml"))
+                .map_err(|e| format!("read parent profile.yaml: {e}"))?;
+            let child_yaml = reid_with_extends(&praw, id, parent);
+            let pextr = fs::read_to_string(pdir.join("extractors.yaml")).unwrap_or(default_extractors);
+            // copy parent extractors/*.scm if present
+            let scm_dir = pdir.join("extractors");
+            if scm_dir.is_dir() {
+                fs::create_dir_all(dir.join("extractors")).map_err(|e| format!("create extractors dir: {e}"))?;
+                for e in fs::read_dir(&scm_dir).map_err(|e| format!("read parent extractors/: {e}"))? {
+                    let e = e.map_err(|e| e.to_string())?;
+                    let from = e.path();
+                    if from.is_file() {
+                        let to = dir.join("extractors").join(e.file_name());
+                        fs::copy(&from, &to).map_err(|e| format!("copy scm: {e}"))?;
+                        written.push(to);
+                    }
+                }
+            }
+            (child_yaml, pextr)
+        }
+        None => (default_profile, default_extractors),
+    };
+
     let conv_index = "{\n  \"schema_version\": \"1.0\",\n  \"topics\": []\n}\n";
     let recipe_index = "{\n  \"schema_version\": \"1.0\",\n  \"recipes\": []\n}\n";
-
     let files = [
-        (dir.join("profile.yaml"), profile_yaml.as_str()),
+        (dir.join("profile.yaml"), profile_yaml),
         (dir.join("extractors.yaml"), extractors_yaml),
-        (dir.join("conventions").join("_index.json"), conv_index),
-        (dir.join("recipes").join("_index.json"), recipe_index),
+        (dir.join("conventions").join("_index.json"), conv_index.to_string()),
+        (dir.join("recipes").join("_index.json"), recipe_index.to_string()),
     ];
-    let mut written = Vec::new();
     for (path, contents) in files {
-        fs::write(&path, contents).map_err(|e| format!("write {}: {e}", path.display()))?;
+        fs::write(&path, &contents).map_err(|e| format!("write {}: {e}", path.display()))?;
         written.push(path);
     }
+    written.sort();
     Ok(written)
 }
 
@@ -457,15 +518,53 @@ mod tests {
     #[test]
     fn new_then_validate_round_trips() {
         let kn = tempfile::tempdir().unwrap();
-        scaffold_new(kn.path(), "fresh").unwrap();
+        scaffold_new(kn.path(), "fresh", None).unwrap();
         let checks = validate(kn.path(), "fresh");
         for c in &checks {
             assert!(c.ok, "check '{}' failed: {}", c.name, c.detail);
         }
         // scaffolding again refuses
-        assert!(scaffold_new(kn.path(), "fresh").is_err());
+        assert!(scaffold_new(kn.path(), "fresh", None).is_err());
         // and the new profile shows up in list
         assert!(list(kn.path()).unwrap().iter().any(|(id, _)| id == "fresh"));
+    }
+
+    #[test]
+    fn scaffold_with_extends_seeds_manifest_and_inherits_knowledge() {
+        let kn = tempfile::tempdir().unwrap();
+        // parent with a real manifest + extractors + a convention
+        let p = kn.path().join("profiles").join("android-mvvm");
+        fs::create_dir_all(p.join("conventions")).unwrap();
+        fs::create_dir_all(p.join("recipes")).unwrap();
+        fs::write(p.join("profile.yaml"),
+            "schema_version: \"1.0\"\nid: android-mvvm\ntitle: \"MVVM\"\nlanguages: [kotlin]\nfact_families:\n  - { id: viewmodel, symbol: true }\nflows:\n  feature: [recipe(feature)]\nreview_map:\n  viewmodel: [architecture]\n").unwrap();
+        fs::write(p.join("extractors.yaml"), "families:\n  - id: viewmodel\n    regex: 'x'\n").unwrap();
+        fs::write(p.join("conventions/_index.json"),
+            r#"{"topics":[{"id":"architecture","title":"Arch","sections":[{"id":"layers","title":"Layers","tokens":10}]}]}"#).unwrap();
+        fs::write(p.join("conventions/architecture.md"), "# Arch\n## Layers {#layers}\nx\n").unwrap();
+        fs::write(p.join("recipes/_index.json"), r#"{"recipes":[]}"#).unwrap();
+
+        scaffold_new(kn.path(), "android-mvi", Some("android-mvvm")).unwrap();
+
+        let child_yaml = fs::read_to_string(kn.path().join("profiles/android-mvi/profile.yaml")).unwrap();
+        assert!(child_yaml.contains("id: android-mvi"));
+        assert!(child_yaml.contains("extends: android-mvvm"));
+        assert!(child_yaml.contains("viewmodel"), "manifest fact_families copy-seeded");
+        // knowledge left empty (live inheritance)
+        let conv_idx = fs::read_to_string(kn.path().join("profiles/android-mvi/conventions/_index.json")).unwrap();
+        assert!(conv_idx.contains("\"topics\": []"));
+        // child validates AND sees the inherited `architecture` topic via merge
+        for c in validate(kn.path(), "android-mvi") {
+            assert!(c.ok, "check '{}' failed: {}", c.name, c.detail);
+        }
+        let merged = crate::inherit::merged_conventions(kn.path(), "android-mvi").unwrap();
+        assert!(merged.iter().any(|t| t.id == "architecture"), "inherited topic visible");
+    }
+
+    #[test]
+    fn scaffold_with_missing_base_errors() {
+        let kn = tempfile::tempdir().unwrap();
+        assert!(scaffold_new(kn.path(), "child", Some("ghost")).is_err());
     }
 
     /// Minimal valid profile dir (profile.yaml + extractors.yaml + empty indexes).
