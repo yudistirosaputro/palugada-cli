@@ -24,10 +24,12 @@ pub fn knowledge_dir(global: &GlobalConfig) -> Result<PathBuf, String> {
     if let Some(found) = detect_knowledge_dir() {
         return Ok(found);
     }
-    Err("can't locate the knowledge/ directory — set `engine.knowledge_path` in \
+    Err(
+        "can't locate the knowledge/ directory — set `engine.knowledge_path` in \
 ~/.palugada.yaml or the PALUGADA_KNOWLEDGE env var (running `palugada config init` \
 from inside the palugada repo auto-detects it)"
-        .to_string())
+            .to_string(),
+    )
 }
 
 /// Best-effort auto-detection by walking up from the executable, then the cwd,
@@ -137,12 +139,6 @@ struct RecipeEntry {
     related_recipes: Vec<String>,
 }
 
-fn read_conv_index(kn: &Path, profile: &str) -> Result<ConvIndex, String> {
-    let p = kn.join("profiles").join(profile).join("conventions").join("_index.json");
-    let data = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
-    serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))
-}
-
 /// Read `<conv_dir>/_index.json`; a missing dir/file yields an empty index
 /// (a project with no convention overlay).
 fn read_conv_index_in(conv_dir: &Path) -> Result<ConvIndex, String> {
@@ -155,7 +151,14 @@ fn read_conv_index_in(conv_dir: &Path) -> Result<ConvIndex, String> {
 }
 
 fn read_recipe_index(kn: &Path, profile: &str) -> Result<RecipeIndex, String> {
-    let p = kn.join("profiles").join(profile).join("recipes").join("_index.json");
+    let p = kn
+        .join("profiles")
+        .join(profile)
+        .join("recipes")
+        .join("_index.json");
+    if !p.exists() {
+        return Ok(RecipeIndex::default());
+    }
     let data = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
     serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))
 }
@@ -255,7 +258,11 @@ pub fn convention_md(kn: &Path, profile: &str, id: &str) -> Result<String, Strin
 
 /// Raw markdown of one recipe file.
 pub fn recipe_md(kn: &Path, profile: &str, id: &str) -> Result<String, String> {
-    let p = kn.join("profiles").join(profile).join("recipes").join(format!("{id}.md"));
+    let p = kn
+        .join("profiles")
+        .join(profile)
+        .join("recipes")
+        .join(format!("{id}.md"));
     fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))
 }
 
@@ -312,7 +319,9 @@ pub fn slug(title: &str) -> String {
 
 fn validate_doc_id(id: &str) -> Result<(), String> {
     if id.is_empty()
-        || !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
     {
         return Err(format!("invalid id '{id}' — use only [a-z0-9_-]"));
     }
@@ -329,7 +338,12 @@ fn yaml_scalar(s: &str) -> String {
 }
 
 /// Insert-or-replace an object (matched by `id`) in a JSON index file's array.
-fn upsert_index(path: &Path, array_key: &str, id: &str, entry: serde_json::Value) -> Result<(), String> {
+fn upsert_index(
+    path: &Path,
+    array_key: &str,
+    id: &str,
+    entry: serde_json::Value,
+) -> Result<(), String> {
     let mut root: serde_json::Value = if path.exists() {
         serde_json::from_str(&fs::read_to_string(path).map_err(|e| e.to_string())?)
             .map_err(|e| format!("parse {}: {e}", path.display()))?
@@ -362,7 +376,12 @@ pub fn add_convention_in(dir: &Path, spec: &ConventionSpec) -> Result<(), String
     for s in &spec.sections {
         let sid = slug(&s.title);
         let tokens = s.body.len() / 4 + 8;
-        body.push_str(&format!("\n## {} {{#{}}}\n{}\n", s.title, sid, s.body.trim()));
+        body.push_str(&format!(
+            "\n## {} {{#{}}}\n{}\n",
+            s.title,
+            sid,
+            s.body.trim()
+        ));
         secs.push((sid, s.title.clone(), tokens, s.code));
     }
     let (fm_sections, index_sections) = render_sections(&secs);
@@ -438,22 +457,42 @@ pub fn add_convention_from_markdown(dir: &Path, raw: &str) -> Result<(String, bo
         .title
         .clone()
         .or_else(|| first_h1(body))
-        .ok_or_else(|| "convention needs a title: add a `title:` field or a `# Heading`".to_string())?;
+        .ok_or_else(|| {
+            "convention needs a title: add a `title:` field or a `# Heading`".to_string()
+        })?;
     let id = meta.id.clone().unwrap_or_else(|| slug(&title));
     validate_doc_id(&id)?;
     let secs: Vec<(String, String, usize, bool)> = sections(body)
         .iter()
-        .map(|s| (slug(&s.title), s.title.clone(), s.body.len() / 4 + 8, s.body.contains("```")))
+        .map(|s| {
+            (
+                slug(&s.title),
+                s.title.clone(),
+                s.body.len() / 4 + 8,
+                s.body.contains("```"),
+            )
+        })
         .collect();
     if secs.is_empty() {
-        eprintln!("warning: no `##` sections found in convention '{id}' — added with an empty outline");
+        eprintln!(
+            "warning: no `##` sections found in convention '{id}' — added with an empty outline"
+        );
     }
     let replaced = dir.join(format!("{id}.md")).exists();
     let (fm_sections, index_sections) = render_sections(&secs);
     // Inject `{#slug}` anchors so imported conventions match the hand-authored
     // anchored style (section ids already use slug(title), so they line up).
     let body_out = inject_anchors(body);
-    write_convention_files(dir, &id, &title, &meta.description, &meta.tags, &fm_sections, index_sections, &body_out)?;
+    write_convention_files(
+        dir,
+        &id,
+        &title,
+        &meta.description,
+        &meta.tags,
+        &fm_sections,
+        index_sections,
+        &body_out,
+    )?;
     Ok((id, replaced))
 }
 
@@ -461,7 +500,14 @@ pub fn add_convention_from_markdown(dir: &Path, raw: &str) -> Result<(String, bo
 pub fn add_recipe(kn: &Path, profile: &str, spec: &RecipeSpec) -> Result<(), String> {
     let dir = kn.join("profiles").join(profile).join("recipes");
     let body = format!("# {}\n\n{}\n", spec.title, spec.body.trim());
-    write_recipe_files(&dir, &spec.id, &spec.title, &spec.description, &spec.tags, &body)
+    write_recipe_files(
+        &dir,
+        &spec.id,
+        &spec.title,
+        &spec.description,
+        &spec.tags,
+        &body,
+    )
 }
 
 /// Write `<id>.md` (front-matter + the given body, verbatim) and upsert the
@@ -511,8 +557,17 @@ pub fn add_recipe_from_markdown(dir: &Path, raw: &str) -> Result<(String, bool),
 }
 
 /// Overwrite an existing convention's markdown verbatim (edit-only).
-pub fn set_convention_body(kn: &Path, profile: &str, id: &str, markdown: &str) -> Result<(), String> {
-    set_convention_body_in(&kn.join("profiles").join(profile).join("conventions"), id, markdown)
+pub fn set_convention_body(
+    kn: &Path,
+    profile: &str,
+    id: &str,
+    markdown: &str,
+) -> Result<(), String> {
+    set_convention_body_in(
+        &kn.join("profiles").join(profile).join("conventions"),
+        id,
+        markdown,
+    )
 }
 
 /// Overwrite an existing convention's markdown verbatim in an arbitrary dir
@@ -521,7 +576,10 @@ pub fn set_convention_body_in(conv_dir: &Path, id: &str, markdown: &str) -> Resu
     validate_doc_id(id)?;
     let p = conv_dir.join(format!("{id}.md"));
     if !p.exists() {
-        return Err(format!("convention '{id}' does not exist in {}", conv_dir.display()));
+        return Err(format!(
+            "convention '{id}' does not exist in {}",
+            conv_dir.display()
+        ));
     }
     fs::write(&p, markdown).map_err(|e| format!("write {}: {e}", p.display()))
 }
@@ -533,41 +591,69 @@ pub fn set_recipe_body(kn: &Path, profile: &str, id: &str, markdown: &str) -> Re
 
 /// Write `<dir>/<id>.md` verbatim; errors if it doesn't already exist (edit-only),
 /// leaving the `_index.json` metadata (title/description/tags) untouched.
-fn set_doc_body(kn: &Path, profile: &str, dir: &str, id: &str, markdown: &str) -> Result<(), String> {
+fn set_doc_body(
+    kn: &Path,
+    profile: &str,
+    dir: &str,
+    id: &str,
+    markdown: &str,
+) -> Result<(), String> {
     validate_doc_id(id)?;
-    let p = kn.join("profiles").join(profile).join(dir).join(format!("{id}.md"));
+    let p = kn
+        .join("profiles")
+        .join(profile)
+        .join(dir)
+        .join(format!("{id}.md"));
     if !p.exists() {
         let what = dir.strip_suffix('s').unwrap_or(dir);
-        return Err(format!("{what} '{id}' does not exist in profile '{profile}'"));
+        return Err(format!(
+            "{what} '{id}' does not exist in profile '{profile}'"
+        ));
     }
     fs::write(&p, markdown).map_err(|e| format!("write {}: {e}", p.display()))
 }
 
 // ── q: conventions ──────────────────────────────────────────────────────
 
+/// A section selector parsed off a `q` topic argument.
+enum Sel {
+    Index(usize),
+    Anchor(String),
+}
+
+/// "arch#data-flow" → ("arch", Anchor("data-flow")); "arch.2" → ("arch", Index(2));
+/// "arch" → ("arch", None).
+fn parse_topic_arg(arg: &str) -> (&str, Option<Sel>) {
+    if let Some((name, rest)) = arg.rsplit_once('#') {
+        if !rest.is_empty() {
+            return (name, Some(Sel::Anchor(rest.to_string())));
+        }
+    }
+    if let Some((name, rest)) = arg.rsplit_once('.') {
+        if let Ok(n) = rest.parse::<usize>() {
+            return (name, Some(Sel::Index(n)));
+        }
+    }
+    (arg, None)
+}
+
 pub fn list_topics(kn: &Path, profile: &str) -> Result<(), String> {
-    let idx = read_conv_index(kn, profile)?;
-    if idx.topics.is_empty() {
+    let topics = crate::inherit::merged_conventions(kn, profile)?; // defined in Task 4
+    if topics.is_empty() {
         println!("(no conventions in profile '{profile}')");
         return Ok(());
     }
     println!("Conventions in profile '{profile}':");
-    for t in &idx.topics {
+    for t in &topics {
         println!("  {:<16} {}", t.id, t.description);
     }
     Ok(())
 }
 
 pub fn query(kn: &Path, profile: &str, topic_arg: &str, brief: bool) -> Result<(), String> {
-    let (name, section) = parse_topic_arg(topic_arg);
-    let path = kn
-        .join("profiles")
-        .join(profile)
-        .join("conventions")
-        .join(format!("{name}.md"));
-    let raw = fs::read_to_string(&path).map_err(|e| {
-        format!("no convention '{name}' in profile '{profile}' ({}): {e}", path.display())
-    })?;
+    let (name, sel) = parse_topic_arg(topic_arg);
+    let raw = crate::inherit::resolve_convention_raw(kn, profile, name)?
+        .ok_or_else(|| format!("no convention '{name}' in profile '{profile}' or its parents"))?;
     let body = strip_frontmatter(&raw);
 
     if brief {
@@ -575,29 +661,42 @@ pub fn query(kn: &Path, profile: &str, topic_arg: &str, brief: bool) -> Result<(
         return Ok(());
     }
 
-    if let Some(n) = section {
-        let secs = sections(body);
-        let s = secs
-            .get(n.saturating_sub(1))
-            .ok_or_else(|| format!("section {n} not found in '{name}' (it has {})", secs.len()))?;
-        println!("## {}\n\n{}", s.title, s.body.trim());
-        return Ok(());
+    match sel {
+        Some(Sel::Index(n)) => {
+            let secs = crate::inherit::parse_sections(body);
+            let s = secs.get(n.saturating_sub(1)).ok_or_else(|| {
+                format!("section {n} not found in '{name}' (it has {})", secs.len())
+            })?;
+            println!("## {}\n\n{}", s.title, s.body.trim());
+        }
+        Some(Sel::Anchor(a)) => {
+            let secs = crate::inherit::parse_sections(body);
+            let s = secs.iter().find(|s| s.anchor == a).ok_or_else(|| {
+                format!(
+                    "section '#{a}' not found in '{name}' (sections: {})",
+                    secs.iter()
+                        .map(|s| s.anchor.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+            println!("## {}\n\n{}", s.title, s.body.trim());
+        }
+        None => println!("{}", body.trim()),
     }
-
-    println!("{}", body.trim());
     Ok(())
 }
 
 // ── for: recipes ──────────────────────────────────────────────────────────
 
 pub fn list_recipes(kn: &Path, profile: &str) -> Result<(), String> {
-    let idx = read_recipe_index(kn, profile)?;
-    if idx.recipes.is_empty() {
+    let recipes = crate::inherit::merged_recipes(kn, profile)?;
+    if recipes.is_empty() {
         println!("(no recipes in profile '{profile}')");
         return Ok(());
     }
     println!("Recipes in profile '{profile}':");
-    for r in &idx.recipes {
+    for r in &recipes {
         println!("  {:<16} {}", r.id, r.description);
     }
     Ok(())
@@ -631,9 +730,9 @@ pub fn convention_outline_in(conv_dir: &Path, name: &str) -> Result<String, Stri
 }
 
 pub fn convention_outline(kn: &Path, profile: &str, name: &str) -> Result<String, String> {
-    let conv_dir = kn.join("profiles").join(profile).join("conventions");
-    convention_outline_in(&conv_dir, name)
-        .map_err(|_| format!("no convention '{name}' in profile '{profile}'"))
+    let raw = crate::inherit::resolve_convention_raw(kn, profile, name)?
+        .ok_or_else(|| format!("no convention '{name}' in profile '{profile}'"))?;
+    Ok(convention_outline_str(&raw, name))
 }
 
 pub fn recipe_body(kn: &Path, profile: &str, task: &str) -> Result<String, String> {
@@ -653,30 +752,37 @@ pub fn search(kn: &Path, profile: &str, kw: &str) -> Result<(), String> {
     let needle = kw.to_lowercase();
     let mut hits = 0;
 
-    if let Ok(idx) = read_conv_index(kn, profile) {
-        for t in &idx.topics {
-            let hay = format!(
-                "{} {} {} {} {}",
-                t.id,
-                t.title,
-                t.description,
-                t.tags.join(" "),
-                t.sections.iter().map(|s| s.title.as_str()).collect::<Vec<_>>().join(" ")
-            )
-            .to_lowercase();
-            if hay.contains(&needle) {
-                println!("[convention] {:<16} {}", t.id, t.description);
-                hits += 1;
-            }
+    for t in crate::inherit::merged_conventions(kn, profile).unwrap_or_default() {
+        let hay = format!(
+            "{} {} {} {} {}",
+            t.id,
+            t.title,
+            t.description,
+            t.tags.join(" "),
+            t.sections
+                .iter()
+                .map(|s| s.title.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+        .to_lowercase();
+        if hay.contains(&needle) {
+            println!("[convention] {:<16} {}", t.id, t.description);
+            hits += 1;
         }
     }
-    if let Ok(idx) = read_recipe_index(kn, profile) {
-        for r in &idx.recipes {
-            let hay = format!("{} {} {} {}", r.id, r.title, r.description, r.tags.join(" ")).to_lowercase();
-            if hay.contains(&needle) {
-                println!("[recipe]     {:<16} {}", r.id, r.description);
-                hits += 1;
-            }
+    for r in crate::inherit::merged_recipes(kn, profile).unwrap_or_default() {
+        let hay = format!(
+            "{} {} {} {}",
+            r.id,
+            r.title,
+            r.description,
+            r.tags.join(" ")
+        )
+        .to_lowercase();
+        if hay.contains(&needle) {
+            println!("[recipe]     {:<16} {}", r.id, r.description);
+            hits += 1;
         }
     }
     if hits == 0 {
@@ -692,18 +798,8 @@ struct Section {
     body: String,
 }
 
-/// Split "architecture.2" → ("architecture", Some(2)); "architecture" → (_, None).
-fn parse_topic_arg(arg: &str) -> (&str, Option<usize>) {
-    if let Some((name, rest)) = arg.rsplit_once('.') {
-        if let Ok(n) = rest.parse::<usize>() {
-            return (name, Some(n));
-        }
-    }
-    (arg, None)
-}
-
 /// Return the markdown body with the leading YAML front-matter removed.
-fn strip_frontmatter(raw: &str) -> &str {
+pub fn strip_frontmatter(raw: &str) -> &str {
     let t = raw.trim_start();
     if let Some(rest) = t.strip_prefix("---") {
         if let Some(idx) = rest.find("\n---") {
@@ -718,7 +814,7 @@ fn strip_frontmatter(raw: &str) -> &str {
 }
 
 /// Read a single scalar field out of the YAML front-matter (best-effort).
-fn frontmatter_field(raw: &str, key: &str) -> Option<String> {
+pub fn frontmatter_field(raw: &str, key: &str) -> Option<String> {
     let t = raw.trim_start();
     let rest = t.strip_prefix("---")?;
     let idx = rest.find("\n---")?;
@@ -817,11 +913,17 @@ pub struct ConventionDraft {
 
 /// `# Heading` (level-1) but not `## ...`.
 fn is_h1(line: &str) -> bool {
-    line.trim_start().strip_prefix("# ").map(|r| !r.trim().is_empty()).unwrap_or(false)
+    line.trim_start()
+        .strip_prefix("# ")
+        .map(|r| !r.trim().is_empty())
+        .unwrap_or(false)
 }
 
 fn h1_text(line: &str) -> String {
-    line.trim_start().strip_prefix("# ").map(|s| s.trim().to_string()).unwrap_or_default()
+    line.trim_start()
+        .strip_prefix("# ")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Split a markdown document into candidate conventions, one per `# H1`
@@ -846,10 +948,19 @@ pub fn split_markdown_conventions(raw: &str) -> Vec<ConventionDraft> {
 
     if h1_idx.is_empty() {
         let title = file_meta.title.unwrap_or_default();
-        let id = if title.is_empty() { String::new() } else { slug(&title) };
+        let id = if title.is_empty() {
+            String::new()
+        } else {
+            slug(&title)
+        };
         let b = body.trim().to_string();
         let secs = sections(&b).into_iter().map(|s| s.title).collect();
-        return vec![ConventionDraft { id, title, sections: secs, body: b }];
+        return vec![ConventionDraft {
+            id,
+            title,
+            sections: secs,
+            body: b,
+        }];
     }
 
     let mut drafts = Vec::new();
@@ -859,7 +970,12 @@ pub fn split_markdown_conventions(raw: &str) -> Vec<ConventionDraft> {
         let id = slug(&title);
         let piece_body = lines[start + 1..end].join("\n").trim().to_string();
         let secs = sections(&piece_body).into_iter().map(|s| s.title).collect();
-        drafts.push(ConventionDraft { id, title, sections: secs, body: piece_body });
+        drafts.push(ConventionDraft {
+            id,
+            title,
+            sections: secs,
+            body: piece_body,
+        });
     }
     drafts
 }
@@ -880,7 +996,10 @@ fn sections(body: &str) -> Vec<Section> {
                     out.push(s);
                 }
                 let title = rest.split("{#").next().unwrap_or(rest).trim().to_string();
-                cur = Some(Section { title, body: String::new() });
+                cur = Some(Section {
+                    title,
+                    body: String::new(),
+                });
                 continue;
             }
         }
@@ -909,13 +1028,26 @@ mod tests {
     fn set_body_overwrites_verbatim_and_guards() {
         let kn = tempfile::tempdir().unwrap();
         let kp = kn.path();
-        add_convention(kp, "p", &ConventionSpec {
-            id: "arch".into(), title: "Arch".into(), description: "d".into(),
-            tags: vec!["t".into()],
-            sections: vec![SectionSpec { title: "S".into(), body: "old".into(), code: false }],
-        }).unwrap();
+        add_convention(
+            kp,
+            "p",
+            &ConventionSpec {
+                id: "arch".into(),
+                title: "Arch".into(),
+                description: "d".into(),
+                tags: vec!["t".into()],
+                sections: vec![SectionSpec {
+                    title: "S".into(),
+                    body: "old".into(),
+                    code: false,
+                }],
+            },
+        )
+        .unwrap();
         set_convention_body(kp, "p", "arch", "# brand new body\n").unwrap();
-        assert!(convention_md(kp, "p", "arch").unwrap().contains("brand new body"));
+        assert!(convention_md(kp, "p", "arch")
+            .unwrap()
+            .contains("brand new body"));
         // _index.json metadata preserved
         let cs = conventions(kp, "p").unwrap();
         let arch = cs.iter().find(|c| c.id == "arch").unwrap();
@@ -924,9 +1056,18 @@ mod tests {
         // edit-only guard
         assert!(set_convention_body(kp, "p", "missing", "x").is_err());
 
-        add_recipe(kp, "p", &RecipeSpec {
-            id: "pag".into(), title: "Pag".into(), description: "".into(), tags: vec![], body: "steps".into(),
-        }).unwrap();
+        add_recipe(
+            kp,
+            "p",
+            &RecipeSpec {
+                id: "pag".into(),
+                title: "Pag".into(),
+                description: "".into(),
+                tags: vec![],
+                body: "steps".into(),
+            },
+        )
+        .unwrap();
         set_recipe_body(kp, "p", "pag", "# r\nfresh\n").unwrap();
         assert!(recipe_md(kp, "p", "pag").unwrap().contains("fresh"));
         assert!(set_recipe_body(kp, "p", "nope", "x").is_err());
@@ -937,7 +1078,11 @@ mod tests {
         let kn = tempfile::tempdir().unwrap();
         let c = kn.path().join("profiles").join("p").join("conventions");
         std::fs::create_dir_all(&c).unwrap();
-        std::fs::write(c.join("_index.json"), r#"{"schema_version":"1.0","topics":[]}"#).unwrap();
+        std::fs::write(
+            c.join("_index.json"),
+            r#"{"schema_version":"1.0","topics":[]}"#,
+        )
+        .unwrap();
         let spec = ConventionSpec {
             id: "errorhandling".into(),
             title: "Error Handling".into(),
@@ -951,12 +1096,19 @@ mod tests {
         };
         add_convention(kn.path(), "p", &spec).unwrap();
         let md = convention_md(kn.path(), "p", "errorhandling").unwrap();
-        assert!(md.contains("## Modeling Failures {#modeling-failures}"), "{md}");
+        assert!(
+            md.contains("## Modeling Failures {#modeling-failures}"),
+            "{md}"
+        );
         assert!(md.contains("id: errorhandling"));
         let topics = conventions(kn.path(), "p").unwrap();
         assert_eq!(topics.len(), 1);
         assert_eq!(
-            topics[0].sections.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+            topics[0]
+                .sections
+                .iter()
+                .map(|s| s.title.clone())
+                .collect::<Vec<_>>(),
             vec!["Modeling Failures".to_string()]
         );
         assert_eq!(topics[0].sections[0].id, "modeling-failures");
@@ -976,7 +1128,10 @@ mod tests {
         assert_eq!(v.len(), 1);
         assert_eq!(v[0].id, "arch");
         assert_eq!(
-            v[0].sections.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+            v[0].sections
+                .iter()
+                .map(|s| s.title.clone())
+                .collect::<Vec<_>>(),
             vec!["Overview".to_string()]
         );
         assert_eq!(v[0].sections[0].id, "o");
@@ -998,14 +1153,20 @@ mod tests {
             title: "Ours".into(),
             description: "team rule".into(),
             tags: vec!["kt".into()],
-            sections: vec![SectionSpec { title: "Rule".into(), body: "do X".into(), code: false }],
+            sections: vec![SectionSpec {
+                title: "Rule".into(),
+                body: "do X".into(),
+                code: false,
+            }],
         };
         add_convention_in(&dir, &spec).unwrap();
         let metas = conventions_in(&dir).unwrap();
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].id, "ours");
         assert!(convention_md_in(&dir, "ours").unwrap().contains("do X"));
-        assert!(convention_outline_in(&dir, "ours").unwrap().contains("team rule"));
+        assert!(convention_outline_in(&dir, "ours")
+            .unwrap()
+            .contains("team rule"));
 
         set_convention_body_in(&dir, "ours", "---\nid: ours\n---\n# Ours\nnew body\n").unwrap();
         assert!(convention_md_in(&dir, "ours").unwrap().contains("new body"));
@@ -1018,7 +1179,12 @@ mod tests {
     fn sections_ignores_headers_inside_code_fences() {
         let body = "## One\ntext\n```sh\n## not a header\n```\nmore\n## Two\nend\n";
         let secs = sections(body);
-        assert_eq!(secs.len(), 2, "{:?}", secs.iter().map(|s| &s.title).collect::<Vec<_>>());
+        assert_eq!(
+            secs.len(),
+            2,
+            "{:?}",
+            secs.iter().map(|s| &s.title).collect::<Vec<_>>()
+        );
         assert_eq!(secs[0].title, "One");
         assert!(secs[0].body.contains("## not a header"));
         assert_eq!(secs[1].title, "Two");
@@ -1049,11 +1215,17 @@ mod tests {
         let m = metas.iter().find(|c| c.id == "error-handling").unwrap();
         assert_eq!(m.title, "Error Handling");
         assert_eq!(
-            m.sections.iter().map(|s| s.title.clone()).collect::<Vec<_>>(),
+            m.sections
+                .iter()
+                .map(|s| s.title.clone())
+                .collect::<Vec<_>>(),
             vec!["Result Type".to_string(), "With Code".to_string()]
         );
         let md = convention_md_in(&dir, "error-handling").unwrap();
-        assert!(md.contains("> summary"), "verbatim body must keep the blockquote: {md}");
+        assert!(
+            md.contains("> summary"),
+            "verbatim body must keep the blockquote: {md}"
+        );
         assert!(md.contains("## Result Type"));
         let (_id2, replaced2) = add_convention_from_markdown(&dir, raw).unwrap();
         assert!(replaced2);
@@ -1114,10 +1286,19 @@ mod tests {
         let raw = "---\ntitle: T\n---\n\n# T\n\n## A Section\nbody\n\n## Pre Anchored {#custom}\nx\n\n```\n## not a heading\n```\n";
         add_convention_from_markdown(&dir, raw).unwrap();
         let md = convention_md_in(&dir, "t").unwrap();
-        assert!(md.contains("## A Section {#a-section}"), "h2 without anchor gets one: {md}");
-        assert!(md.contains("## Pre Anchored {#custom}"), "existing anchor preserved");
+        assert!(
+            md.contains("## A Section {#a-section}"),
+            "h2 without anchor gets one: {md}"
+        );
+        assert!(
+            md.contains("## Pre Anchored {#custom}"),
+            "existing anchor preserved"
+        );
         assert!(md.contains("## not a heading\n"), "fenced ## kept");
-        assert!(!md.contains("## not a heading {#"), "fenced ## must NOT be anchored");
+        assert!(
+            !md.contains("## not a heading {#"),
+            "fenced ## must NOT be anchored"
+        );
     }
 
     #[test]
@@ -1141,7 +1322,9 @@ mod tests {
         assert!(md.contains("step 1"));
         let idx = std::fs::read_to_string(dir.join("_index.json")).unwrap();
         assert!(idx.contains("scaffold-x"));
-        assert!(add_recipe_from_markdown(&dir, raw).unwrap().1, "re-import → replaced");
+        assert!(
+            add_recipe_from_markdown(&dir, raw).unwrap().1,
+            "re-import → replaced"
+        );
     }
-
 }

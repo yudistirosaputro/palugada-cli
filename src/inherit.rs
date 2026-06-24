@@ -2,6 +2,7 @@
 //! and merge inherited conventions/recipes. A profile with no `extends` has a
 //! chain of `[self]`, so every resolver here is a no-op for flat profiles.
 
+use crate::knowledge::{RecipeMeta, SectionMeta, TopicMeta};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -11,7 +12,6 @@ pub const MAX_DEPTH: usize = 8;
 /// Read just the `extends:` scalar from `<id>/profile.yaml` (None if absent,
 /// empty, unreadable, or unparseable — a malformed parent simply ends the chain
 /// and is surfaced separately by `profile validate`).
-#[allow(dead_code)] // temporary: consumed by Task 2 merge logic
 pub fn read_extends(kn: &Path, id: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
     struct E {
@@ -27,7 +27,6 @@ pub fn read_extends(kn: &Path, id: &str) -> Option<String> {
 /// The `extends` chain for `id`, most-derived first: `[id, parent, ...]`.
 /// Errors on a missing profile in the chain, a cycle, or a chain deeper than
 /// `MAX_DEPTH`.
-#[allow(dead_code)] // temporary: consumed by Task 2 merge logic
 pub fn resolve_chain(kn: &Path, id: &str) -> Result<Vec<String>, String> {
     let mut chain: Vec<String> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -38,21 +37,24 @@ pub fn resolve_chain(kn: &Path, id: &str) -> Result<Vec<String>, String> {
             path.push(cur.clone());
             return Err(format!("inheritance cycle: {}", path.join(" \u{2192} ")));
         }
-        if !kn
-            .join("profiles")
-            .join(&cur)
-            .join("profile.yaml")
-            .is_file()
-        {
-            return match chain.last() {
-                Some(child) => Err(format!(
-                    "profile '{child}' extends '{cur}' which does not exist"
-                )),
-                None => Err(format!(
-                    "profile '{cur}' has no profile.yaml at {}",
-                    kn.join("profiles").join(&cur).display()
-                )),
-            };
+        let profile_dir = kn.join("profiles").join(&cur);
+        let yaml_path = profile_dir.join("profile.yaml");
+        // If profile.yaml is absent but the profile dir exists, treat as no-extends
+        // (backward-compat: profiles created before profile.yaml was required still work).
+        // If neither the yaml nor the dir exists, and we arrived via an extends reference,
+        // that is a user error.
+        if !yaml_path.is_file() {
+            if chain.is_empty() {
+                // Starting profile — no profile.yaml is tolerated (chain = [self]).
+                chain.push(cur.clone());
+                break;
+            } else {
+                // A parent referenced via extends must have a profile.yaml.
+                return Err(format!(
+                    "profile '{}' extends '{cur}' which does not exist",
+                    chain.last().unwrap()
+                ));
+            }
         }
         chain.push(cur.clone());
         if chain.len() > MAX_DEPTH {
@@ -70,7 +72,6 @@ pub fn resolve_chain(kn: &Path, id: &str) -> Result<Vec<String>, String> {
 
 /// One `## Heading {#anchor}` section of a convention body.
 #[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)] // temporary: consumed by later tasks
 pub struct MergedSection {
     /// The `{#anchor}` id; falls back to `slug(title)` when no explicit anchor.
     pub anchor: String,
@@ -82,7 +83,6 @@ pub struct MergedSection {
 /// A convention body split into its leading preamble (everything before the
 /// first `## ` — typically the `# H1` + any intro prose) and its sections.
 #[derive(Clone, Debug, PartialEq)]
-#[allow(dead_code)] // temporary: consumed by later tasks
 pub struct ParsedConvention {
     pub preamble: String,
     pub sections: Vec<MergedSection>,
@@ -90,7 +90,6 @@ pub struct ParsedConvention {
 
 /// Parse a (front-matter-stripped) convention body. Fence-aware: `## ` lines
 /// inside ``` fences are body text, not headings.
-#[allow(dead_code)] // temporary: consumed by later tasks
 pub fn parse_convention(body: &str) -> ParsedConvention {
     let mut preamble = String::new();
     let mut sections: Vec<MergedSection> = Vec::new();
@@ -141,7 +140,6 @@ pub fn parse_convention(body: &str) -> ParsedConvention {
 }
 
 /// Just the sections of a convention body (anchor-aware).
-#[allow(dead_code)] // temporary: consumed by later tasks
 pub fn parse_sections(body: &str) -> Vec<MergedSection> {
     parse_convention(body).sections
 }
@@ -150,7 +148,6 @@ pub fn parse_sections(body: &str) -> Vec<MergedSection> {
 /// `levels[0]` is the most-distant ancestor that defines the topic, the last is
 /// the most-derived. Spine = `levels[0]`'s order; later levels replace matching
 /// anchors in place and append new anchors (in that level's file order).
-#[allow(dead_code)] // temporary: consumed by later tasks
 fn merge_section_lists(levels: &[Vec<MergedSection>]) -> Vec<MergedSection> {
     let mut order: Vec<String> = Vec::new();
     let mut by_id: BTreeMap<String, MergedSection> = BTreeMap::new();
@@ -168,6 +165,148 @@ fn merge_section_lists(levels: &[Vec<MergedSection>]) -> Vec<MergedSection> {
         .into_iter()
         .filter_map(|id| by_id.remove(&id))
         .collect()
+}
+
+// ── Task 3: resolve a single convention across the chain ─────────────────────
+
+/// Resolve a convention `topic` for `profile` across its `extends` chain into a
+/// single synthetic markdown string (front-matter + `# H1`/preamble + merged
+/// `## ` sections). A topic defined at exactly one level is returned verbatim.
+pub fn resolve_convention_raw(
+    kn: &Path,
+    profile: &str,
+    topic: &str,
+) -> Result<Option<String>, String> {
+    let chain = resolve_chain(kn, profile)?;
+    // Collect the raw .md from each chain level that defines the topic, child first.
+    let mut present: Vec<String> = Vec::new();
+    for p in &chain {
+        let md = kn
+            .join("profiles")
+            .join(p)
+            .join("conventions")
+            .join(format!("{topic}.md"));
+        if let Ok(raw) = std::fs::read_to_string(&md) {
+            present.push(raw);
+        }
+    }
+    if present.is_empty() {
+        return Ok(None);
+    }
+    if present.len() == 1 {
+        return Ok(Some(present.remove(0))); // verbatim — no merge, no regression
+    }
+    // Merge ancestor→descendant (present is child-first, so iterate reversed).
+    let parsed: Vec<ParsedConvention> = present
+        .iter()
+        .rev()
+        .map(|raw| parse_convention(crate::knowledge::strip_frontmatter(raw)))
+        .collect();
+    let levels: Vec<Vec<MergedSection>> = parsed.iter().map(|p| p.sections.clone()).collect();
+    let merged = merge_section_lists(&levels);
+    let preamble = parsed
+        .last()
+        .map(|p| p.preamble.clone())
+        .unwrap_or_default();
+    // Metadata from the most-derived (child-first => present[0]) definition.
+    let child_raw = &present[0];
+    let title = crate::knowledge::frontmatter_field(child_raw, "title").unwrap_or_default();
+    let description =
+        crate::knowledge::frontmatter_field(child_raw, "description").unwrap_or_default();
+    Ok(Some(render_merged(
+        topic,
+        &title,
+        &description,
+        &preamble,
+        &merged,
+    )))
+}
+
+/// Reassemble a merged convention into a front-matter-bearing markdown string.
+fn render_merged(
+    topic: &str,
+    title: &str,
+    description: &str,
+    preamble: &str,
+    secs: &[MergedSection],
+) -> String {
+    let mut out = format!("---\nid: {topic}\ntitle: {title}\ndescription: {description}\n---\n\n");
+    out.push_str(preamble.trim_end());
+    out.push('\n');
+    for s in secs {
+        out.push_str(&format!(
+            "\n## {} {{#{}}}\n{}\n",
+            s.title,
+            s.anchor,
+            s.body.trim_end()
+        ));
+    }
+    out
+}
+
+// ── Task 4: merged index helpers ─────────────────────────────────────────────
+
+/// Merge two section-meta lists by id (descendant overrides in place, appends new).
+fn merge_section_metas(base: &[SectionMeta], over: &[SectionMeta]) -> Vec<SectionMeta> {
+    let mut order: Vec<String> = base.iter().map(|s| s.id.clone()).collect();
+    let mut by: BTreeMap<String, SectionMeta> =
+        base.iter().map(|s| (s.id.clone(), s.clone())).collect();
+    for s in over {
+        if !by.contains_key(&s.id) {
+            order.push(s.id.clone());
+        }
+        by.insert(s.id.clone(), s.clone());
+    }
+    order.into_iter().filter_map(|id| by.remove(&id)).collect()
+}
+
+/// Merged convention catalog across the chain: union by topic id (child wins
+/// metadata), with each topic's sections merged by section id.
+pub fn merged_conventions(kn: &Path, profile: &str) -> Result<Vec<TopicMeta>, String> {
+    let chain = resolve_chain(kn, profile)?;
+    let mut order: Vec<String> = Vec::new();
+    let mut by_id: BTreeMap<String, TopicMeta> = BTreeMap::new();
+    for p in chain.iter().rev() {
+        // root → child
+        for t in crate::knowledge::conventions(kn, p)? {
+            match by_id.get_mut(&t.id) {
+                Some(existing) => {
+                    existing.sections = merge_section_metas(&existing.sections, &t.sections);
+                    existing.title = t.title;
+                    existing.description = t.description;
+                    existing.tags = t.tags;
+                    existing.related = t.related;
+                }
+                None => {
+                    order.push(t.id.clone());
+                    by_id.insert(t.id.clone(), t);
+                }
+            }
+        }
+    }
+    Ok(order
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect())
+}
+
+/// Merged recipe catalog across the chain: whole-recipe override by id.
+pub fn merged_recipes(kn: &Path, profile: &str) -> Result<Vec<RecipeMeta>, String> {
+    let chain = resolve_chain(kn, profile)?;
+    let mut order: Vec<String> = Vec::new();
+    let mut by_id: BTreeMap<String, RecipeMeta> = BTreeMap::new();
+    for p in chain.iter().rev() {
+        for r in crate::knowledge::recipes(kn, p)? {
+            if !by_id.contains_key(&r.id) {
+                order.push(r.id.clone());
+            }
+            by_id.insert(r.id.clone(), r);
+        }
+    }
+    Ok(order
+        .into_iter()
+        .filter_map(|id| by_id.remove(&id))
+        .collect())
 }
 
 #[cfg(test)]
@@ -308,5 +447,165 @@ mod tests {
             merged.iter().find(|s| s.anchor == "b").unwrap().body,
             "child-b"
         );
+    }
+
+    // ── Task 3 tests: resolve_convention_raw ────────────────────────────────
+
+    /// Author a convention `<topic>.md` directly under a profile (no index needed
+    /// for resolve_convention_raw, which reads the .md files).
+    fn conv(kn: &Path, profile: &str, topic: &str, md: &str) {
+        let dir = kn.join("profiles").join(profile).join("conventions");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{topic}.md")), md).unwrap();
+    }
+
+    #[test]
+    fn flat_profile_convention_returned_verbatim() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "p", None);
+        let md = "---\nid: arch\ntitle: Arch\n---\n\n# Arch\n> intro\n\n## Layers {#layers}\nL\n";
+        conv(kn.path(), "p", "arch", md);
+        assert_eq!(
+            resolve_convention_raw(kn.path(), "p", "arch")
+                .unwrap()
+                .as_deref(),
+            Some(md)
+        );
+    }
+
+    #[test]
+    fn child_overrides_one_section_inherits_rest() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "android-mvvm", None);
+        profile(kn.path(), "android-mvi", Some("android-mvvm"));
+        conv(kn.path(), "android-mvvm", "architecture",
+            "---\nid: architecture\ntitle: Architecture\n---\n\n# Architecture\n\n## Layers {#layers}\nlayers body\n\n## Data Flow {#data-flow}\nLiveData wiring\n");
+        conv(kn.path(), "android-mvi", "architecture",
+            "---\nid: architecture\ntitle: Architecture\n---\n\n# Architecture\n\n## Data Flow {#data-flow}\nStateFlow + reducer\n");
+        let raw = resolve_convention_raw(kn.path(), "android-mvi", "architecture")
+            .unwrap()
+            .unwrap();
+        assert!(
+            raw.contains("## Layers {#layers}"),
+            "inherited section kept: {raw}"
+        );
+        assert!(raw.contains("layers body"));
+        assert!(
+            raw.contains("StateFlow + reducer"),
+            "child override wins: {raw}"
+        );
+        assert!(
+            !raw.contains("LiveData wiring"),
+            "parent's data-flow body replaced: {raw}"
+        );
+        // order: Layers before Data Flow (spine preserved)
+        assert!(raw.find("{#layers}").unwrap() < raw.find("{#data-flow}").unwrap());
+    }
+
+    #[test]
+    fn inherited_only_topic_is_verbatim_from_parent() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "android-mvvm", None);
+        profile(kn.path(), "android-mvi", Some("android-mvvm"));
+        let md = "---\nid: testing\ntitle: Testing\n---\n\n# Testing\n## Unit {#unit}\nx\n";
+        conv(kn.path(), "android-mvvm", "testing", md);
+        assert_eq!(
+            resolve_convention_raw(kn.path(), "android-mvi", "testing")
+                .unwrap()
+                .as_deref(),
+            Some(md)
+        );
+    }
+
+    #[test]
+    fn absent_topic_is_none() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "p", None);
+        assert_eq!(
+            resolve_convention_raw(kn.path(), "p", "nope").unwrap(),
+            None
+        );
+    }
+
+    // ── Task 4 tests: merged_conventions / merged_recipes ────────────────────
+
+    fn conv_indexed(kn: &Path, profile: &str, topic: &str, sections: &[(&str, &str)]) {
+        // Writes <topic>.md AND a matching _index.json entry via knowledge writers.
+        let dir = kn.join("profiles").join(profile).join("conventions");
+        let specs: Vec<crate::knowledge::SectionSpec> = sections
+            .iter()
+            .map(|(_, title)| crate::knowledge::SectionSpec {
+                title: (*title).into(),
+                body: "b".into(),
+                code: false,
+            })
+            .collect();
+        crate::knowledge::add_convention_in(
+            &dir,
+            &crate::knowledge::ConventionSpec {
+                id: topic.into(),
+                title: topic.into(),
+                description: format!("{topic} desc"),
+                tags: vec![],
+                sections: specs,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn merged_conventions_union_child_wins_and_merges_sections() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "base", None);
+        profile(kn.path(), "child", Some("base"));
+        conv_indexed(
+            kn.path(),
+            "base",
+            "architecture",
+            &[("layers", "Layers"), ("data-flow", "Data Flow")],
+        );
+        conv_indexed(kn.path(), "base", "testing", &[("unit", "Unit")]);
+        conv_indexed(
+            kn.path(),
+            "child",
+            "architecture",
+            &[("data-flow", "Data Flow"), ("reducer", "Reducer")],
+        );
+
+        let merged = merged_conventions(kn.path(), "child").unwrap();
+        let ids: Vec<&str> = merged.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"architecture") && ids.contains(&"testing"));
+        let arch = merged.iter().find(|t| t.id == "architecture").unwrap();
+        let secs: Vec<&str> = arch.sections.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(secs, vec!["layers", "data-flow", "reducer"]); // spine + appended override-set
+    }
+
+    #[test]
+    fn merged_recipes_union_child_overrides_whole() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "base", None);
+        profile(kn.path(), "child", Some("base"));
+        let bdir = kn.path().join("profiles/base/recipes");
+        let cdir = kn.path().join("profiles/child/recipes");
+        crate::knowledge::add_recipe_from_markdown(
+            &bdir,
+            "---\nid: feature\ntitle: Base Feature\n---\n# F\nbase\n",
+        )
+        .unwrap();
+        crate::knowledge::add_recipe_from_markdown(
+            &bdir,
+            "---\nid: refactor\ntitle: Refactor\n---\n# R\nr\n",
+        )
+        .unwrap();
+        crate::knowledge::add_recipe_from_markdown(
+            &cdir,
+            "---\nid: feature\ntitle: Child Feature\n---\n# F\nchild\n",
+        )
+        .unwrap();
+
+        let merged = merged_recipes(kn.path(), "child").unwrap();
+        assert_eq!(merged.len(), 2);
+        let feature = merged.iter().find(|r| r.id == "feature").unwrap();
+        assert_eq!(feature.title, "Child Feature"); // child wins
     }
 }
