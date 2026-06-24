@@ -244,6 +244,25 @@ fn render_merged(
     out
 }
 
+// ── Task 5: recipe resolution across the chain ───────────────────────────────
+
+/// Resolve a recipe's raw markdown across the chain: the nearest level (child
+/// first) that defines `<task>.md` wins whole. `None` if absent everywhere.
+pub fn resolve_recipe_raw(kn: &Path, profile: &str, task: &str) -> Result<Option<String>, String> {
+    let chain = resolve_chain(kn, profile)?;
+    for p in &chain {
+        let path = kn
+            .join("profiles")
+            .join(p)
+            .join("recipes")
+            .join(format!("{task}.md"));
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            return Ok(Some(raw));
+        }
+    }
+    Ok(None)
+}
+
 // ── Task 4: merged index helpers ─────────────────────────────────────────────
 
 /// Merge two section-meta lists by id (descendant overrides in place, appends new).
@@ -578,6 +597,44 @@ mod tests {
         let arch = merged.iter().find(|t| t.id == "architecture").unwrap();
         let secs: Vec<&str> = arch.sections.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(secs, vec!["layers", "data-flow", "reducer"]); // spine + appended override-set
+    }
+
+    // ── Task 5 tests: resolve_recipe_raw ────────────────────────────────────
+
+    #[test]
+    fn recipe_inherited_then_overridden() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "base", None);
+        profile(kn.path(), "child", Some("base"));
+        let bdir = kn.path().join("profiles/base/recipes");
+        std::fs::create_dir_all(&bdir).unwrap();
+        std::fs::write(
+            bdir.join("feature.md"),
+            "---\nid: feature\n---\n# F\nbase steps\n",
+        )
+        .unwrap();
+        // inherited
+        assert!(resolve_recipe_raw(kn.path(), "child", "feature")
+            .unwrap()
+            .unwrap()
+            .contains("base steps"));
+        // overridden by child
+        let cdir = kn.path().join("profiles/child/recipes");
+        std::fs::create_dir_all(&cdir).unwrap();
+        std::fs::write(
+            cdir.join("feature.md"),
+            "---\nid: feature\n---\n# F\nchild steps\n",
+        )
+        .unwrap();
+        assert!(resolve_recipe_raw(kn.path(), "child", "feature")
+            .unwrap()
+            .unwrap()
+            .contains("child steps"));
+        // absent
+        assert_eq!(
+            resolve_recipe_raw(kn.path(), "child", "nope").unwrap(),
+            None
+        );
     }
 
     #[test]

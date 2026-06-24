@@ -736,13 +736,8 @@ pub fn convention_outline(kn: &Path, profile: &str, name: &str) -> Result<String
 }
 
 pub fn recipe_body(kn: &Path, profile: &str, task: &str) -> Result<String, String> {
-    let path = kn
-        .join("profiles")
-        .join(profile)
-        .join("recipes")
-        .join(format!("{task}.md"));
-    let raw = fs::read_to_string(&path)
-        .map_err(|e| format!("no recipe '{task}' in profile '{profile}': {e}"))?;
+    let raw = crate::inherit::resolve_recipe_raw(kn, profile, task)?
+        .ok_or_else(|| format!("no recipe '{task}' in profile '{profile}' or its parents"))?;
     Ok(strip_frontmatter(&raw).trim().to_string())
 }
 
