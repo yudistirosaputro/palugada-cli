@@ -205,7 +205,12 @@ async function renderDoc(meta, kind, profileId, anchor) {
     meta.sections.forEach((s, i) => {
       const sid = s.id || slugify(s.title);
       const tok = s.tokens ? ` <span class="hint">~${s.tokens} tok</span>` : "";
-      const stepRowEl = h(`<div class="step" style="cursor:pointer"><span class="num">${i + 1}</span><span class="id-chip">#${esc(sid)}</span> <span class="arg">${esc(s.title)}</span>${tok}</div>`);
+      const sectionBadge = s.origin === "inherited"
+        ? ` <span class="sticker">${esc("inherited · " + (s.from || ""))}</span>`
+        : s.origin === "overridden"
+        ? ` <span class="sticker">overridden</span>`
+        : "";
+      const stepRowEl = h(`<div class="step" style="cursor:pointer"><span class="num">${i + 1}</span><span class="id-chip">#${esc(sid)}</span> <span class="arg">${esc(s.title)}</span>${tok}${sectionBadge}</div>`);
       stepRowEl.onclick = () => {
         const el = prose.querySelector("#sec-" + (window.CSS && CSS.escape ? CSS.escape(sid) : sid));
         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -686,7 +691,12 @@ function docRow(meta, kind, profileId) {
   const metaBits = kind === "convention"
     ? `${(meta.sections || []).length} sections`
     : `${(meta.convention_refs || []).length} refs`;
-  const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span> <span class="meta">· ${metaBits}</span><span class="actions"><a class="link">View</a></span></div>`);
+  const originBadge = meta.origin === "inherited"
+    ? ` <span class="sticker">${esc("inherited · " + (meta.from || ""))}</span>`
+    : meta.origin === "overridden"
+    ? ` <span class="sticker">overridden</span>`
+    : "";
+  const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span>${originBadge} <span class="meta">· ${metaBits}</span><span class="actions"><a class="link">View</a></span></div>`);
   row.querySelector("a").onclick = () => renderDoc(meta, kind, profileId, row);
   return row;
 }
@@ -697,6 +707,10 @@ async function renderProfileDetail(id) {
   let d;
   try { d = await api("/api/profile/" + encodeURIComponent(id)); }
   catch (e) { toast(e.message, true); return; }
+
+  if (d.extends) {
+    view.appendChild(h(`<div class="muted" style="margin:-8px 0 12px">extends <span class="id-chip">${esc(d.extends)}</span></div>`));
+  }
 
   // ── Browse: conventions ──
   const cv = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${d.conventions.length}</span></div>
