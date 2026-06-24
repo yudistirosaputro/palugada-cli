@@ -12,6 +12,7 @@ mod effective;
 mod exec;
 mod http;
 mod indexer;
+mod inherit;
 mod knowledge;
 mod personal;
 mod profile;
@@ -23,7 +24,11 @@ use clap::{Parser, Subcommand};
 use config::{mask_secret, resolve_project, GlobalConfig, ProjectEntry, Secrets};
 
 #[derive(Parser)]
-#[command(name = "palugada", version, about = "Project-agnostic dev knowledge & connector CLI")]
+#[command(
+    name = "palugada",
+    version,
+    about = "Project-agnostic dev knowledge & connector CLI"
+)]
 struct Cli {
     /// Accept self-signed TLS certificates (corporate hosts).
     #[arg(long, global = true)]
@@ -393,19 +398,41 @@ fn run(cli: Cli) -> Result<(), String> {
     }
     let project = cli.project.as_deref();
     match cli.command {
-        Commands::Init { repo, name, profile, auth, agents, force } => {
-            cmd_init(repo, name, profile, auth, agents, force)
-        }
+        Commands::Init {
+            repo,
+            name,
+            profile,
+            auth,
+            agents,
+            force,
+        } => cmd_init(repo, name, profile, auth, agents, force),
         Commands::Config { action } => cmd_config(action, project, cli.insecure),
-        Commands::Query { topic, brief, list, profile } => cmd_query(topic, brief, list, profile, project),
-        Commands::ForTask { task, list, profile } => cmd_for(task, list, profile, project),
+        Commands::Query {
+            topic,
+            brief,
+            list,
+            profile,
+        } => cmd_query(topic, brief, list, profile, project),
+        Commands::ForTask {
+            task,
+            list,
+            profile,
+        } => cmd_for(task, list, profile, project),
         Commands::Search { query, profile } => cmd_search(query, profile, project),
         Commands::Index { repo, profile } => cmd_index(repo, profile, project),
         Commands::Symbol { query, kind, repo } => cmd_symbol(query, kind, repo, project),
-        Commands::Fact { family, name, profile } => cmd_fact(family, name, profile, project),
-        Commands::Brief { flow, target, budget, json, profile } => {
-            cmd_brief(flow, target, budget, json, profile, project, cli.insecure)
-        }
+        Commands::Fact {
+            family,
+            name,
+            profile,
+        } => cmd_fact(family, name, profile, project),
+        Commands::Brief {
+            flow,
+            target,
+            budget,
+            json,
+            profile,
+        } => cmd_brief(flow, target, budget, json, profile, project, cli.insecure),
         Commands::Project { action } => cmd_project(action),
         Commands::Profile { action } => cmd_profile(action, project),
         Commands::Convention { action } => cmd_convention(action, project),
@@ -421,9 +448,13 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Prd { action } => cmd_prd(action, project, cli.insecure),
         Commands::Web { port, open } => web::run(port, open),
         Commands::Doctor { json } => cmd_doctor(json, project, cli.insecure),
-        Commands::Exec { verb, args, list, json, profile } => {
-            cmd_exec(verb, args, list, json, profile, project)
-        }
+        Commands::Exec {
+            verb,
+            args,
+            list,
+            json,
+            profile,
+        } => cmd_exec(verb, args, list, json, profile, project),
     }
 }
 
@@ -442,7 +473,14 @@ fn cmd_init(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    scaffold::run(scaffold::InitOptions { repo, name, profile, auth, agents, force })
+    scaffold::run(scaffold::InitOptions {
+        repo,
+        name,
+        profile,
+        auth,
+        agents,
+        force,
+    })
 }
 
 // ── knowledge: q / for / s ─────────────────────────────────────────────────
@@ -525,7 +563,11 @@ fn resolve_profile(
 
 // ── index: indexer + symbol lookup ─────────────────────────────────────────
 
-fn cmd_index(repo: Option<String>, profile: Option<String>, project: Option<&str>) -> Result<(), String> {
+fn cmd_index(
+    repo: Option<String>,
+    profile: Option<String>,
+    project: Option<&str>,
+) -> Result<(), String> {
     let global = GlobalConfig::load_or_default()?;
     let kn = knowledge::knowledge_dir(&global)?;
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
@@ -583,7 +625,18 @@ fn cmd_brief(
         .ok()
         .and_then(|s| config::resolve_project(&global, &s, project).ok())
         .map(|(_n, pc, auth)| brief::BriefConnectors { pc, auth, insecure });
-    brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json }, connectors.as_ref())
+    brief::run(
+        &kn,
+        &repo,
+        &prof,
+        &brief::BriefOptions {
+            flow,
+            target,
+            budget,
+            json,
+        },
+        connectors.as_ref(),
+    )
 }
 
 // ── exec: profile-declared execution toolbelt ──────────────────────────────
@@ -622,10 +675,16 @@ fn cmd_exec(
             let m: std::collections::BTreeMap<&String, serde_json::Value> = verbs
                 .iter()
                 .map(|(k, (spec, src))| {
-                    (k, serde_json::json!({ "source": src, "commands": spec.commands() }))
+                    (
+                        k,
+                        serde_json::json!({ "source": src, "commands": spec.commands() }),
+                    )
                 })
                 .collect();
-            println!("{}", serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?
+            );
         } else if verbs.is_empty() {
             println!("(no exec verbs — add `exec:` to .palugada/config.yaml or bind a profile)");
         } else {
@@ -638,11 +697,25 @@ fn cmd_exec(
 
     let verb = verb.ok_or("specify a verb (e.g. `palugada exec build`) or use --list")?;
     let kv = exec::parse_kv_args(&args)?;
-    let outcome = exec::run_verb(&verbs, &repo, &exec::ExecRequest { verb: &verb, args: &kv, json })?;
+    let outcome = exec::run_verb(
+        &verbs,
+        &repo,
+        &exec::ExecRequest {
+            verb: &verb,
+            args: &kv,
+            json,
+        },
+    )?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&outcome).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&outcome).map_err(|e| e.to_string())?
+        );
     } else {
-        println!("\n[{}] exit {} in {}ms", outcome.verb, outcome.exit_code, outcome.duration_ms);
+        println!(
+            "\n[{}] exit {} in {}ms",
+            outcome.verb, outcome.exit_code, outcome.duration_ms
+        );
     }
     if outcome.exit_code != 0 {
         // agents branch on this: palugada's exit code IS the child's
@@ -681,7 +754,11 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
                     std::time::Duration::from_secs(60),
                     &mut buf,
                 );
-                let first = buf.lines().find(|l| !l.trim().is_empty()).unwrap_or("").to_string();
+                let first = buf
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .to_string();
                 checks.push(Check {
                     name: cmd_str.clone(),
                     kind: "tool".into(),
@@ -704,22 +781,40 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
         Ok((_n, pc, auth)) => {
             let mut conns: Vec<(&str, Result<String, String>)> = Vec::new();
             if pc.integrations.issue_tracker.is_some() {
-                conns.push(("issue", clients::issue_tracker(&pc, &auth, insecure).and_then(|c| c.verify())));
+                conns.push((
+                    "issue",
+                    clients::issue_tracker(&pc, &auth, insecure).and_then(|c| c.verify()),
+                ));
             }
             if pc.integrations.wiki.is_some() {
-                conns.push(("wiki", clients::doc_source(&pc, &auth, insecure).and_then(|c| c.verify())));
+                conns.push((
+                    "wiki",
+                    clients::doc_source(&pc, &auth, insecure).and_then(|c| c.verify()),
+                ));
             }
             if pc.integrations.git_host.is_some() {
-                conns.push(("git", clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify())));
+                conns.push((
+                    "git",
+                    clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify()),
+                ));
             }
             if pc.integrations.design.is_some() {
-                conns.push(("design", clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify())));
+                conns.push((
+                    "design",
+                    clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify()),
+                ));
             }
             if pc.integrations.ci.is_some() {
-                conns.push(("ci", clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify())));
+                conns.push((
+                    "ci",
+                    clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify()),
+                ));
             }
             if pc.integrations.chat.is_some() {
-                conns.push(("chat", clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify())));
+                conns.push((
+                    "chat",
+                    clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify()),
+                ));
             }
             for (tag, r) in conns {
                 checks.push(Check {
@@ -742,14 +837,20 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&serde_json::json!({ "ok": failed == 0, "checks": checks }))
-                .map_err(|e| e.to_string())?
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "ok": failed == 0, "checks": checks })
+            )
+            .map_err(|e| e.to_string())?
         );
     } else {
         println!(
             "palugada doctor — repo {} (profile: {})",
             repo.display(),
-            if prof.is_empty() { "—" } else { prof.as_str() }
+            if prof.is_empty() {
+                "—"
+            } else {
+                prof.as_str()
+            }
         );
         for c in &checks {
             println!(
@@ -780,7 +881,10 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             }
             global.save()?;
             let mut secrets = Secrets::load_or_default()?;
-            secrets.auth_profiles.entry("default".to_string()).or_default();
+            secrets
+                .auth_profiles
+                .entry("default".to_string())
+                .or_default();
             secrets.save()?;
             println!(
                 "Wrote {} and {} (secrets chmod 0600).",
@@ -806,13 +910,34 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             for (name, a) in &secrets.auth_profiles {
                 println!("  {name}:");
                 println!("    jira_token:    {}", mask_secret(&a.jira_token));
-                println!("    jira_email:    {}", if a.jira_email.is_empty() { "(unset)".into() } else { a.jira_email.clone() });
+                println!(
+                    "    jira_email:    {}",
+                    if a.jira_email.is_empty() {
+                        "(unset)".into()
+                    } else {
+                        a.jira_email.clone()
+                    }
+                );
                 println!("    wiki_token:    {}", mask_secret(&a.wiki_token));
-                println!("    wiki_email:    {}", if a.wiki_email.is_empty() { "(unset)".into() } else { a.wiki_email.clone() });
+                println!(
+                    "    wiki_email:    {}",
+                    if a.wiki_email.is_empty() {
+                        "(unset)".into()
+                    } else {
+                        a.wiki_email.clone()
+                    }
+                );
                 println!("    figma_token:   {}", mask_secret(&a.figma_token));
                 println!("    git_token:     {}", mask_secret(&a.git_token));
                 println!("    jenkins_token: {}", mask_secret(&a.jenkins_token));
-                println!("    jenkins_user:  {}", if a.jenkins_user.is_empty() { "(unset)".into() } else { a.jenkins_user.clone() });
+                println!(
+                    "    jenkins_user:  {}",
+                    if a.jenkins_user.is_empty() {
+                        "(unset)".into()
+                    } else {
+                        a.jenkins_user.clone()
+                    }
+                );
                 println!("    chat_webhook:  {}", mask_secret(&a.chat_webhook));
             }
             Ok(())
@@ -821,27 +946,53 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             let global = GlobalConfig::load_or_default()?;
             let secrets = Secrets::load_or_default()?;
             let (name, pc, auth) = resolve_project(&global, &secrets, project)?;
-            let prof = if pc.profile.is_empty() { "—" } else { pc.profile.as_str() };
-            let ap = if pc.auth_profile.is_empty() { "—" } else { pc.auth_profile.as_str() };
+            let prof = if pc.profile.is_empty() {
+                "—"
+            } else {
+                pc.profile.as_str()
+            };
+            let ap = if pc.auth_profile.is_empty() {
+                "—"
+            } else {
+                pc.auth_profile.as_str()
+            };
             println!("Verifying project '{name}' (profile: {prof}, auth: {ap})");
 
             if pc.integrations.issue_tracker.is_some() {
-                report("issue", clients::issue_tracker(&pc, &auth, insecure).and_then(|c| c.verify()));
+                report(
+                    "issue",
+                    clients::issue_tracker(&pc, &auth, insecure).and_then(|c| c.verify()),
+                );
             }
             if pc.integrations.wiki.is_some() {
-                report("wiki", clients::doc_source(&pc, &auth, insecure).and_then(|c| c.verify()));
+                report(
+                    "wiki",
+                    clients::doc_source(&pc, &auth, insecure).and_then(|c| c.verify()),
+                );
             }
             if pc.integrations.git_host.is_some() {
-                report("git", clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify()));
+                report(
+                    "git",
+                    clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify()),
+                );
             }
             if pc.integrations.design.is_some() {
-                report("design", clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify()));
+                report(
+                    "design",
+                    clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify()),
+                );
             }
             if pc.integrations.ci.is_some() {
-                report("ci", clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify()));
+                report(
+                    "ci",
+                    clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify()),
+                );
             }
             if pc.integrations.chat.is_some() {
-                report("chat", clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify()));
+                report(
+                    "chat",
+                    clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify()),
+                );
             }
             Ok(())
         }
@@ -885,10 +1036,13 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
             } else {
                 default_workspace
             };
-            global
-                .projects
-                .registered
-                .insert(name.clone(), ProjectEntry { repo_path: repo.clone(), workspace });
+            global.projects.registered.insert(
+                name.clone(),
+                ProjectEntry {
+                    repo_path: repo.clone(),
+                    workspace,
+                },
+            );
             let became_active = global.projects.active.is_empty();
             if became_active {
                 global.projects.active = name.clone();
@@ -919,11 +1073,19 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
                 return Ok(());
             }
             for (name, e) in &global.projects.registered {
-                let marker = if *name == global.projects.active { "*" } else { " " };
+                let marker = if *name == global.projects.active {
+                    "*"
+                } else {
+                    " "
+                };
                 let prof = config::ProjectConfig::load_from(&e.repo_path)
                     .map(|c| c.profile)
                     .unwrap_or_default();
-                let prof = if prof.is_empty() { "—".to_string() } else { prof };
+                let prof = if prof.is_empty() {
+                    "—".to_string()
+                } else {
+                    prof
+                };
                 println!("{marker} {name}  profile={prof}  ->  {}", e.repo_path);
             }
             println!("\n(* = active)");
@@ -942,7 +1104,10 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
         ProjectCmd::Rules { name } => {
             let global = GlobalConfig::load_or_default()?;
             let eff = effective::effective_rules(&global, &name)?;
-            println!("Effective rules for '{}' (profile: {})\n", eff.project, eff.profile);
+            println!(
+                "Effective rules for '{}' (profile: {})\n",
+                eff.project, eff.profile
+            );
             println!("Conventions:");
             for c in &eff.conventions {
                 let tag = match c.origin {
@@ -954,7 +1119,11 @@ fn cmd_project(action: ProjectCmd) -> Result<(), String> {
             }
             println!("\nreview_map:");
             for e in &eff.review_map {
-                let tag = if e.origin == effective::Origin::Project { "[project]" } else { "[profile]" };
+                let tag = if e.origin == effective::Origin::Project {
+                    "[project]"
+                } else {
+                    "[profile]"
+                };
                 println!("  {:<10} {} -> {}", tag, e.family, e.conventions.join(", "));
             }
             for w in &eff.warnings {
@@ -986,7 +1155,12 @@ fn cmd_profile(action: ProfileCmd, project: Option<&str>) -> Result<(), String> 
                 if !c.ok {
                     failed += 1;
                 }
-                println!("[{}] {:<18} {}", if c.ok { "ok  " } else { "FAIL" }, c.name, c.detail);
+                println!(
+                    "[{}] {:<18} {}",
+                    if c.ok { "ok  " } else { "FAIL" },
+                    c.name,
+                    c.detail
+                );
             }
             if failed > 0 {
                 Err(format!("{failed} check(s) failed for profile '{id}'"))
@@ -1009,10 +1183,15 @@ fn cmd_profile(action: ProfileCmd, project: Option<&str>) -> Result<(), String> 
             if !profs.iter().any(|(pid, _)| pid == &id) {
                 return Err(format!(
                     "unknown profile '{id}' (available: {})",
-                    profs.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>().join(", ")
+                    profs
+                        .iter()
+                        .map(|(p, _)| p.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
-            let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+            let cwd =
+                std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
             let name = config::resolve_project_name(&global, project, &cwd)?;
             let entry = global
                 .projects
@@ -1060,7 +1239,9 @@ fn cmd_recipe(action: RecipeCmd, project: Option<&str>) -> Result<(), String> {
     match action {
         RecipeCmd::Add { file, profile } => {
             if project.is_some() {
-                return Err("recipes are profile-scoped; drop --project and use --profile".to_string());
+                return Err(
+                    "recipes are profile-scoped; drop --project and use --profile".to_string(),
+                );
             }
             if !file.ends_with(".md") {
                 return Err(format!("expected a .md file, got '{file}'"));
@@ -1092,7 +1273,8 @@ fn cmd_skills(action: SkillsCmd, project: Option<&str>) -> Result<(), String> {
         }
         SkillsCmd::Sync { agents, force } => {
             let global = GlobalConfig::load_or_default()?;
-            let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
+            let cwd =
+                std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
             let name = config::resolve_project_name(&global, project, &cwd)?;
             let entry = global
                 .projects
@@ -1104,20 +1286,39 @@ fn cmd_skills(action: SkillsCmd, project: Option<&str>) -> Result<(), String> {
             let agents: Vec<String> = if agents.trim() == "auto" {
                 scaffold::detect_agents(std::path::Path::new(&entry.repo_path))
             } else {
-                agents.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+                agents
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
             };
             let repo = std::path::Path::new(&entry.repo_path);
             let mut files = scaffold::skill_files(&pc.profile, &kinds, &agents);
             let kn = knowledge::knowledge_dir(&global)?;
             if agents.iter().any(|a| a == "claude") {
-                files.extend(scaffold::custom_skill_files(&kn, &pc.profile, ".claude/skills"));
+                files.extend(scaffold::custom_skill_files(
+                    &kn,
+                    &pc.profile,
+                    ".claude/skills",
+                ));
             }
             if agents.iter().any(|a| a == "codex") {
-                files.extend(scaffold::custom_skill_files(&kn, &pc.profile, ".agents/skills"));
+                files.extend(scaffold::custom_skill_files(
+                    &kn,
+                    &pc.profile,
+                    ".agents/skills",
+                ));
             }
             let (mut written, mut skipped, mut merged) = (Vec::new(), Vec::new(), Vec::new());
             for (rel, body) in files {
-                scaffold::write_agent_file(&repo.join(&rel), &body, force, &mut written, &mut skipped, &mut merged)?;
+                scaffold::write_agent_file(
+                    &repo.join(&rel),
+                    &body,
+                    force,
+                    &mut written,
+                    &mut skipped,
+                    &mut merged,
+                )?;
             }
             for w in &written {
                 println!("  wrote    {w}");
@@ -1154,7 +1355,10 @@ fn cmd_issue(action: IssueCmd, project: Option<&str>, insecure: bool) -> Result<
             let tracker = clients::issue_tracker(&pc, &auth, insecure)?;
             let i = tracker.get_issue(&key)?;
             println!("{} — {}", i.key, i.summary);
-            println!("Status: {}   Type: {}   Assignee: {}", i.status, i.issue_type, i.assignee);
+            println!(
+                "Status: {}   Type: {}   Assignee: {}",
+                i.status, i.issue_type, i.assignee
+            );
             if !i.description.is_empty() {
                 println!("\n{}", i.description);
             }
@@ -1266,7 +1470,10 @@ fn cmd_design(action: DesignCmd, project: Option<&str>, insecure: bool) -> Resul
             let design = clients::design_source(&pc, &auth, insecure)?;
             let f = design.get_file(&key)?;
             println!("{} (key {})", f.name, f.key);
-            println!("version: {}   last modified: {}", f.version, f.last_modified);
+            println!(
+                "version: {}   last modified: {}",
+                f.version, f.last_modified
+            );
             Ok(())
         }
     }
@@ -1280,7 +1487,11 @@ fn cmd_ci(action: CiCmd, project: Option<&str>, insecure: bool) -> Result<(), St
             let (_name, pc, auth) = resolve_project(&global, &secrets, project)?;
             let ci = clients::ci_provider(&pc, &auth, insecure)?;
             let b = ci.job_status(&job)?;
-            let state = if b.building { "building".to_string() } else { b.result.clone() };
+            let state = if b.building {
+                "building".to_string()
+            } else {
+                b.result.clone()
+            };
             println!("{} #{} — {}", b.job, b.number, state);
             Ok(())
         }
