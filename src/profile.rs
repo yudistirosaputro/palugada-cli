@@ -245,6 +245,33 @@ fn web_render_checks(kn: &Path, id: &str) -> Vec<Check> {
     }
     out.push(check("doc files present", files));
 
+    // 5. md⇔index parity: each LOCAL topic's _index section ids match the
+    //    `{#anchor}` ids actually present in its .md body.
+    let mut parity: Result<String, String> = Ok("section ids match between _index and .md".into());
+    'parity: {
+        for t in &local_topics {
+            let md_path = dir.join("conventions").join(format!("{}.md", t.id));
+            let raw = match std::fs::read_to_string(&md_path) {
+                Ok(r) => r,
+                Err(_) => continue, // absence already reported by the doc-files check
+            };
+            let body = crate::knowledge::strip_frontmatter(&raw);
+            let md_ids: BTreeSet<String> =
+                crate::inherit::parse_sections(body).into_iter().map(|s| s.anchor).collect();
+            let idx_ids: BTreeSet<String> = t.sections.iter().map(|s| s.id.clone()).collect();
+            if md_ids != idx_ids {
+                let only_idx: Vec<&str> = idx_ids.difference(&md_ids).map(|s| s.as_str()).collect();
+                let only_md: Vec<&str> = md_ids.difference(&idx_ids).map(|s| s.as_str()).collect();
+                parity = Err(format!(
+                    "convention '{}' section ids differ: in _index only {:?}, in .md only {:?}",
+                    t.id, only_idx, only_md
+                ));
+                break 'parity;
+            }
+        }
+    }
+    out.push(check("section id parity", parity));
+
     out.push(Check { name: "extends chain".into(), ok: true, detail: chain_detail });
     out
 }
@@ -687,5 +714,35 @@ mod tests {
         // exactly one extends: line
         let extends_count = child_yaml.lines().filter(|l| l.trim_start().starts_with("extends:")).count();
         assert_eq!(extends_count, 1, "expected exactly 1 extends: line, got {extends_count}: {child_yaml}");
+    }
+
+    #[test]
+    fn validate_flags_md_index_section_mismatch() {
+        let kn = tempfile::tempdir().unwrap();
+        base_profile(kn.path(), "p", None);
+        // _index lists section `layers`, but the .md only has `## Overview {#overview}`
+        fs::write(
+            kn.path().join("profiles/p/conventions/_index.json"),
+            r#"{"topics":[{"id":"arch","title":"Arch","sections":[{"id":"layers","title":"Layers","tokens":10}]}]}"#,
+        ).unwrap();
+        fs::write(kn.path().join("profiles/p/conventions/arch.md"),
+            "# Arch\n## Overview {#overview}\nx\n").unwrap();
+        let checks = validate(kn.path(), "p");
+        let c = checks.iter().find(|c| c.name == "section id parity").unwrap();
+        assert!(!c.ok && c.detail.contains("layers") && c.detail.contains("overview"), "{}", c.detail);
+    }
+
+    #[test]
+    fn validate_passes_when_md_index_match() {
+        let kn = tempfile::tempdir().unwrap();
+        base_profile(kn.path(), "p", None);
+        fs::write(
+            kn.path().join("profiles/p/conventions/_index.json"),
+            r#"{"topics":[{"id":"arch","title":"Arch","sections":[{"id":"overview","title":"Overview","tokens":10}]}]}"#,
+        ).unwrap();
+        fs::write(kn.path().join("profiles/p/conventions/arch.md"),
+            "# Arch\n## Overview {#overview}\nx\n").unwrap();
+        let parity = validate(kn.path(), "p").into_iter().find(|c| c.name == "section id parity").unwrap();
+        assert!(parity.ok, "{}", parity.detail);
     }
 }

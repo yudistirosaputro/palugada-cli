@@ -186,8 +186,10 @@ pub fn resolve_convention_raw(
             .join(p)
             .join("conventions")
             .join(format!("{topic}.md"));
-        if let Ok(raw) = std::fs::read_to_string(&md) {
-            present.push(raw);
+        match std::fs::read_to_string(&md) {
+            Ok(raw) => present.push(raw),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("read {}: {e}", md.display())),
         }
     }
     if present.is_empty() {
@@ -215,10 +217,12 @@ pub fn resolve_convention_raw(
     };
     let title = pick("title");
     let description = pick("description");
+    let tags = pick("tags");
     Ok(Some(render_merged(
         topic,
         &title,
         &description,
+        &tags,
         &preamble,
         &merged,
     )))
@@ -229,10 +233,15 @@ fn render_merged(
     topic: &str,
     title: &str,
     description: &str,
+    tags: &str,
     preamble: &str,
     secs: &[MergedSection],
 ) -> String {
-    let mut out = format!("---\nid: {topic}\ntitle: {title}\ndescription: {description}\n---\n\n");
+    let mut out = format!("---\nid: {topic}\ntitle: {title}\ndescription: {description}\n");
+    if !tags.is_empty() {
+        out.push_str(&format!("tags: {tags}\n"));
+    }
+    out.push_str("---\n\n");
     out.push_str(preamble.trim_end());
     out.push('\n');
     for s in secs {
@@ -258,8 +267,10 @@ pub fn resolve_recipe_raw(kn: &Path, profile: &str, task: &str) -> Result<Option
             .join(p)
             .join("recipes")
             .join(format!("{task}.md"));
-        if let Ok(raw) = std::fs::read_to_string(&path) {
-            return Ok(Some(raw));
+        match std::fs::read_to_string(&path) {
+            Ok(raw) => return Ok(Some(raw)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("read {}: {e}", path.display())),
         }
     }
     Ok(None)
@@ -877,5 +888,30 @@ mod tests {
         let refac = recipes.iter().find(|r| r.id == "refactor").unwrap();
         assert_eq!(refac.origin, "inherited");
         assert_eq!(refac.from, "base");
+    }
+
+    #[test]
+    fn resolve_convention_propagates_non_notfound_io_error() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "p", None);
+        // Make <topic>.md a DIRECTORY → read_to_string fails with a non-NotFound error.
+        let cdir = kn.path().join("profiles/p/conventions");
+        std::fs::create_dir_all(cdir.join("arch.md")).unwrap();
+        let r = resolve_convention_raw(kn.path(), "p", "arch");
+        assert!(r.is_err(), "a non-NotFound read error must propagate, got {r:?}");
+    }
+
+    #[test]
+    fn merged_convention_carries_tags_from_nearest() {
+        let kn = tempfile::tempdir().unwrap();
+        profile(kn.path(), "base", None);
+        profile(kn.path(), "child", Some("base"));
+        // base defines arch with tags + a section; child overrides one section, omits tags
+        conv(kn.path(), "base", "architecture",
+            "---\nid: architecture\ntitle: Architecture\ntags: [kt, mvvm]\n---\n\n# Architecture\n\n## Layers {#layers}\nL\n");
+        conv(kn.path(), "child", "architecture",
+            "---\nid: architecture\ntitle: Architecture\n---\n\n# Architecture\n\n## Data Flow {#data-flow}\nDF\n");
+        let raw = resolve_convention_raw(kn.path(), "child", "architecture").unwrap().unwrap();
+        assert!(raw.contains("tags: [kt, mvvm]"), "merged front-matter carries parent tags: {raw}");
     }
 }
