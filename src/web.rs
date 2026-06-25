@@ -51,6 +51,9 @@ pub enum Route {
     AddOverlayConvention(String),
     SetOverlayConventionBody(String, String),
     SetOverlayReviewMap(String),
+    Connectors,
+    SaveConnector(String),
+    VerifyConnector(String),
     NotFound,
 }
 
@@ -65,6 +68,9 @@ pub fn route(method: &str, path: &str) -> Route {
         ("GET", ["api", "overview"]) => Route::Overview,
         ("GET", ["api", "projects"]) => Route::Projects,
         ("GET", ["api", "profiles"]) => Route::Profiles,
+        ("GET", ["api", "connectors"]) => Route::Connectors,
+        ("POST", ["api", "connectors", cap]) => Route::SaveConnector((*cap).to_string()),
+        ("POST", ["api", "connectors", cap, "verify"]) => Route::VerifyConnector((*cap).to_string()),
         ("GET", ["api", "profile", id]) => Route::Profile((*id).to_string()),
         ("GET", ["api", "profile", id, "convention", cid]) => {
             Route::Convention((*id).to_string(), (*cid).to_string())
@@ -387,6 +393,9 @@ fn api(route: Route, body: &str) -> (u16, String) {
             crate::config::set_review_map(&repo, req.review_map)?;
             Ok(json!({ "ok": true }))
         }),
+        Route::Connectors => read(crate::credentials::global_view),
+        Route::SaveConnector(cap) => write_op(|| crate::credentials::apply_global(&cap, body)),
+        Route::VerifyConnector(cap) => read(|| crate::credentials::global_verify(&cap)),
         _ => (501, err_json("not implemented yet")),
     }
 }
@@ -722,6 +731,12 @@ mod tests {
             Route::SetOverlayConventionBody("app".into(), "architecture".into())
         );
         assert_eq!(route("POST", "/api/project/app/review-map"), Route::SetOverlayReviewMap("app".into()));
+        assert_eq!(route("GET", "/api/connectors"), Route::Connectors);
+        assert_eq!(route("POST", "/api/connectors/git_host"), Route::SaveConnector("git_host".into()));
+        assert_eq!(
+            route("POST", "/api/connectors/git_host/verify"),
+            Route::VerifyConnector("git_host".into())
+        );
         assert_eq!(route("GET", "/nope"), Route::NotFound);
     }
 

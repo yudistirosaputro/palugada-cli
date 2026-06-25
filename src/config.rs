@@ -27,6 +27,10 @@ pub struct GlobalConfig {
     pub defaults: Defaults,
     #[serde(default)]
     pub projects: Projects,
+    /// Global default provider wiring inherited per-field by every project
+    /// (the project still owns `repo`). Empty = no defaults (legacy behaviour).
+    #[serde(default, skip_serializing_if = "Integrations::is_empty")]
+    pub default_integrations: Integrations,
 }
 
 impl Default for GlobalConfig {
@@ -36,6 +40,7 @@ impl Default for GlobalConfig {
             engine: EngineSection::default(),
             defaults: Defaults::default(),
             projects: Projects::default(),
+            default_integrations: Integrations::default(),
         }
     }
 }
@@ -219,7 +224,7 @@ pub struct ProjectConfig {
     pub review_map: BTreeMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct Integrations {
     #[serde(default)]
     pub issue_tracker: Option<Provider>,
@@ -233,6 +238,19 @@ pub struct Integrations {
     pub git_host: Option<Provider>,
     #[serde(default)]
     pub chat: Option<Provider>,
+}
+
+impl Integrations {
+    /// True when no capability slot is wired — keeps `~/.palugada.yaml` clean
+    /// (`skip_serializing_if`) and gives existing projects byte-for-byte parity.
+    pub fn is_empty(&self) -> bool {
+        self.issue_tracker.is_none()
+            && self.wiki.is_none()
+            && self.design.is_none()
+            && self.ci.is_none()
+            && self.git_host.is_none()
+            && self.chat.is_none()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -379,6 +397,38 @@ pub fn resolve_project_name(
     Err("no active project — run `palugada project use <name>`, pass --project, or cd into a registered repo".into())
 }
 
+/// Merge one capability slot per field: the project wins, an empty project field
+/// inherits the global default. `repo` is always the project's (a global default
+/// has none). Returns `None` when neither side names a provider.
+fn merge_provider(global: &Option<Provider>, project: &Option<Provider>) -> Option<Provider> {
+    let pick = |p: Option<&str>, g: Option<&str>| -> Option<String> {
+        p.filter(|s| !s.is_empty()).or(g.filter(|s| !s.is_empty())).map(str::to_string)
+    };
+    let provider = pick(
+        project.as_ref().map(|x| x.provider.as_str()),
+        global.as_ref().map(|x| x.provider.as_str()),
+    )?;
+    let base_url = pick(
+        project.as_ref().map(|x| x.base_url.as_str()),
+        global.as_ref().map(|x| x.base_url.as_str()),
+    )
+    .unwrap_or_default();
+    let repo = project.as_ref().map(|x| x.repo.clone()).unwrap_or_default();
+    Some(Provider { provider, base_url, repo })
+}
+
+/// Fold global default wiring UNDER a project's explicit integrations.
+pub fn merge_integrations(global: &Integrations, project: &Integrations) -> Integrations {
+    Integrations {
+        issue_tracker: merge_provider(&global.issue_tracker, &project.issue_tracker),
+        wiki: merge_provider(&global.wiki, &project.wiki),
+        design: merge_provider(&global.design, &project.design),
+        ci: merge_provider(&global.ci, &project.ci),
+        git_host: merge_provider(&global.git_host, &project.git_host),
+        chat: merge_provider(&global.chat, &project.chat),
+    }
+}
+
 /// Resolve the target project's config plus the referenced auth-profile.
 pub fn resolve_project(
     global: &GlobalConfig,
@@ -393,7 +443,8 @@ pub fn resolve_project(
         .get(&name)
         .ok_or_else(|| format!("project '{name}' is not registered — run `palugada project add {name} <repo_path>`"))?;
 
-    let pc = ProjectConfig::load_from(&entry.repo_path)?;
+    let mut pc = ProjectConfig::load_from(&entry.repo_path)?;
+    pc.integrations = merge_integrations(&global.default_integrations, &pc.integrations);
     let auth = if pc.auth_profile.is_empty() {
         AuthProfile::default()
     } else {
@@ -666,6 +717,82 @@ doctor: { cmd: ["android -V", "adb version"] }
         assert_eq!(expand_home("~/x"), home_dir().join("x"));
         assert_eq!(expand_home("/abs/path"), Path::new("/abs/path").to_path_buf());
         assert_eq!(expand_home("~foo"), Path::new("~foo").to_path_buf());
+    }
+
+    #[test]
+    fn merge_integrations_inherits_per_field() {
+        let global = Integrations {
+            git_host: Some(Provider {
+                provider: "github".into(),
+                base_url: "https://api.github.com".into(),
+                repo: String::new(),
+            }),
+            ..Default::default()
+        };
+        // project sets ONLY repo (empty provider/base_url) → inherit provider+base_url
+        let project = Integrations {
+            git_host: Some(Provider {
+                provider: String::new(),
+                base_url: String::new(),
+                repo: "o/n".into(),
+            }),
+            ..Default::default()
+        };
+        let g = merge_integrations(&global, &project).git_host.unwrap();
+        assert_eq!(g.provider, "github");
+        assert_eq!(g.base_url, "https://api.github.com");
+        assert_eq!(g.repo, "o/n");
+    }
+
+    #[test]
+    fn merge_integrations_project_field_overrides_global() {
+        let global = Integrations {
+            git_host: Some(Provider {
+                provider: "github".into(),
+                base_url: "https://api.github.com".into(),
+                repo: String::new(),
+            }),
+            ..Default::default()
+        };
+        let project = Integrations {
+            git_host: Some(Provider {
+                provider: "gitlab".into(),
+                base_url: "https://gitlab.com".into(),
+                repo: "g/p".into(),
+            }),
+            ..Default::default()
+        };
+        let g = merge_integrations(&global, &project).git_host.unwrap();
+        assert_eq!(g.provider, "gitlab");
+        assert_eq!(g.base_url, "https://gitlab.com");
+        assert_eq!(g.repo, "g/p");
+    }
+
+    #[test]
+    fn merge_integrations_empty_global_is_identity() {
+        assert!(Integrations::default().is_empty());
+        let project = Integrations {
+            wiki: Some(Provider { provider: "notion".into(), base_url: String::new(), repo: String::new() }),
+            ..Default::default()
+        };
+        let m = merge_integrations(&Integrations::default(), &project);
+        assert_eq!(m.wiki.as_ref().unwrap().provider, "notion");
+        assert!(m.git_host.is_none());
+        assert!(m.ci.is_none());
+        assert!(m.issue_tracker.is_none() && m.design.is_none() && m.ci.is_none() && m.chat.is_none());
+    }
+
+    #[test]
+    fn merge_integrations_inherits_when_project_slot_absent() {
+        let global = Integrations {
+            wiki: Some(Provider { provider: "notion".into(), base_url: String::new(), repo: String::new() }),
+            ..Default::default()
+        };
+        let m = merge_integrations(&global, &Integrations::default());
+        let w = m.wiki.unwrap();
+        assert_eq!(w.provider, "notion");
+        assert_eq!(w.repo, ""); // global default carries no repo
+        assert!(m.issue_tracker.is_none() && m.git_host.is_none());
     }
 
     #[test]

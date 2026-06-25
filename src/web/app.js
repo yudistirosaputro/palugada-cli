@@ -269,7 +269,7 @@ async function openConventionAt(profileId, topic, section, anchor) {
 }
 
 // ── nav ─────────────────────────────────────────────────────────────────--
-const VIEWS = { overview: renderOverview, projects: renderProjects, profiles: renderProfiles, knowledge: renderKnowledge };
+const VIEWS = { overview: renderOverview, projects: renderProjects, profiles: renderProfiles, knowledge: renderKnowledge, connectors: renderConnectors };
 document.querySelectorAll(".nav-item").forEach(a => {
   a.onclick = () => setView(a.dataset.view);
 });
@@ -566,6 +566,158 @@ function credentialsCard(name, cfg) {
       renderProjectDetail(name);
     } catch (e) { toast(e.message, true); }
   };
+  return card;
+}
+
+// ── connectors (global setup) ──────────────────────────────────────────────
+const CX = [
+  { cap: "git_host", title: "Git Host", powers: ["pr", "git"],
+    icon: '<path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/>' },
+  { cap: "issue_tracker", title: "Issue Tracker", powers: ["issue"],
+    icon: '<path d="M9 11l3 3 7-7"/><path d="M21 12a9 9 0 1 1-6.2-8.5"/>' },
+  { cap: "wiki", title: "Docs & Wiki", powers: ["wiki", "prd"],
+    icon: '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h7M8 11h7"/>' },
+  { cap: "ci", title: "CI / Pipelines", powers: ["ci"],
+    icon: '<path d="M5 12h4l2 5 3-10 2 5h3"/>' },
+  { cap: "design", title: "Design", powers: ["design"],
+    icon: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>' },
+  { cap: "chat", title: "Chat & Notify", powers: ["notify"],
+    icon: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' },
+];
+
+// Mirrors credentials::verify_kind on the backend (kept here so provider changes
+// re-classify live before save).
+function verifyKind(cap, provider) {
+  if (cap === "issue_tracker" && provider === "github_issues") return "repo";
+  if (cap === "ci" && (provider === "github_actions" || provider === "gitlab_ci")) return "repo";
+  return "now";
+}
+
+// Which base_url / identifier / token fields a (cap, provider) shows.
+function cxFields(cap, provider) {
+  const F = {
+    "git_host": { base: { hint: "blank = api.github.com (GitHub) / gitlab.com (GitLab)" }, token: { k: "git_token", l: "API token (git_token)" } },
+    "issue_tracker:jira": { base: { hint: "e.g. https://you.atlassian.net", req: true }, email: { k: "jira_email", l: "Account email" }, token: { k: "jira_token", l: "API token (jira_token)" } },
+    "issue_tracker:github_issues": { inherits: "git_token" },
+    "wiki:confluence": { base: { hint: "e.g. https://you.atlassian.net/wiki", req: true }, email: { k: "wiki_email", l: "Account email" }, token: { k: "wiki_token", l: "API token (wiki_token)" } },
+    "wiki:notion": { token: { k: "wiki_token", l: "API token (wiki_token)" } },
+    "design": { token: { k: "figma_token", l: "API token (figma_token)" } },
+    "ci:jenkins": { base: { hint: "e.g. https://ci.you.com", req: true }, email: { k: "jenkins_user", l: "Username (jenkins_user)" }, token: { k: "jenkins_token", l: "API token (jenkins_token)" } },
+    "ci:github_actions": { inherits: "git_token" },
+    "ci:gitlab_ci": { inherits: "git_token" },
+    "chat": { token: { k: "chat_webhook", l: "Webhook URL (chat_webhook)" } },
+  };
+  return F[cap + ":" + provider] || F[cap] || {};
+}
+
+function cxStatus(cap, provider, f, sec) {
+  if (!provider) return ["off", "Not set"];
+  if (f.inherits) return ["info", "Uses Git Host"];
+  if (verifyKind(cap, provider) === "repo") return ["info", "Verify in project"];
+  const k = f.token && f.token.k;
+  const has = k && sec[k] && sec[k] !== "(unset)";
+  return has ? ["ok", "Configured"] : ["off", "Key needed"];
+}
+
+async function renderConnectors() {
+  view.innerHTML = viewHead("Setup", "Connectors & API Keys",
+    "Set your API keys and default wiring once. Keys live globally in <code>~/.palugada/secrets.yaml</code> (chmod 600, never shown in full). Projects inherit this — they only set their own <code>repo</code>.");
+  let d;
+  try { d = await api("/api/connectors"); }
+  catch (e) { toast(e.message, true); return; }
+  view.appendChild(h(`<div class="profile-chip"><span class="lbl">Auth profile</span> <span class="id-chip">${esc(d.auth_profile || "default")}</span> <span class="soon">multi-profile soon</span></div>`));
+  let configured = 0, repoReady = 0, notset = 0;
+  CX.forEach(c => {
+    const w = (d.wiring && d.wiring[c.cap]) || { provider: "" };
+    if (!w.provider) { notset++; return; }
+    if (verifyKind(c.cap, w.provider) === "repo") repoReady++;
+    configured++;
+  });
+  view.appendChild(h(`<div class="stat-grid">
+    <div class="stat"><div class="k">Connectors</div><div class="v">${CX.length}</div></div>
+    <div class="stat"><div class="k">Configured</div><div class="v">${configured}</div></div>
+    <div class="stat"><div class="k">Verify in project</div><div class="v">${repoReady}</div></div>
+    <div class="stat"><div class="k">Not set</div><div class="v">${notset}</div></div>
+  </div>`));
+  CX.forEach(c => view.appendChild(connectorCard(c, d)));
+  view.appendChild(h(`<div class="card" style="box-shadow:var(--shadow-sm)">
+    <div class="card-head"><h3>How keys are stored</h3></div>
+    <p class="card-note">Tokens are written to <code>~/.palugada/secrets.yaml</code> (<code>0600</code>) and never sent back to the browser — you only see <code>•••• (N chars)</code>. Blank keeps the existing value. Provider &amp; base URL save as global defaults; each project still sets its own repo.</p></div>`));
+}
+
+function connectorCard(c, d) {
+  const w = (d.wiring && d.wiring[c.cap]) || { provider: "", base_url: "" };
+  const sec = d.secrets || {};
+  const provList = ["(none)", ...(((d.providers && d.providers[c.cap]) || []))];
+  let provider = w.provider || "(none)";
+  const card = h(`<div class="card cx collapsed" data-cap="${esc(c.cap)}">
+    <div class="cx-head">
+      <span class="cx-ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${c.icon}</svg></span>
+      <div><div class="cx-title">${esc(c.title)}</div><div class="cx-cap"></div></div>
+      <span class="cx-spacer"></span>
+      <span class="status"></span>
+      <button class="cx-expand" type="button" aria-label="Expand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>
+    </div>
+    <p class="cx-powers">Powers ${c.powers.map(p => `<code>palugada ${esc(p)}</code>`).join(" ")}</p>
+    <div class="cx-body"></div></div>`);
+  const capEl = card.querySelector(".cx-cap");
+  const statusEl = card.querySelector(".status");
+  const body = card.querySelector(".cx-body");
+
+  function paintHead() {
+    const prov = provider === "(none)" ? "" : provider;
+    capEl.textContent = c.cap + (prov ? " · " + prov : "");
+    const [cls, text] = cxStatus(c.cap, prov, cxFields(c.cap, prov), sec);
+    statusEl.className = "status " + cls;
+    statusEl.innerHTML = `<span class="dot"></span>${esc(text)}`;
+  }
+  function paintBody() {
+    const prov = provider === "(none)" ? "" : provider;
+    const f = cxFields(c.cap, prov);
+    const provOpts = provList.map(p => `<option${provider === p ? " selected" : ""}>${esc(p)}</option>`).join("");
+    let html = `<div class="cx-fields"><div class="field"><label>Provider</label><select class="cx-prov">${provOpts}</select></div>`;
+    if (f.base) html += `<div class="field"><label>Base URL${f.base.req ? " (required)" : ""}</label><input class="cx-base" value="${esc(w.base_url || "")}" placeholder="${esc(f.base.hint || "")}"></div>`;
+    if (f.email) html += `<div class="field"><label>${esc(f.email.l)}</label><input class="cx-email" data-k="${esc(f.email.k)}" value="${esc(sec[f.email.k] || "")}"></div>`;
+    if (f.inherits) html += `<div class="field full"><label>API key</label><div class="locked-note">↳ Inherited from <strong>Git Host</strong> (<code>${esc(f.inherits)}</code>). No separate key needed.</div></div>`;
+    else if (f.token) {
+      const masked = sec[f.token.k] || "(unset)"; const has = masked !== "(unset)";
+      html += `<div class="field full"><label>${esc(f.token.l)}</label>
+        <div class="key-wrap"><input class="cx-token" data-k="${esc(f.token.k)}" type="password" placeholder="${esc(has ? masked + " · blank = keep" : "Paste token…")}"><button class="reveal" type="button">Show</button></div></div>`;
+    }
+    html += `</div><div class="cx-actions"><button class="btn cx-save" type="button">Save ${esc(c.title)}</button>`;
+    if (verifyKind(c.cap, prov) === "repo") html += `<span class="vres info">↳ needs a repo — verify from a project</span>`;
+    else if (prov) html += `<button class="btn secondary cx-verify" type="button">Verify</button> <span class="vres"></span>`;
+    html += `</div>`;
+    body.innerHTML = html;
+    body.querySelector(".cx-prov").onchange = e => { provider = e.target.value; paintHead(); paintBody(); };
+    const rv = body.querySelector(".reveal");
+    if (rv) rv.onclick = () => {
+      const inp = body.querySelector(".cx-token");
+      const show = inp.type === "password"; inp.type = show ? "text" : "password"; rv.textContent = show ? "Hide" : "Show";
+    };
+    body.querySelector(".cx-save").onclick = saveConnector;
+    const vb = body.querySelector(".cx-verify");
+    if (vb) vb.onclick = verifyConnector;
+  }
+  async function saveConnector() {
+    const payload = { provider: provider, base_url: "", secrets: {} };
+    const be = body.querySelector(".cx-base"); if (be) payload.base_url = be.value;
+    const ee = body.querySelector(".cx-email"); if (ee) payload.secrets[ee.dataset.k] = ee.value;
+    const te = body.querySelector(".cx-token"); if (te) payload.secrets[te.dataset.k] = te.value;
+    try { await api(`/api/connectors/${c.cap}`, "POST", payload); toast("Saved " + c.title); renderConnectors(); }
+    catch (e) { toast(e.message, true); }
+  }
+  async function verifyConnector() {
+    const res = body.querySelector(".vres");
+    res.textContent = "…"; res.className = "vres muted";
+    try {
+      const r = await api(`/api/connectors/${c.cap}/verify`, "POST", {});
+      if (r.needs_repo) { res.textContent = "↳ " + (r.message || "verify from a project"); res.className = "vres info"; }
+      else { res.textContent = (r.ok ? "✓ " : "✗ ") + (r.message || r.error || ""); res.className = "vres " + (r.ok ? "ok" : "err"); }
+    } catch (e) { res.textContent = "✗ " + e.message; res.className = "vres err"; }
+  }
+  card.querySelector(".cx-head").onclick = e => { if (!e.target.closest(".cx-prov")) card.classList.toggle("collapsed"); };
+  paintHead(); paintBody();
   return card;
 }
 
