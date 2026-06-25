@@ -779,6 +779,7 @@ doctor: { cmd: ["android -V", "adb version"] }
         assert_eq!(m.wiki.as_ref().unwrap().provider, "notion");
         assert!(m.git_host.is_none());
         assert!(m.ci.is_none());
+        assert!(m.issue_tracker.is_none() && m.design.is_none() && m.ci.is_none() && m.chat.is_none());
     }
 
     #[test]
@@ -791,6 +792,7 @@ doctor: { cmd: ["android -V", "adb version"] }
         let w = m.wiki.unwrap();
         assert_eq!(w.provider, "notion");
         assert_eq!(w.repo, ""); // global default carries no repo
+        assert!(m.issue_tracker.is_none() && m.git_host.is_none());
     }
 
     #[test]
