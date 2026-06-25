@@ -1,0 +1,455 @@
+<!-- Connectors menu mockup — reference for 2026-06-25-web-connectors-menu-design.md.
+     Pop Workbench styling reused verbatim; fonts via local url (same as src/web/style.css). -->
+<title>palugada · Connectors mockup</title>
+<style>
+@font-face { font-family: "Bangers"; src: url("/bangers.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Comic Neue"; src: url("/comic400.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "Comic Neue"; src: url("/comic700.woff2") format("woff2"); font-weight: 700; font-style: normal; font-display: swap; }
+
+/* ============================================================
+   Pop Workbench tokens (verbatim from src/web/style.css)
+   ============================================================ */
+:root{
+  --font-display:"Bangers","Comic Sans MS",Impact,fantasy;
+  --font-ui:"Comic Neue","Comic Sans MS",system-ui,sans-serif;
+  --font-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:20px;--s6:24px;--s7:32px;--s8:40px;
+  --r-sm:7px;--r:12px;--r-lg:16px;--r-pill:999px;
+  --ground:#FCFAF3;--surface:#FFFFFF;--surface-2:#F3F1E7;
+  --ink:#1A1722;--ink-soft:#4F4958;--faint:#6A6473;--halftone:rgba(26,23,34,.035);
+  --accent:#2B6CFF;--accent-press:#1A52DC;--accent-tint:#E4ECFF;--on-accent:#FFFFFF;
+  --pow:#FFD23F;--pow-deep:#F4B400;
+  --conv:#0C6E38;--conv-bg:#D8F6E2;--rec:#8A5A0E;--rec-bg:#FFF0BF;
+  --rev:#2150D6;--rev-bg:#DCE7FF;--eng:#6429C7;--eng-bg:#ECE1FE;
+  --warn:#A85D08;--warn-bg:#FFE9C2;--err:#CE271A;--err-bg:#FFE0DB;--ok:#0C6E38;
+  --shadow:3px 3px 0 var(--ink);--shadow-sm:2px 2px 0 var(--ink);--bw:2px;
+  color-scheme:light;
+}
+[data-theme="dark"]{
+  --ground:#191626;--surface:#241F33;--surface-2:#2C2740;
+  --ink:#F4EEDF;--ink-soft:#C2BBD6;--faint:#9A93AE;--halftone:rgba(244,238,223,.035);
+  --accent:#6E9BFF;--accent-press:#93B4FF;--accent-tint:#21294A;--on-accent:#14101F;
+  --pow:#FFD23F;--pow-deep:#FFC21A;
+  --conv:#4FD08A;--conv-bg:#15301F;--rec:#E6B84A;--rec-bg:#2E2611;
+  --rev:#82A6FF;--rev-bg:#1A2545;--eng:#B492FB;--eng-bg:#261C40;
+  --warn:#E6A648;--warn-bg:#2C2210;--err:#FF7C6E;--err-bg:#34191A;--ok:#4FD08A;
+  --shadow:3px 3px 0 #0C0915;--shadow-sm:2px 2px 0 #0C0915;
+  color-scheme:dark;
+}
+*{box-sizing:border-box;}
+.app{
+  font-family:var(--font-ui);font-size:15px;font-weight:400;line-height:1.5;
+  color:var(--ink);background-color:var(--ground);
+  background-image:radial-gradient(var(--halftone) 1.5px,transparent 1.6px);
+  background-size:20px 20px;overflow-x:hidden;-webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+.app code,.mono{font-family:var(--font-mono);font-size:.86em;font-weight:400;}
+.app strong,.app b{font-weight:700;}
+.muted{color:var(--ink-soft);}
+
+/* topbar */
+.topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:var(--s4);
+  height:60px;padding:0 var(--s6);background:var(--surface);border-bottom:var(--bw) solid var(--ink);}
+.brand{display:flex;align-items:center;gap:var(--s2);}
+.brand .mark{font-size:24px;line-height:1;transform:rotate(-5deg);}
+.brand .name{font-family:var(--font-display);font-weight:400;font-size:30px;color:var(--ink);letter-spacing:.03em;line-height:1;}
+.path-chip{font-family:var(--font-mono);font-size:12px;color:var(--ink);background:var(--surface-2);
+  border:var(--bw) solid var(--ink);padding:5px 12px;border-radius:var(--r-pill);white-space:nowrap;
+  max-width:42vw;overflow:hidden;text-overflow:ellipsis;}
+.path-chip .lbl{color:var(--ink-soft);margin-right:6px;font-weight:700;}
+.grow{flex:1;}
+.theme-toggle{display:inline-flex;align-items:center;gap:7px;border:var(--bw) solid var(--ink);
+  background:var(--surface);color:var(--ink);border-radius:var(--r-pill);padding:6px 14px;
+  font-family:var(--font-ui);font-weight:700;font-size:14px;cursor:pointer;box-shadow:var(--shadow-sm);
+  transition:transform .08s,box-shadow .08s;}
+.theme-toggle:hover{transform:translate(1px,1px);box-shadow:1px 1px 0 var(--ink);}
+.theme-toggle svg{width:16px;height:16px;}
+
+/* shell / sidebar */
+.shell{display:flex;min-height:calc(100vh - 60px);}
+.sidebar{width:236px;flex-shrink:0;padding:var(--s5) var(--s4);
+  border-right:var(--bw) solid var(--ink);background:var(--surface);}
+.nav-group-label{font-family:var(--font-display);font-size:16px;letter-spacing:.04em;
+  color:var(--ink-soft);padding:0 var(--s2);margin:0 0 var(--s3);}
+.nav-item{display:flex;align-items:center;gap:11px;padding:10px var(--s3);border-radius:var(--r-sm);
+  margin-bottom:7px;color:var(--ink);cursor:pointer;text-decoration:none;font-weight:700;
+  border:var(--bw) solid transparent;transition:background .12s,box-shadow .12s;}
+.nav-item svg{width:18px;height:18px;flex-shrink:0;}
+.nav-item:hover{background:var(--surface-2);}
+.nav-item.active{background:var(--surface-2);border-color:var(--ink);box-shadow:inset 4px 0 0 var(--pow);color:var(--ink);}
+
+/* main view */
+.view{flex:1;padding:var(--s7) var(--s8);max-width:1060px;min-width:0;}
+.view-head{margin-bottom:var(--s6);}
+.eyebrow{display:inline-block;font-family:var(--font-display);font-size:14px;letter-spacing:.06em;
+  color:var(--ink-soft);background:var(--surface-2);border:var(--bw) solid var(--ink);
+  padding:1px 11px;border-radius:var(--r-pill);margin-bottom:10px;}
+.app h1{font-family:var(--font-display);font-weight:400;font-size:42px;line-height:1;
+  letter-spacing:.01em;margin:0 0 8px;color:var(--ink);text-wrap:balance;}
+.subtitle{color:var(--ink-soft);font-size:15.5px;margin:0;max-width:64ch;font-weight:400;}
+.subtitle code{background:var(--surface-2);border:1.5px solid var(--ink);padding:0 5px;border-radius:5px;color:var(--ink);}
+
+/* cards */
+.card{background:var(--surface);border:var(--bw) solid var(--ink);border-radius:var(--r-lg);
+  padding:var(--s5);margin-bottom:var(--s6);box-shadow:var(--shadow);}
+.card-head{display:flex;align-items:center;gap:var(--s3);margin-bottom:6px;flex-wrap:wrap;}
+.card-head h3{font-family:var(--font-display);font-weight:400;font-size:24px;letter-spacing:.02em;margin:0;color:var(--ink);line-height:1;}
+.card-note{color:var(--ink-soft);font-size:14px;margin:2px 0 var(--s4);max-width:74ch;}
+.card-note code{color:var(--ink);background:var(--surface-2);border:1.5px solid var(--ink);padding:0 5px;border-radius:5px;}
+
+/* stat strip */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s4);margin-bottom:var(--s6);}
+.stat{background:var(--surface);border:var(--bw) solid var(--ink);border-radius:var(--r);padding:var(--s4);box-shadow:var(--shadow);}
+.stat .k{font-size:13px;color:var(--ink-soft);font-weight:700;display:flex;align-items:center;gap:7px;}
+.stat .k svg{width:15px;height:15px;color:var(--accent);}
+.stat .v{font-family:var(--font-display);font-weight:400;font-size:44px;letter-spacing:.01em;margin-top:4px;line-height:1;font-variant-numeric:tabular-nums;}
+
+/* buttons / inputs */
+.btn,.app button{font-family:var(--font-display);font-weight:400;font-size:17px;letter-spacing:.03em;
+  background:var(--accent);color:var(--on-accent);border:var(--bw) solid var(--ink);border-radius:var(--r-sm);
+  padding:5px 16px;cursor:pointer;box-shadow:var(--shadow-sm);transition:transform .08s,box-shadow .08s,background .12s;}
+.btn:hover,.app button:hover{background:var(--accent-press);transform:translate(1px,1px);box-shadow:1px 1px 0 var(--ink);}
+.btn:active,.app button:active{transform:translate(2px,2px);box-shadow:0 0 0 var(--ink);}
+.btn.secondary{background:var(--surface);color:var(--ink);}
+.btn.secondary:hover{background:var(--pow);color:var(--ink);}
+.ghost-btn{font-family:var(--font-ui);font-weight:700;font-size:13px;color:var(--ink);background:var(--surface);
+  border:var(--bw) solid var(--ink);border-radius:var(--r-sm);padding:3px 12px;cursor:pointer;
+  box-shadow:var(--shadow-sm);transition:transform .08s,box-shadow .08s,background .12s;}
+.ghost-btn:hover{transform:translate(1px,1px);box-shadow:1px 1px 0 var(--ink);background:var(--pow);}
+.ghost-btn:active{transform:translate(2px,2px);box-shadow:0 0 0 var(--ink);}
+.app label{display:block;font-size:13px;color:var(--ink-soft);font-weight:700;margin:var(--s3) 0 5px;}
+.app input,.app select{font-family:var(--font-ui);font-size:15px;width:100%;color:var(--ink);background:var(--surface-2);
+  border:var(--bw) solid var(--ink);border-radius:var(--r-sm);padding:8px 11px;font-weight:400;transition:box-shadow .1s;}
+.app input:focus,.app select:focus{outline:none;box-shadow:2px 2px 0 var(--accent);}
+.field{margin-top:var(--s3);}
+.hint{font-size:12.5px;color:var(--faint);margin-top:5px;}
+.row{display:flex;gap:var(--s2);align-items:center;flex-wrap:wrap;}
+
+/* pills / sticker */
+.pill{display:inline-flex;align-items:center;gap:5px;font-weight:700;font-size:13px;background:var(--surface-2);
+  color:var(--ink);border:var(--bw) solid var(--ink);border-radius:var(--r-pill);padding:2px 11px;margin:2px 2px 2px 0;}
+
+/* toast */
+.toast{position:fixed;right:16px;bottom:16px;z-index:50;padding:10px 14px;border:var(--bw) solid var(--ink);
+  border-radius:var(--r);background:var(--conv-bg);color:var(--ink);font-weight:700;box-shadow:var(--shadow);
+  opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s;pointer-events:none;max-width:380px;}
+.toast.show{opacity:1;transform:none;}
+.toast.err{background:var(--err-bg);}
+
+/* focus */
+.app a:focus-visible,.app button:focus-visible,.nav-item:focus-visible,
+.app input:focus-visible,.app select:focus-visible{outline:3px solid var(--accent);outline-offset:2px;}
+
+/* ============================================================
+   Connectors view — additions (same token language)
+   ============================================================ */
+.profile-chip{display:inline-flex;align-items:center;gap:8px;margin-top:var(--s4);
+  font-family:var(--font-ui);font-weight:700;font-size:13.5px;color:var(--ink);
+  background:var(--surface);border:var(--bw) solid var(--ink);border-radius:var(--r-pill);
+  padding:5px 6px 5px 13px;box-shadow:var(--shadow-sm);}
+.profile-chip .lbl{color:var(--ink-soft);}
+.profile-chip select{width:auto;padding:3px 10px;font-weight:700;font-size:13px;box-shadow:none;}
+.profile-chip .soon{font-family:var(--font-mono);font-size:11px;color:var(--faint);}
+
+/* connector card */
+.cx{padding:var(--s5) var(--s5) var(--s4);}
+.cx-head{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;}
+.cx-ic{width:40px;height:40px;flex-shrink:0;display:grid;place-items:center;border:var(--bw) solid var(--ink);
+  border-radius:var(--r-sm);background:var(--surface-2);box-shadow:var(--shadow-sm);}
+.cx-ic svg{width:22px;height:22px;stroke:var(--ink);}
+.cx-titles{min-width:0;}
+.cx-title{font-family:var(--font-display);font-weight:400;font-size:23px;letter-spacing:.02em;line-height:1;color:var(--ink);}
+.cx-cap{font-family:var(--font-mono);font-size:12px;color:var(--ink-soft);margin-top:3px;}
+.cx-spacer{flex:1;}
+.status{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-display);font-size:14px;letter-spacing:.03em;
+  border:var(--bw) solid var(--ink);border-radius:var(--r-pill);padding:1px 11px;color:var(--ink);transform:rotate(-1deg);white-space:nowrap;}
+.status .dot{width:8px;height:8px;border-radius:50%;border:1px solid var(--ink);}
+.status.ok{background:var(--conv-bg);color:var(--conv);}.status.ok .dot{background:var(--conv);}
+.status.info{background:var(--rev-bg);color:var(--rev);}.status.info .dot{background:var(--rev);}
+.status.save{background:var(--surface-2);color:var(--ink-soft);}.status.save .dot{background:var(--ink-soft);}
+.status.off{background:transparent;border-style:dashed;color:var(--faint);}.status.off .dot{background:transparent;}
+.cx-expand{margin-left:8px;background:none;border:none;box-shadow:none;color:var(--ink);padding:4px;cursor:pointer;line-height:0;}
+.cx-expand:hover{background:none;transform:none;box-shadow:none;}
+.cx-expand svg{width:20px;height:20px;stroke:var(--ink);transition:transform .15s;}
+.cx.collapsed .cx-expand svg{transform:rotate(-90deg);}
+.cx-powers{margin:10px 0 0;font-size:13px;color:var(--ink-soft);}
+.cx-powers code{color:var(--ink);background:var(--surface-2);border:1.5px solid var(--ink);padding:0 5px;border-radius:5px;font-size:12px;}
+
+.cx-body{margin-top:var(--s4);border-top:2px dashed var(--surface-2);padding-top:var(--s4);}
+.cx.collapsed .cx-body,.cx.collapsed .cx-powers{display:none;}
+.cx-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s4);}
+.cx-fields .full{grid-column:1 / -1;}
+.key-wrap{position:relative;display:flex;gap:var(--s2);align-items:stretch;}
+.key-wrap input{flex:1;font-family:var(--font-mono);font-size:13.5px;}
+.reveal{flex-shrink:0;font-family:var(--font-ui);font-weight:700;font-size:12px;padding:0 12px;background:var(--surface);color:var(--ink);}
+.reveal:hover{background:var(--pow);}
+.cx-actions{display:flex;align-items:center;gap:var(--s3);margin-top:var(--s4);flex-wrap:wrap;}
+.vres{font-family:var(--font-mono);font-size:12.5px;font-weight:700;display:inline-flex;align-items:center;gap:7px;}
+.vres.ok{color:var(--ok);}.vres.info{color:var(--rev);}.vres.muted{color:var(--ink-soft);}
+.vres.err{color:var(--err);}
+.locked-note{font-size:12.5px;color:var(--faint);}
+
+/* mockup control bar (NOT part of the product) */
+.mockbar{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;
+  padding:8px var(--s6);background:repeating-linear-gradient(135deg,var(--pow) 0 14px,#FFE07A 14px 28px);
+  border-bottom:var(--bw) solid var(--ink);color:#1A1722;font-family:var(--font-ui);font-weight:700;font-size:13px;}
+.mockbar .tag{font-family:var(--font-display);font-size:15px;letter-spacing:.04em;}
+.seg{display:inline-flex;border:var(--bw) solid #1A1722;border-radius:var(--r-pill);overflow:hidden;background:#fff;}
+.seg button{font-family:var(--font-ui);font-weight:700;font-size:12.5px;background:#fff;color:#1A1722;
+  border:none;border-radius:0;box-shadow:none;padding:5px 14px;letter-spacing:0;}
+.seg button:hover{background:var(--accent-tint);transform:none;box-shadow:none;}
+.seg button.on{background:#2B6CFF;color:#fff;}
+
+/* responsive */
+.menu-btn{display:none;}
+@media (max-width:880px){
+  .sidebar{position:fixed;top:60px;left:0;bottom:0;z-index:25;transform:translateX(-100%);transition:transform .2s;box-shadow:var(--shadow);}
+  .sidebar.open{transform:none;}
+  .menu-btn{display:inline-grid;place-items:center;width:38px;height:38px;background:var(--surface);
+    border:var(--bw) solid var(--ink);border-radius:var(--r-sm);box-shadow:var(--shadow-sm);cursor:pointer;padding:0;}
+  .menu-btn svg{width:20px;height:20px;}
+  .view{padding:var(--s5) var(--s4);}
+  .stat-grid{grid-template-columns:repeat(2,1fr);}
+  .app h1{font-size:36px;}
+  .path-chip{display:none;}
+  .cx-fields{grid-template-columns:1fr;}
+}
+@media (prefers-reduced-motion:reduce){.btn,.app button,.ghost-btn,.nav-item,.theme-toggle,.toast,.sidebar,.cx-expand svg{transition:none;}}
+</style>
+
+<div class="app" id="app">
+
+  <!-- MOCKUP control bar -->
+  <div class="mockbar">
+    <span class="tag">◓ MOCKUP</span>
+    <span>palugada web · Connectors</span>
+    <span class="grow"></span>
+    <span>Layout</span>
+    <span class="seg" id="layoutSeg">
+      <button data-layout="expanded" class="on">Expanded</button>
+      <button data-layout="compact">Compact</button>
+    </span>
+  </div>
+
+  <!-- topbar replica -->
+  <header class="topbar">
+    <button class="menu-btn" id="menuBtn" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+    <div class="brand"><span class="mark">🛠</span><span class="name">palugada</span></div>
+    <span class="path-chip"><span class="lbl">knowledge</span><span>~/.palugada/knowledge</span></span>
+    <span class="grow"></span>
+    <button class="theme-toggle" id="themeBtn" aria-label="Toggle light/dark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <span id="themeLabel">Dark</span>
+    </button>
+  </header>
+
+  <div class="shell">
+    <!-- sidebar with new Connectors item -->
+    <nav class="sidebar" id="sidebar">
+      <div class="nav-group-label">Console</div>
+      <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>Overview</a>
+      <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects</a>
+      <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 5h16M4 12h16M4 19h10"/></svg>Profiles</a>
+      <a class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h7M8 11h7"/></svg>Knowledge</a>
+      <a class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/></svg>Connectors</a>
+    </nav>
+
+    <main class="view">
+      <div class="view-head">
+        <span class="eyebrow">CONNECTORS</span>
+        <h1>Connectors &amp; API Keys</h1>
+        <p class="subtitle">Set your API keys and default wiring once. Keys live globally in <code>~/.palugada/secrets.yaml</code> (chmod 600, never shown in full). Projects inherit this setup — they only set their own <code>repo</code>.</p>
+        <div class="profile-chip">
+          <span class="lbl">Auth profile</span>
+          <select aria-label="Auth profile"><option>default</option></select>
+          <span class="soon">multi-profile soon</span>
+        </div>
+      </div>
+
+      <!-- summary -->
+      <div class="stat-grid">
+        <div class="stat"><div class="k">Connectors</div><div class="v">6</div></div>
+        <div class="stat"><div class="k">Configured</div><div class="v">5</div></div>
+        <div class="stat"><div class="k">Verified</div><div class="v">2</div></div>
+        <div class="stat"><div class="k">Not set</div><div class="v">1</div></div>
+      </div>
+
+      <div id="connectors"></div>
+
+      <!-- security note -->
+      <div class="card" style="box-shadow:var(--shadow-sm)">
+        <div class="card-head"><h3>How keys are stored</h3></div>
+        <p class="card-note">Tokens are written to <code>~/.palugada/secrets.yaml</code> with <code>0600</code> permissions and are <strong>never sent back to the browser</strong> — you only ever see <code>•••• (N chars)</code>. Leaving a key field blank keeps the existing value. Provider &amp; base URL are saved as global defaults; each project still picks its own repo and can override a provider if it needs to.</p>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+</div>
+
+<script>
+const CONNECTORS = [
+  { id:"git_host", title:"Git Host", cap:"git_host", icon:'<path d="M9 7H6a3 3 0 0 0 0 6h3M15 7h3a3 3 0 0 1 0 6h-3M8 10h8"/>',
+    providers:["github","gitlab"], provider:"github",
+    baseLabel:"Base URL", baseHint:"blank = api.github.com", base:"",
+    keyLabel:"API token (git_token)", keyChars:40, hasKey:true,
+    powers:["pr","git","ci"], status:"info", statusText:"Ready",
+    verify:{type:"repo", text:"Needs a repo — open a project to verify (GET /repos/owner/name)"},
+    note:"Repo is set per project. The token is shared by Git Host and CI." },
+
+  { id:"issue", title:"Issue Tracker", cap:"issue_tracker",
+    icon:'<path d="M9 11l3 3 7-7"/><path d="M21 12a9 9 0 1 1-6.2-8.5"/>',
+    providers:["jira","github_issues"], provider:"jira",
+    baseLabel:"Base URL", baseHint:"your Jira/Confluence site", base:"https://acme.atlassian.net",
+    emailLabel:"Account email (jira_email)", email:"dev@acme.io",
+    keyLabel:"API token (jira_token)", keyChars:24, hasKey:true,
+    powers:["issue"], status:"ok", statusText:"Connected",
+    verify:{type:"now", ok:true, text:"Authenticated as dev@acme.io (GET /myself)"},
+    note:"GitHub Issues reuses the Git Host token instead." },
+
+  { id:"wiki", title:"Docs & Wiki", cap:"wiki",
+    icon:'<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h7M8 11h7"/>',
+    providers:["notion","confluence"], provider:"notion",
+    baseLabel:"Base URL", baseHint:"Notion needs none; Confluence needs a site", base:"",
+    keyLabel:"API token (wiki_token)", keyChars:50, hasKey:true,
+    powers:["wiki","prd"], status:"ok", statusText:"Connected",
+    verify:{type:"now", ok:true, text:"Token accepted (Notion users.me)"},
+    note:"Confluence also needs base URL + account email." },
+
+  { id:"ci", title:"CI / Pipelines", cap:"ci",
+    icon:'<path d="M5 12h4l2 5 3-10 2 5h3"/>',
+    providers:["github_actions","gitlab_ci","jenkins"], provider:"github_actions",
+    baseLabel:"Base URL", baseHint:"GitHub Actions needs none", base:"",
+    keyLabel:"API token", keyChars:0, hasKey:false, inheritKey:"git_token",
+    powers:["ci"], status:"info", statusText:"Ready",
+    verify:{type:"repo", text:"Needs a repo — open a project to verify the workflow run"},
+    note:"GitHub Actions & GitLab CI reuse the Git Host token. Jenkins needs its own user + token." },
+
+  { id:"design", title:"Design", cap:"design",
+    icon:'<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>',
+    providers:["figma"], provider:"figma",
+    baseLabel:"Base URL", baseHint:"none needed", base:"",
+    keyLabel:"API token (figma_token)", keyChars:0, hasKey:false,
+    powers:["design"], status:"off", statusText:"Not set",
+    verify:{type:"now", ok:true, text:"Token accepted (GET /v1/me)"},
+    note:"Personal access token from Figma → Settings." },
+
+  { id:"chat", title:"Chat & Notify", cap:"chat",
+    icon:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    providers:["slack"], provider:"slack",
+    baseLabel:"Webhook URL", baseHint:"this IS the secret", base:"",
+    keyLabel:"Webhook URL (chat_webhook)", keyChars:78, hasKey:true,
+    powers:["notify"], status:"save", statusText:"Saved",
+    verify:{type:"none", text:"Saved. Slack isn't pinged — verify would post a real message."},
+    note:"Incoming-webhook URL from your Slack app." },
+];
+
+const esc = s => String(s).replace(/[&<>\"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const ICON_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+
+function optionList(arr, sel){ return arr.map(p=>`<option${p===sel?" selected":""}>${esc(p)}</option>`).join(""); }
+
+function keyField(c){
+  if(c.inheritKey){
+    return `<div class="field full">
+      <label>${esc(c.keyLabel)}</label>
+      <div class="locked-note">↳ Inherited from <strong>Git Host</strong> (<code>${esc(c.inheritKey)}</code>). No separate key needed.</div>
+    </div>`;
+  }
+  const ph = c.hasKey ? `•••• ${c.keyChars} chars · blank = keep` : "Paste token…";
+  return `<div class="field full">
+    <label>${esc(c.keyLabel)}</label>
+    <div class="key-wrap">
+      <input type="password" placeholder="${esc(ph)}" data-key>
+      <button class="reveal" type="button" data-reveal>Show</button>
+    </div>
+    <div class="hint">${c.hasKey?"A value is already stored. Type to replace it.":"No key stored yet."}</div>
+  </div>`;
+}
+
+function verifyBlock(c){
+  if(c.verify.type==="now") return `<button class="btn secondary" data-verify>Verify</button><span class="vres" data-vres></span>`;
+  if(c.verify.type==="repo") return `<button class="btn secondary" data-verify>Verify</button><span class="vres info" data-vres>↳ ${esc(c.verify.text)}</span>`;
+  return `<span class="vres muted">✎ ${esc(c.verify.text)}</span>`;
+}
+
+function card(c){
+  const emailF = c.emailLabel ? `<div class="field"><label>${esc(c.emailLabel)}</label><input type="text" value="${esc(c.email||"")}"></div>` : "";
+  return `<div class="card cx" data-id="${c.id}">
+    <div class="cx-head">
+      <span class="cx-ic"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">${c.icon}</svg></span>
+      <div class="cx-titles">
+        <div class="cx-title">${esc(c.title)}</div>
+        <div class="cx-cap">${esc(c.cap)} · ${esc(c.provider)}</div>
+      </div>
+      <span class="cx-spacer"></span>
+      <span class="status ${c.status}"><span class="dot"></span>${esc(c.statusText)}</span>
+      <button class="cx-expand" data-toggle aria-label="Expand">${ICON_CHEV}</button>
+    </div>
+    <p class="cx-powers">Powers ${c.powers.map(p=>`<code>palugada ${p}</code>`).join(" ")}</p>
+    <div class="cx-body">
+      <div class="cx-fields">
+        <div class="field"><label>Provider</label><select data-prov>${optionList(c.providers,c.provider)}</select></div>
+        <div class="field"><label>${esc(c.baseLabel)}</label><input type="text" value="${esc(c.base||"")}" placeholder="${esc(c.baseHint)}"><div class="hint">${esc(c.baseHint)}</div></div>
+        ${emailF}
+        ${keyField(c)}
+      </div>
+      <div class="cx-actions">
+        <button class="btn" data-save>Save ${esc(c.title)}</button>
+        ${verifyBlock(c)}
+        <span class="grow"></span>
+        <span class="locked-note">${esc(c.note)}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+const host = document.getElementById("connectors");
+host.innerHTML = CONNECTORS.map(card).join("");
+
+// toast
+let toastT;
+function toast(msg, err){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.className = "toast show" + (err?" err":"");
+  clearTimeout(toastT); toastT = setTimeout(()=>{ t.className="toast"+(err?" err":""); }, 2200);
+}
+
+// interactions
+host.addEventListener("click", e=>{
+  const cardEl = e.target.closest(".cx"); if(!cardEl) return;
+  const id = cardEl.dataset.id;
+  const c = CONNECTORS.find(x=>x.id===id);
+  if(e.target.closest("[data-toggle]")){ cardEl.classList.toggle("collapsed"); return; }
+  if(e.target.closest("[data-reveal]")){
+    const inp = cardEl.querySelector("[data-key]"); const btn = e.target.closest("[data-reveal]");
+    const show = inp.type==="password"; inp.type = show?"text":"password"; btn.textContent = show?"Hide":"Show"; return;
+  }
+  if(e.target.closest("[data-save]")){ toast("Saved "+c.title+" to ~/.palugada/secrets.yaml"); return; }
+  if(e.target.closest("[data-verify]")){
+    const out = cardEl.querySelector("[data-vres]");
+    if(c.verify.type==="now"){ out.className="vres ok"; out.textContent="✓ "+c.verify.text; toast("Verified "+c.title); }
+    else if(c.verify.type==="repo"){ out.className="vres info"; out.textContent="↳ "+c.verify.text; }
+    return;
+  }
+});
+
+// layout toggle (mockup only)
+document.getElementById("layoutSeg").addEventListener("click", e=>{
+  const b = e.target.closest("button"); if(!b) return;
+  document.querySelectorAll("#layoutSeg button").forEach(x=>x.classList.toggle("on", x===b));
+  const compact = b.dataset.layout==="compact";
+  document.querySelectorAll(".cx").forEach(el=>el.classList.toggle("collapsed", compact));
+});
+
+// theme toggle
+const root = document.documentElement;
+document.getElementById("themeBtn").addEventListener("click", ()=>{
+  const dark = root.getAttribute("data-theme")==="dark";
+  root.setAttribute("data-theme", dark?"light":"dark");
+  document.getElementById("themeLabel").textContent = dark?"Dark":"Light";
+});
+// menu (mobile)
+document.getElementById("menuBtn").addEventListener("click", ()=> document.getElementById("sidebar").classList.toggle("open"));
+</script>
