@@ -130,7 +130,6 @@ fn integration_ref<'a>(i: &'a Integrations, cap: &str) -> Option<&'a Option<Prov
 /// else is verifiable in-place. Confirmed against `src/clients/*::verify()`:
 /// git_host/gitlab → `/user`, jenkins → `/me/api/json`, slack → local check — all
 /// repo-free; only github_issues / github_actions / gitlab_ci parse a repo.
-#[allow(dead_code)]
 pub fn verify_kind(cap: &str, provider: &str) -> &'static str {
     match (cap, provider) {
         ("issue_tracker", "github_issues") => "repo",
@@ -252,7 +251,6 @@ fn global_view_of(defaults: &Integrations, auth: &AuthProfile) -> Value {
 }
 
 /// The Connectors page read model (global default wiring + `default` secrets).
-#[allow(dead_code)]
 pub fn global_view() -> Result<Value, String> {
     let global = GlobalConfig::load_or_default()?;
     let secrets = Secrets::load_or_default()?;
@@ -263,7 +261,6 @@ pub fn global_view() -> Result<Value, String> {
 /// Verify a connector from the GLOBAL page. Repo-bound (cap,provider) pairs return
 /// `needs_repo` without a network call; the rest build an ephemeral project config
 /// from the global defaults and run the real `verify()`.
-#[allow(dead_code)]
 pub fn global_verify(cap: &str) -> Result<Value, String> {
     let global = GlobalConfig::load_or_default()?;
     let slot = integration_ref(&global.default_integrations, cap)
@@ -335,7 +332,6 @@ fn apply_connector_secrets(auth: &mut AuthProfile, secrets: &BTreeMap<String, St
 /// Save ONE connector globally: default wiring → `~/.palugada.yaml`
 /// (`default_integrations.<cap>`, `(none)`/blank clears); tokens → the `default`
 /// auth profile in `secrets.yaml`.
-#[allow(dead_code)]
 pub fn apply_global(cap: &str, body: &str) -> Result<Value, String> {
     let inp: ConnectorInput = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
     let mut global = GlobalConfig::load_or_default()?;
