@@ -144,22 +144,32 @@ writes exactly the wiring + secret fields that capability owns (table in §4).
 
 ### 3. Verify behaviour — `global_verify(cap)`
 
-Classify each capability by whether `.verify()` needs a `repo`:
+Classify each **(capability, provider)** by whether `.verify()` needs a `repo`.
+This was **confirmed against the actual `.verify()` bodies** in `src/clients/*`
+(2026-06-25) — and it corrected the first assumption: `git_host` verify only
+authenticates the user (`GET /user`, `GET /api/v4/user`), so it needs **no repo**;
+`jenkins` hits `/me/api/json` (no repo); `slack` verify merely checks the webhook is
+set (no network POST). Only three providers actually read `self.repo`:
 
-| Needs repo? | Capabilities | Global verify result |
+| Verify path | (cap, provider) | What `.verify()` does |
 |---|---|---|
-| **No** | `issue_tracker`(jira), `wiki`(confluence/notion), `design`(figma) | build an **ephemeral `ProjectConfig`** from `default_integrations` + the resolved secret, call the real `.verify()`, return `{ok, message}` / `{ok:false, error}` as data |
-| **Yes** | `git_host`, `issue_tracker`(github_issues), `ci`(github_actions/gitlab_ci/jenkins) | return `{needs_repo:true, message:"verify from a project"}` — no network call |
-| **N/A** | `chat`(slack) | `{tested:false, message:"saved; Slack isn't pinged"}` (a real verify would POST) |
+| **`now`** (in-page) | issue_tracker·jira (`/myself`), wiki·confluence (`?limit=1`), wiki·notion (`/v1/users/me`), design·figma (`/v1/me`), git_host·github (`/user`), git_host·gitlab (`/api/v4/user`), ci·jenkins (`/me/api/json`), chat·slack (local webhook check) | build an **ephemeral `ProjectConfig`** from `default_integrations` + the `default` secret, call the real `.verify()`, return `{ok, message}` / `{ok:false, error}` as data |
+| **`repo`** (verify from project) | issue_tracker·github_issues, ci·github_actions, ci·gitlab_ci | return `{ok:false, needs_repo:true, message:"verify from a project"}` — **no network call** |
 
-> The exact repo-vs-no-repo split per provider must be confirmed against the actual
-> `.verify()` bodies in `src/clients/*` during the plan's first task (e.g. whether
-> Jenkins needs only base_url+user+token, whether Notion's check is repo-free). The
-> table above is the design intent; the implementation reads the truth from the
-> client code.
+`verify_kind(cap, provider)` is therefore:
 
-Verify stays the **only** network path, per-click and error-boxed — same security
-posture as today's per-project verify, now also reachable globally for repo-free caps.
+```rust
+match (cap, provider) {
+    ("issue_tracker", "github_issues") => "repo",
+    ("ci", "github_actions") | ("ci", "gitlab_ci") => "repo",
+    _ => "now",
+}
+```
+
+If the capability has no provider configured, return `{ok:false, error:"no provider
+configured"}` without a network call. Verify stays the **only** outbound path,
+per-click and error-boxed — same posture as today's per-project verify, now also
+reachable globally for the (many) repo-free cases.
 
 ### 4. Capability → fields → secret mapping (provider-aware)
 
