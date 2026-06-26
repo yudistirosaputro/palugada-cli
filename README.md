@@ -1,32 +1,94 @@
+<div align="center">
+
 # palugada
 
+***"Apa lu mau, gua ada."*** — whatever your AI agent needs to know about your
+repo, palugada already has it indexed.
+
 [![CI](https://github.com/yudistirosaputro/palugada-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/yudistirosaputro/palugada-cli/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/yudistirosaputro/palugada-cli?label=release)](https://github.com/yudistirosaputro/palugada-cli/releases)
+[![npm](https://img.shields.io/npm/v/palugada-cli?label=npm)](https://www.npmjs.com/package/palugada-cli)
+[![Agents](https://img.shields.io/badge/agents-Claude%20%C2%B7%20Codex%20%C2%B7%20Gemini%20%C2%B7%20Cursor-7c5cff)](#what-palugada-init-generates)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Project-agnostic developer knowledge & connector CLI — one binary that gives
-any project:
+One binary that gives **any** project a token-cheap, always-current knowledge
+layer, a local code index, and connectors to the tools your team already uses.
 
-- **Connectors** to the tools your team already uses — Jira / GitHub Issues,
-  Confluence / Notion, GitLab / GitHub, Figma, Jenkins / GitHub Actions /
-  GitLab CI, and Slack — behind provider-agnostic traits, so the same command
-  works regardless of vendor. Set them up from the CLI or the **Connectors**
-  menu in `palugada web` (API keys stored globally, never committed).
-- **A knowledge layer** — stack conventions (`q`), task recipes (`for`), and
-  keyword search (`s`) read from bundled profiles (android-mvvm, flutter-bloc,
-  rust-cli, kmp) with single-base **profile inheritance** (`extends`) and a
-  committable per-project convention overlay.
-- **A local code indexer** — `index` scans your repo into
-  `<repo>/.palugada/index/`. It builds a **generic symbol index** of every
-  definition (class, object, function, method, property — with kind, enclosing
-  scope, and signature) via a per-language tree-sitter tags query (Kotlin, Rust,
-  Dart), so `symbol` finds functions, not just types. Curated **fact families**
-  (viewmodel/route/…) are extracted alongside via tree-sitter/regex for the
-  knowledge layer.
-- **Budgeted context packs** — `brief <flow>` assembles conventions + recipe +
-  indexed facts into a token-budgeted pack for AI-agent work (bugfix, feature,
-  refactor, review).
-- **Offline scaffolding** — `palugada init` drops a per-project config and
-  agent instruction files (Claude/Codex/Gemini/Cursor) into any repo in one
-  command, no network needed.
+</div>
+
+---
+
+## Why palugada exists
+
+AI coding agents are strong reasoners but **blind to your project**. To answer
+"how do we do X *here*?" or "where is `LoginViewModel`?", an agent greps and
+reads dozens of files — burning tokens, taking time, and ending up with context
+that goes stale the moment someone refactors. The conventions that *would*
+answer the question live in people's heads, in a wiki, or in a `CLAUDE.md` that
+nobody keeps current.
+
+So teams paper over it: they inline architecture notes into agent instruction
+files (which bloat every prompt and rot fast), re-explain the same conventions
+turn after turn, and still can't reach the knowledge sitting in Jira,
+Confluence, GitLab, Figma, Jenkins, or Slack.
+
+**palugada is the cheap, current source of truth an agent asks instead of
+re-reading your codebase.** The name is the old Betawi joke *"apa lu mau, gua
+ada"* — *whatever you want, I've got it* — a market stall that sells everything.
+That's the pitch: one small CLI that already has the answer.
+
+| The problem | What palugada does about it |
+|---|---|
+| Agents grep 50 files to find a symbol | `palugada symbol X` returns the definition from a local index — instantly, for a few tokens |
+| "How do we do X here?" lives in someone's head | `palugada q <topic>` / `for <task>` read versioned **profile conventions & recipes** |
+| Inlining knowledge into `CLAUDE.md` bloats context and goes stale | Generated agent skills are **references to commands**, not inlined text — small, and always current |
+| Team knowledge is scattered across Jira/Confluence/GitLab/Figma/Jenkins/Slack | **Provider-agnostic connectors** — the same command works regardless of vendor |
+| Setting up an AI agent per repo is fiddly | `palugada init` scaffolds config + agent files for Claude/Codex/Gemini/Cursor in one offline command |
+
+## Before / after
+
+**Before** — the agent burns context rediscovering what the repo already knows:
+
+```
+> where is the login view model and how do we handle errors here?
+  …reads LoginActivity.kt, LoginFragment.kt, di/AppModule.kt,
+    ui/login/*, util/Result.kt, base/BaseViewModel.kt … (12 files, ~9k tokens)
+```
+
+**After** — it asks palugada and gets a budgeted answer pack:
+
+```bash
+palugada symbol LoginViewModel        # → app/ui/login/LoginViewModel.kt:14  (class, signature)
+palugada q errorhandling              # → the team's error convention, one section
+palugada brief bugfix app/ui/login/LoginViewModel.kt   # recent commits + symbols + error/test convention, within a token budget
+```
+
+Same answer, a fraction of the tokens, and it never drifts from the checkout.
+
+## How it works
+
+palugada is four pieces behind one binary:
+
+1. **A knowledge layer** — stack conventions (`q`), task recipes (`for`), and
+   keyword search (`s`) read from bundled profiles (`android-mvvm`,
+   `flutter-bloc`, `rust-cli`, `kmp`) with single-base **profile inheritance**
+   (`extends`) plus a committable per-project convention overlay.
+2. **A local code indexer** — `index` scans your repo into
+   `<repo>/.palugada/index/` and builds a **generic symbol index** of every
+   definition (class, object, function, method, property — with kind, enclosing
+   scope, and signature) via a per-language tree-sitter tags query (Kotlin,
+   Rust, Dart), so `symbol` finds functions, not just types. Curated **fact
+   families** (viewmodel/route/…) are extracted alongside for the knowledge layer.
+3. **Budgeted context packs** — `brief <flow>` assembles conventions + recipe +
+   indexed facts into a **token-budgeted** pack for AI-agent work (bugfix,
+   feature, refactor, review).
+4. **Connectors** to the tools your team already uses — Jira / GitHub Issues,
+   Confluence / Notion, GitLab / GitHub, Figma, Jenkins / GitHub Actions /
+   GitLab CI, and Slack — behind provider-agnostic traits, so the same command
+   works regardless of vendor. API keys are stored **globally, never committed**.
+
+`palugada init` ties it together: it scaffolds a per-project config and agent
+instruction files into any repo offline, with **no network needed**.
 
 ## What you can do
 
@@ -94,7 +156,7 @@ profiles by walking up from its own path (symlinks onto `PATH` are resolved). If
 you move the bare binary elsewhere, point `PALUGADA_KNOWLEDGE` at the bundled
 `knowledge/` directory.
 
-## Build (from source)
+### Build from source
 
 Prerequisite: a stable Rust toolchain. If you don't have one yet:
 
@@ -290,11 +352,10 @@ The sidebar has five sections:
   into token-cheap sections), edit **flows**, wire up profile **inheritance**
   (`extends`), and import markdown docs (split by heading into conventions).
 - **Knowledge** — read the active profile's conventions & recipes.
-- **Connectors** *(new in 0.2.0)* — set your **API keys + default provider wiring**
-  once, globally: each connector (Git host, Issue tracker, Docs & Wiki, CI, Design,
-  Chat) is a card with a provider dropdown, base URL, a masked key field, and an
-  in-place **Verify** button. Projects inherit the wiring and only set their own
-  `repo`.
+- **Connectors** — set your **API keys + default provider wiring** once, globally:
+  each connector (Git host, Issue tracker, Docs & Wiki, CI, Design, Chat) is a card
+  with a provider dropdown, base URL, a masked key field, and an in-place
+  **Verify** button. Projects inherit the wiring and only set their own `repo`.
 
 Everything writes the files the CLI reads — no database. The server binds to
 loopback only and accepts only `localhost` Hosts. **Secrets are write-only and
@@ -302,7 +363,9 @@ always masked on read** — the plaintext token is never sent to the browser, an
 blank key field keeps the stored value; the per-click **Verify** is the only
 outbound network call.
 
-## `~/.palugada/secrets.yaml` (example — never commit)
+## Configuration
+
+### `~/.palugada/secrets.yaml` (example — never commit)
 
 ```yaml
 auth_profiles:
@@ -320,14 +383,13 @@ auth_profiles:
     chat_webhook:  "https://hooks.slack.com/services/PASTE/WEBHOOK/URL"
 ```
 
-## `<repo>/.palugada/config.yaml` (example)
+### `<repo>/.palugada/config.yaml` (example)
 
 See [`examples/project.config.example.yaml`](examples/project.config.example.yaml).
 Each integration names a provider. Implemented today: issue tracker `jira` or
 `github_issues` (set `repo: owner/name`); wiki `confluence` or `notion`; git host `gitlab`
 or `github`; design `figma`; CI `jenkins`, `github_actions`, or `gitlab_ci`; chat
-`slack`. Other providers (Notion, Linear, …) are roadmap only — selecting one is
-a hard error.
+`slack`. Other providers (Linear, …) are roadmap only — selecting one is a hard error.
 
 ## Layout
 
@@ -357,7 +419,7 @@ src/
 knowledge/profiles/    bundled stack profiles (android-mvvm, flutter-bloc, rust-cli, kmp)
 ```
 
-## Roadmap (next)
+## Roadmap
 
 - Wiki tie-in for `prd.context` (a ticket's linked Confluence/Notion spec) — the
   `feature` flow currently packs the issue summary + description only.
@@ -368,27 +430,6 @@ knowledge/profiles/    bundled stack profiles (android-mvvm, flutter-bloc, rust-
 
 There is **no `sync`**: the index is local to each developer — `palugada index`
 regenerates it from the local checkout; nothing is pulled from a shared corpus.
-
-**New in 0.2.0:**
-
-- A global **Connectors** menu in `palugada web` to set API keys + default
-  provider wiring once. Keys live globally per **auth-profile** and each project
-  picks which one (so different projects can use different token sets); the global
-  menu manages the `default` profile today, while the per-project Credentials
-  editor can target any named auth-profile.
-- Every bundled profile now ships **`build` / `test` / `lint` / `run`** exec
-  verbs, so `palugada exec build` runs the right tool for the stack (cargo /
-  flutter / gradle) out of the box.
-- Profile **inheritance** (`extends`) + a per-project **convention overlay**,
-  both editable in the web console.
-
-Done so far: connectors (Jira / GitHub Issues, Confluence / Notion, GitLab /
-GitHub, Figma, Jenkins / GitHub Actions / GitLab CI, Slack), `palugada init`
-(offline multi-agent scaffolding for Claude/Codex/Gemini/Cursor), knowledge reads
-(`q` / `for` / `s`) over bundled profiles with inheritance, the project indexer
-(`index` + `symbol` + `fact`; tree-sitter for Kotlin/Rust/Dart), flow context
-packs (`brief` — bugfix/feature/refactor/review with a priority-fill budget),
-per-profile build verbs (`exec`), and the `palugada web` authoring console.
 
 ## Contributing
 
