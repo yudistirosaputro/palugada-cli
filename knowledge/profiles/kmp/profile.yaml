@@ -14,3 +14,12 @@ flows:
 
 review_map:
   symbol: [architecture]
+
+# Build/test/lint/run verbs for `palugada exec <verb>` (override per-repo in
+# .palugada/config.yaml). `lint` assumes the detekt plugin; `run` assumes the
+# Gradle application plugin — override if your setup differs. Default timeout 600s.
+exec:
+  build: ./gradlew build
+  test:  ./gradlew test
+  lint:  ./gradlew detekt
+  run:   ./gradlew run

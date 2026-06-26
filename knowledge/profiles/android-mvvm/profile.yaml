@@ -34,3 +34,12 @@ review_map:
   service:    [architecture, errorhandling]
   route:      [architecture]
   i18n:       [style]
+
+# Build/test/lint/run verbs for `palugada exec <verb>` (override per-repo in
+# .palugada/config.yaml). `run` installs the debug build to a connected
+# device/emulator. Default timeout 600s.
+exec:
+  build: ./gradlew assembleDebug
+  test:  ./gradlew testDebugUnitTest
+  lint:  ./gradlew lint
+  run:   ./gradlew installDebug

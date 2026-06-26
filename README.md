@@ -5,16 +5,20 @@
 Project-agnostic developer knowledge & connector CLI — one binary that gives
 any project:
 
-- **Connectors** to the tools your team already uses — Jira, Confluence,
-  GitLab/GitHub, Figma, Jenkins — behind provider-agnostic traits, so the same
-  command works regardless of vendor.
+- **Connectors** to the tools your team already uses — Jira / GitHub Issues,
+  Confluence / Notion, GitLab / GitHub, Figma, Jenkins / GitHub Actions /
+  GitLab CI, and Slack — behind provider-agnostic traits, so the same command
+  works regardless of vendor. Set them up from the CLI or the **Connectors**
+  menu in `palugada web` (API keys stored globally, never committed).
 - **A knowledge layer** — stack conventions (`q`), task recipes (`for`), and
-  keyword search (`s`) read from bundled profiles (android-mvvm starter).
+  keyword search (`s`) read from bundled profiles (android-mvvm, flutter-bloc,
+  rust-cli, kmp) with single-base **profile inheritance** (`extends`) and a
+  committable per-project convention overlay.
 - **A local code indexer** — `index` scans your repo into
   `<repo>/.palugada/index/`. It builds a **generic symbol index** of every
   definition (class, object, function, method, property — with kind, enclosing
-  scope, and signature) via a per-language tree-sitter tags query (Kotlin today),
-  so `symbol` finds functions, not just types. Curated **fact families**
+  scope, and signature) via a per-language tree-sitter tags query (Kotlin, Rust,
+  Dart), so `symbol` finds functions, not just types. Curated **fact families**
   (viewmodel/route/…) are extracted alongside via tree-sitter/regex for the
   knowledge layer.
 - **Budgeted context packs** — `brief <flow>` assembles conventions + recipe +
@@ -120,7 +124,8 @@ references an auth-profile by name.
 # 1. scaffold global config + secrets (chmod 0600)
 palugada config init
 
-# 2. put your tokens into ~/.palugada/secrets.yaml (see example below)
+# 2. put your tokens into ~/.palugada/secrets.yaml (see example below),
+#    or set them in the Connectors menu of `palugada web`
 
 # 3. scaffold your repo: per-project config + agent files + registration
 cd /Users/me/dev/my-app
@@ -238,6 +243,12 @@ palugada brief feature TICKET-123 --budget 1500 --json
 the active profile and/or `<repo>/.palugada/config.yaml`. The project's map
 overrides the profile's per verb. `{key}` placeholders are filled from `k=v` args.
 
+Every bundled profile ships sensible **`build` / `test` / `lint` / `run`** verbs
+for its stack — `rust-cli` → `cargo`, `flutter-bloc` → `flutter`, `android-mvvm`
+and `kmp` → `gradle` — so `palugada exec build` runs the right tool **according to
+the project's profile** out of the box. Override any verb per-repo in
+`.palugada/config.yaml` (e.g. point `build` at a melos workspace task).
+
 ```bash
 palugada exec --list                       # verbs available in this repo
 palugada exec build                        # run the `build` verb
@@ -268,12 +279,28 @@ config/profile/knowledge files, so you can author without hand-editing YAML/mark
 palugada web --open        # serves http://127.0.0.1:7777 and opens your browser
 ```
 
-From the console you can browse the config, projects, profiles, and knowledge;
-**create a profile** (any stack, not just Android); **author conventions/recipes**
-split into token-cheap sections; and **generate agent skill files** into a project
-(the same files `palugada init` writes). Everything writes the files the CLI reads
-— no database. The server binds to loopback only, accepts only `localhost` Hosts,
-and never reads or writes your secrets.
+The sidebar has five sections:
+
+- **Overview** — workspace stats (profiles, projects, knowledge dir).
+- **Projects** — registered repos; open one to switch its bound profile, edit its
+  per-project **Credentials & Integrations**, read the generated **skill-flow map**
+  (which palugada step each skill routes to), and manage its committable
+  **convention overlay** + `review_map`.
+- **Profiles** — browse/author any stack's conventions & recipes (rendered, split
+  into token-cheap sections), edit **flows**, wire up profile **inheritance**
+  (`extends`), and import markdown docs (split by heading into conventions).
+- **Knowledge** — read the active profile's conventions & recipes.
+- **Connectors** *(new in 0.2.0)* — set your **API keys + default provider wiring**
+  once, globally: each connector (Git host, Issue tracker, Docs & Wiki, CI, Design,
+  Chat) is a card with a provider dropdown, base URL, a masked key field, and an
+  in-place **Verify** button. Projects inherit the wiring and only set their own
+  `repo`.
+
+Everything writes the files the CLI reads — no database. The server binds to
+loopback only and accepts only `localhost` Hosts. **Secrets are write-only and
+always masked on read** — the plaintext token is never sent to the browser, and a
+blank key field keeps the stored value; the per-click **Verify** is the only
+outbound network call.
 
 ## `~/.palugada/secrets.yaml` (example — never commit)
 
@@ -307,22 +334,27 @@ a hard error.
 ```
 src/
 ├── main.rs            clap dispatch + command handlers
-├── config.rs          GlobalConfig / Secrets / ProjectConfig + resolution
+├── config.rs          GlobalConfig / Secrets / ProjectConfig + per-field resolution
+├── credentials.rs     web credentials/connectors — masked view, apply, verify
+├── web.rs  + web/     `palugada web` server + vanilla-JS console (index.html/app.js/style.css)
 ├── http.rs            ureq helper (Bearer/header auth, --insecure TLS)
 ├── scaffold.rs        `palugada init` — offline agent-file + config scaffolding
 ├── knowledge.rs       `q` / `for` / `s` — read conventions/recipes from a profile
+├── inherit.rs         profile `extends` chain resolution (live, per-section)
+├── effective.rs       per-project convention overlay + effective-rules merge
+├── profile.rs         `profile list/validate/new`, flows editor, render checks
 ├── indexer.rs         `index` / `symbol` — scan code → <repo>/.palugada/index/
 ├── brief.rs           `brief` — budgeted flow context packs
 ├── exec.rs            `exec` / `doctor` — profile/project shell verbs + JSON outcome
 └── clients/
-    ├── mod.rs         capability traits (IssueTracker/DocSource/GitHost/DesignSource/CiProvider) + factories
-    ├── jira.rs        IssueTracker (Jira REST v2)
-    ├── confluence.rs  DocSource (Confluence storage body)
-    ├── gitlab.rs      GitHost (GitLab /api/v4)
-    ├── github.rs      GitHost (GitHub /user)
-    ├── figma.rs       DesignSource (Figma files + /me)
-    └── jenkins.rs     CiProvider (Jenkins job status)
-knowledge/profiles/    bundled stack profiles (android-mvvm starter)
+    ├── mod.rs                              capability traits + factories
+    ├── jira.rs / github_issues.rs          IssueTracker
+    ├── confluence.rs / notion.rs           DocSource
+    ├── gitlab.rs / github.rs               GitHost
+    ├── figma.rs                            DesignSource
+    ├── jenkins.rs / github_actions.rs / gitlab_ci.rs   CiProvider
+    └── slack.rs                            ChatNotify (webhook)
+knowledge/profiles/    bundled stack profiles (android-mvvm, flutter-bloc, rust-cli, kmp)
 ```
 
 ## Roadmap (next)
@@ -337,11 +369,26 @@ knowledge/profiles/    bundled stack profiles (android-mvvm starter)
 There is **no `sync`**: the index is local to each developer — `palugada index`
 regenerates it from the local checkout; nothing is pulled from a shared corpus.
 
-Done so far: connectors (Jira / Confluence / Figma / Jenkins / GitLab / GitHub),
-`palugada init` (offline multi-agent scaffolding), knowledge reads
-(`q` / `for` / `s`), the project indexer (`index` + `symbol` + `fact`), and flow
-context packs (`brief` — all four flows wired: bugfix, feature, refactor, review,
-with a priority-fill token budget).
+**New in 0.2.0:**
+
+- A global **Connectors** menu in `palugada web` to set API keys + default
+  provider wiring once. Keys live globally per **auth-profile** and each project
+  picks which one (so different projects can use different token sets); the global
+  menu manages the `default` profile today, while the per-project Credentials
+  editor can target any named auth-profile.
+- Every bundled profile now ships **`build` / `test` / `lint` / `run`** exec
+  verbs, so `palugada exec build` runs the right tool for the stack (cargo /
+  flutter / gradle) out of the box.
+- Profile **inheritance** (`extends`) + a per-project **convention overlay**,
+  both editable in the web console.
+
+Done so far: connectors (Jira / GitHub Issues, Confluence / Notion, GitLab /
+GitHub, Figma, Jenkins / GitHub Actions / GitLab CI, Slack), `palugada init`
+(offline multi-agent scaffolding for Claude/Codex/Gemini/Cursor), knowledge reads
+(`q` / `for` / `s`) over bundled profiles with inheritance, the project indexer
+(`index` + `symbol` + `fact`; tree-sitter for Kotlin/Rust/Dart), flow context
+packs (`brief` — bugfix/feature/refactor/review with a priority-fill budget),
+per-profile build verbs (`exec`), and the `palugada web` authoring console.
 
 ## Contributing
 
