@@ -29,3 +29,12 @@ review_map:
   repository: [architecture, errorhandling, testing]
   datasource: [architecture, errorhandling]
   route:      [architecture]
+
+# Build/test/lint/run verbs for `palugada exec <verb>` (override per-repo in
+# .palugada/config.yaml). `build` targets an Android APK; a melos monorepo may
+# override to a workspace build. Default timeout 600s.
+exec:
+  build: flutter build apk
+  test:  flutter test
+  lint:  flutter analyze
+  run:   flutter run

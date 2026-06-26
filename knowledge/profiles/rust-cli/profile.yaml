@@ -20,3 +20,11 @@ flows:
 review_map:
   command: [architecture, errorhandling]
   trait:   [architecture, testing]
+
+# Build/test/lint/run verbs for `palugada exec <verb>`. A repo's
+# .palugada/config.yaml overrides any of these per-verb. Default timeout 600s.
+exec:
+  build: cargo build
+  test:  cargo test
+  lint:  cargo clippy
+  run:   cargo run
