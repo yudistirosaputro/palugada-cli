@@ -341,6 +341,14 @@ config/profile/knowledge files, so you can author without hand-editing YAML/mark
 palugada web --open        # serves http://127.0.0.1:7777 and opens your browser
 ```
 
+<div align="center">
+
+![palugada web console — Connectors & API keys](assets/web-console.png)
+
+<sub>The **Connectors** view: set every provider's API key once, globally, with an in-place Verify.</sub>
+
+</div>
+
 The sidebar has five sections:
 
 - **Overview** — workspace stats (profiles, projects, knowledge dir).
