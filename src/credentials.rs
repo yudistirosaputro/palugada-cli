@@ -28,6 +28,22 @@ fn provider_json(o: &Option<Provider>) -> Value {
     }
 }
 
+/// The masked-secrets object shown in every credentials view: tokens are masked
+/// (`•••• (N chars)` / `(unset)`), identifiers (emails/users) shown in clear.
+fn masked_secrets(auth: &AuthProfile) -> Value {
+    json!({
+        "jira_token": mask_secret(&auth.jira_token),
+        "jira_email": auth.jira_email,
+        "wiki_token": mask_secret(&auth.wiki_token),
+        "wiki_email": auth.wiki_email,
+        "figma_token": mask_secret(&auth.figma_token),
+        "jenkins_user": auth.jenkins_user,
+        "jenkins_token": mask_secret(&auth.jenkins_token),
+        "git_token": mask_secret(&auth.git_token),
+        "chat_webhook": mask_secret(&auth.chat_webhook),
+    })
+}
+
 /// Masked, browser-safe view of a project's config + bound auth profile.
 fn config_view(name: &str, pc: &ProjectConfig, auth: &AuthProfile) -> Value {
     let i = &pc.integrations;
@@ -44,17 +60,7 @@ fn config_view(name: &str, pc: &ProjectConfig, auth: &AuthProfile) -> Value {
             "chat": provider_json(&i.chat),
         },
         "providers": supported_providers(),
-        "secrets": {
-            "jira_token": mask_secret(&auth.jira_token),
-            "jira_email": auth.jira_email,
-            "wiki_token": mask_secret(&auth.wiki_token),
-            "wiki_email": auth.wiki_email,
-            "figma_token": mask_secret(&auth.figma_token),
-            "jenkins_user": auth.jenkins_user,
-            "jenkins_token": mask_secret(&auth.jenkins_token),
-            "git_token": mask_secret(&auth.git_token),
-            "chat_webhook": mask_secret(&auth.chat_webhook),
-        },
+        "secrets": masked_secrets(auth),
     })
 }
 
@@ -242,17 +248,7 @@ fn connectors_view_of(integrations: &Integrations, auth: &AuthProfile, auth_prof
             "ci": wire(&integrations.ci),
             "chat": wire(&integrations.chat),
         },
-        "secrets": {
-            "jira_token": mask_secret(&auth.jira_token),
-            "jira_email": auth.jira_email,
-            "wiki_token": mask_secret(&auth.wiki_token),
-            "wiki_email": auth.wiki_email,
-            "figma_token": mask_secret(&auth.figma_token),
-            "jenkins_user": auth.jenkins_user,
-            "jenkins_token": mask_secret(&auth.jenkins_token),
-            "git_token": mask_secret(&auth.git_token),
-            "chat_webhook": mask_secret(&auth.chat_webhook),
-        },
+        "secrets": masked_secrets(auth),
     })
 }
 
@@ -567,6 +563,15 @@ pub fn project_verify(
     }
 }
 
+/// Masked secrets for a named auth profile (an unknown name → all `(unset)`).
+/// Lets the credentials card preview a profile's tokens when you switch the
+/// `auth profile` field, instead of leaving stale values from the old profile.
+pub fn auth_profile_secrets(name: &str) -> Result<Value, String> {
+    let secrets = Secrets::load_or_default()?;
+    let auth = secrets.auth_profiles.get(name).cloned().unwrap_or_default();
+    Ok(masked_secrets(&auth))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -764,6 +769,20 @@ mod tests {
 
         let reloaded = ProjectConfig::load_from(repo).unwrap();
         assert_eq!(reloaded.integrations.wiki.unwrap().provider, "notion");
+    }
+
+    #[test]
+    fn masked_secrets_masks_tokens_keeps_identifiers() {
+        let auth = AuthProfile {
+            wiki_token: "supersecret".into(),
+            wiki_email: "me@x.com".into(),
+            ..Default::default()
+        };
+        let v = masked_secrets(&auth);
+        assert!(!v.to_string().contains("supersecret"), "plaintext token leaked");
+        assert_ne!(v["wiki_token"], "supersecret");
+        assert_eq!(v["wiki_email"], "me@x.com");
+        assert_eq!(v["git_token"], "(unset)");
     }
 
     #[test]

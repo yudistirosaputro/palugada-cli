@@ -545,6 +545,20 @@ function credentialsCard(name, cfg) {
     ${tok("git_token", "git_token")}${tok("chat_webhook", "chat_webhook")}
     <div class="muted">Blank token = unchanged. Stored in ~/.palugada/secrets.yaml (0600); never echoed back in full.</div></div>`));
 
+  // Switching the auth profile must show THAT profile's tokens, not the bound
+  // profile's stale values (otherwise a Save copies the old tokens across).
+  // Integrations are per-project, so only the secret fields reload.
+  card.querySelector("#cd-auth").onchange = async (e) => {
+    const prof = e.target.value.trim() || "default";
+    let s;
+    try { s = await api(`/api/auth-profile/${encodeURIComponent(prof)}/secrets`); }
+    catch (err) { toast(err.message, true); return; }
+    card.querySelectorAll(".cd-sec").forEach(i => {
+      i.value = ""; i.placeholder = (s[i.dataset.k] || "(unset)") + " — blank = keep";
+    });
+    card.querySelectorAll(".cd-txt").forEach(i => { i.value = s[i.dataset.k] || ""; });
+  };
+
   const save = h(`<div class="row" style="margin-top:10px"><span class="spacer"></span><button id="cd-save">Save credentials</button></div>`);
   card.appendChild(save);
   save.querySelector("#cd-save").onclick = async () => {
