@@ -54,6 +54,9 @@ pub enum Route {
     Connectors,
     SaveConnector(String),
     VerifyConnector(String),
+    ProjectConnectors(String),
+    SaveProjectConnector(String, String),
+    VerifyProjectConnector(String, String),
     NotFound,
 }
 
@@ -69,6 +72,15 @@ pub fn route(method: &str, path: &str) -> Route {
         ("GET", ["api", "projects"]) => Route::Projects,
         ("GET", ["api", "profiles"]) => Route::Profiles,
         ("GET", ["api", "connectors"]) => Route::Connectors,
+        ("GET", ["api", "connectors", "project", name]) => {
+            Route::ProjectConnectors((*name).to_string())
+        }
+        ("POST", ["api", "connectors", "project", name, cap]) => {
+            Route::SaveProjectConnector((*name).to_string(), (*cap).to_string())
+        }
+        ("POST", ["api", "connectors", "project", name, cap, "verify"]) => {
+            Route::VerifyProjectConnector((*name).to_string(), (*cap).to_string())
+        }
         ("POST", ["api", "connectors", cap]) => Route::SaveConnector((*cap).to_string()),
         ("POST", ["api", "connectors", cap, "verify"]) => Route::VerifyConnector((*cap).to_string()),
         ("GET", ["api", "profile", id]) => Route::Profile((*id).to_string()),
@@ -395,7 +407,22 @@ fn api(route: Route, body: &str) -> (u16, String) {
         }),
         Route::Connectors => read(crate::credentials::global_view),
         Route::SaveConnector(cap) => write_op(|| crate::credentials::apply_global(&cap, body)),
-        Route::VerifyConnector(cap) => read(|| crate::credentials::global_verify(&cap)),
+        Route::VerifyConnector(cap) => read(|| crate::credentials::global_verify(&cap, body)),
+        Route::ProjectConnectors(name) => read(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::project_connectors_view(&global, &name)
+        }),
+        Route::SaveProjectConnector(name, cap) => write_op(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::apply_project_connector(&global, &name, &cap, body)
+        }),
+        Route::VerifyProjectConnector(name, cap) => read(|| {
+            let global = crate::config::GlobalConfig::load_or_default()?;
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::project_verify(&global, &name, &cap, body)
+        }),
         _ => (501, err_json("not implemented yet")),
     }
 }
@@ -736,6 +763,18 @@ mod tests {
         assert_eq!(
             route("POST", "/api/connectors/git_host/verify"),
             Route::VerifyConnector("git_host".into())
+        );
+        assert_eq!(
+            route("GET", "/api/connectors/project/app"),
+            Route::ProjectConnectors("app".into())
+        );
+        assert_eq!(
+            route("POST", "/api/connectors/project/app/wiki"),
+            Route::SaveProjectConnector("app".into(), "wiki".into())
+        );
+        assert_eq!(
+            route("POST", "/api/connectors/project/app/wiki/verify"),
+            Route::VerifyProjectConnector("app".into(), "wiki".into())
         );
         assert_eq!(route("GET", "/nope"), Route::NotFound);
     }

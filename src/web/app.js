@@ -593,6 +593,14 @@ function verifyKind(cap, provider) {
   return "now";
 }
 
+// Providers that store a repo (owner/name) — mirrors the clients that read p.repo.
+// git_host (github/gitlab) needs it for `pr`/`git` even though its verify is repo-free.
+function usesRepo(cap, provider) {
+  return (cap === "git_host" && (provider === "github" || provider === "gitlab"))
+    || (cap === "issue_tracker" && provider === "github_issues")
+    || (cap === "ci" && (provider === "github_actions" || provider === "gitlab_ci"));
+}
+
 // Which base_url / identifier / token fields a (cap, provider) shows.
 function cxFields(cap, provider) {
   const F = {
@@ -619,11 +627,37 @@ function cxStatus(cap, provider, f, sec) {
   return has ? ["ok", "Configured"] : ["off", "Key needed"];
 }
 
+// Connectors target: "" = global defaults, else a project name. Set on first
+// render to the active project (what the CLI uses by default).
+let connTarget;
+
 async function renderConnectors() {
   view.innerHTML = viewHead("Setup", "Connectors & API Keys",
-    "Set your API keys and default wiring once. Keys live globally in <code>~/.palugada/secrets.yaml</code> (chmod 600, never shown in full). Projects inherit this — they only set their own <code>repo</code>.");
+    "Wire each connector and set its API key, then Verify (works before you Save). Tokens live in <code>~/.palugada/secrets.yaml</code> (chmod 600, never shown in full).");
+
+  // Target selector: a project (writes its config.yaml) or the global default.
+  let pj;
+  try { pj = await api("/api/projects"); }
+  catch (e) { toast(e.message, true); return; }
+  const projects = pj.projects || [];
+  if (connTarget === undefined) connTarget = projects.length ? (pj.active || projects[0].name) : "";
+  // guard a stale selection (e.g. project removed mid-session)
+  if (connTarget !== "" && !projects.some(p => p.name === connTarget)) connTarget = pj.active && projects.some(p => p.name === pj.active) ? pj.active : "";
+
+  const isProject = connTarget !== "";
+  const prefix = isProject ? `/api/connectors/project/${encodeURIComponent(connTarget)}` : "/api/connectors";
+
+  const opts = [`<option value=""${!isProject ? " selected" : ""}>Global default (~/.palugada.yaml)</option>`]
+    .concat(projects.map(p => `<option value="${esc(p.name)}"${p.name === connTarget ? " selected" : ""}>${esc(p.name)}${p.active ? " — active" : ""}</option>`))
+    .join("");
+  const sel = h(`<div class="profile-chip"><span class="lbl">Editing</span>
+    <select class="conn-target" style="max-width:320px">${opts}</select>
+    <span class="soon">${isProject ? "writes this project's config.yaml" : "global defaults — projects inherit per-field"}</span></div>`);
+  sel.querySelector(".conn-target").onchange = e => { connTarget = e.target.value; renderConnectors(); };
+  view.appendChild(sel);
+
   let d;
-  try { d = await api("/api/connectors"); }
+  try { d = await api(prefix); }
   catch (e) { toast(e.message, true); return; }
   view.appendChild(h(`<div class="profile-chip"><span class="lbl">Auth profile</span> <span class="id-chip">${esc(d.auth_profile || "default")}</span> <span class="soon">multi-profile soon</span></div>`));
   let configured = 0, repoReady = 0, notset = 0;
@@ -636,17 +670,19 @@ async function renderConnectors() {
   view.appendChild(h(`<div class="stat-grid">
     <div class="stat"><div class="k">Connectors</div><div class="v">${CX.length}</div></div>
     <div class="stat"><div class="k">Configured</div><div class="v">${configured}</div></div>
-    <div class="stat"><div class="k">Verify in project</div><div class="v">${repoReady}</div></div>
+    <div class="stat"><div class="k">${isProject ? "Repo-bound" : "Verify in project"}</div><div class="v">${repoReady}</div></div>
     <div class="stat"><div class="k">Not set</div><div class="v">${notset}</div></div>
   </div>`));
-  CX.forEach(c => view.appendChild(connectorCard(c, d)));
+  CX.forEach(c => view.appendChild(connectorCard(c, d, prefix, isProject)));
   view.appendChild(h(`<div class="card" style="box-shadow:var(--shadow-sm)">
-    <div class="card-head"><h3>How keys are stored</h3></div>
-    <p class="card-note">Tokens are written to <code>~/.palugada/secrets.yaml</code> (<code>0600</code>) and never sent back to the browser — you only see <code>•••• (N chars)</code>. Blank keeps the existing value. Provider &amp; base URL save as global defaults; each project still sets its own repo.</p></div>`));
+    <div class="card-head"><h3>How this saves</h3></div>
+    <p class="card-note">${isProject
+      ? `Provider &amp; base URL are written to <code>${esc(connTarget)}</code>'s <code>.palugada/config.yaml</code> — exactly what <code>palugada</code> uses for this project. `
+      : `Provider &amp; base URL save as <strong>global defaults</strong>; a project only uses them where its own <code>config.yaml</code> leaves that connector blank. `}Tokens go to <code>~/.palugada/secrets.yaml</code> (<code>0600</code>) and never come back to the browser — you only see <code>•••• (N chars)</code>. Blank token = keep the saved one.</p></div>`));
 }
 
-function connectorCard(c, d) {
-  const w = (d.wiring && d.wiring[c.cap]) || { provider: "", base_url: "" };
+function connectorCard(c, d, prefix, isProject) {
+  const w = (d.wiring && d.wiring[c.cap]) || { provider: "", base_url: "", repo: "" };
   const sec = d.secrets || {};
   const provList = ["(none)", ...(((d.providers && d.providers[c.cap]) || []))];
   let provider = w.provider || "(none)";
@@ -684,8 +720,12 @@ function connectorCard(c, d) {
       html += `<div class="field full"><label>${esc(f.token.l)}</label>
         <div class="key-wrap"><input class="cx-token" data-k="${esc(f.token.k)}" type="password" placeholder="${esc(has ? masked + " · blank = keep" : "Paste token…")}"><button class="reveal" type="button">Show</button></div></div>`;
     }
+    const repoBound = verifyKind(c.cap, prov) === "repo";
+    // repo lives on the project, not the global default — only editable per-project.
+    // Render it for ANY repo-using provider (incl. git_host) so a Save doesn't blank it.
+    if (isProject && prov && usesRepo(c.cap, prov)) html += `<div class="field"><label>Repo (owner/name${repoBound ? ", required" : ""})</label><input class="cx-repo" value="${esc(w.repo || "")}" placeholder="owner/name"></div>`;
     html += `</div><div class="cx-actions"><button class="btn cx-save" type="button">Save ${esc(c.title)}</button>`;
-    if (verifyKind(c.cap, prov) === "repo") html += `<span class="vres info">↳ needs a repo — verify from a project</span>`;
+    if (repoBound && !isProject) html += `<span class="vres info">↳ needs a repo — pick a project above to verify</span>`;
     else if (prov) html += `<button class="btn secondary cx-verify" type="button">Verify</button> <span class="vres"></span>`;
     html += `</div>`;
     body.innerHTML = html;
@@ -699,19 +739,25 @@ function connectorCard(c, d) {
     const vb = body.querySelector(".cx-verify");
     if (vb) vb.onclick = verifyConnector;
   }
-  async function saveConnector() {
-    const payload = { provider: provider, base_url: "", secrets: {} };
+  // Snapshot the CURRENT form fields — used by both Save and Verify, so Verify
+  // checks exactly what you typed (no Save required first).
+  function formPayload() {
+    const payload = { provider: provider, base_url: "", repo: "", secrets: {} };
     const be = body.querySelector(".cx-base"); if (be) payload.base_url = be.value;
+    const re = body.querySelector(".cx-repo"); if (re) payload.repo = re.value;
     const ee = body.querySelector(".cx-email"); if (ee) payload.secrets[ee.dataset.k] = ee.value;
     const te = body.querySelector(".cx-token"); if (te) payload.secrets[te.dataset.k] = te.value;
-    try { await api(`/api/connectors/${c.cap}`, "POST", payload); toast("Saved " + c.title); renderConnectors(); }
+    return payload;
+  }
+  async function saveConnector() {
+    try { await api(`${prefix}/${c.cap}`, "POST", formPayload()); toast("Saved " + c.title); renderConnectors(); }
     catch (e) { toast(e.message, true); }
   }
   async function verifyConnector() {
     const res = body.querySelector(".vres");
     res.textContent = "…"; res.className = "vres muted";
     try {
-      const r = await api(`/api/connectors/${c.cap}/verify`, "POST", {});
+      const r = await api(`${prefix}/${c.cap}/verify`, "POST", formPayload());
       if (r.needs_repo) { res.textContent = "↳ " + (r.message || "verify from a project"); res.className = "vres info"; }
       else { res.textContent = (r.ok ? "✓ " : "✗ ") + (r.message || r.error || ""); res.className = "vres " + (r.ok ? "ok" : "err"); }
     } catch (e) { res.textContent = "✗ " + e.message; res.className = "vres err"; }
