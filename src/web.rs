@@ -57,6 +57,7 @@ pub enum Route {
     ProjectConnectors(String),
     SaveProjectConnector(String, String),
     VerifyProjectConnector(String, String),
+    AuthProfileSecrets(String),
     NotFound,
 }
 
@@ -83,6 +84,9 @@ pub fn route(method: &str, path: &str) -> Route {
         }
         ("POST", ["api", "connectors", cap]) => Route::SaveConnector((*cap).to_string()),
         ("POST", ["api", "connectors", cap, "verify"]) => Route::VerifyConnector((*cap).to_string()),
+        ("GET", ["api", "auth-profile", name, "secrets"]) => {
+            Route::AuthProfileSecrets((*name).to_string())
+        }
         ("GET", ["api", "profile", id]) => Route::Profile((*id).to_string()),
         ("GET", ["api", "profile", id, "convention", cid]) => {
             Route::Convention((*id).to_string(), (*cid).to_string())
@@ -422,6 +426,10 @@ fn api(route: Route, body: &str) -> (u16, String) {
             let global = crate::config::GlobalConfig::load_or_default()?;
             let name = crate::http::decode_segment(&name);
             crate::credentials::project_verify(&global, &name, &cap, body)
+        }),
+        Route::AuthProfileSecrets(name) => read(|| {
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::auth_profile_secrets(&name)
         }),
         _ => (501, err_json("not implemented yet")),
     }
@@ -775,6 +783,10 @@ mod tests {
         assert_eq!(
             route("POST", "/api/connectors/project/app/wiki/verify"),
             Route::VerifyProjectConnector("app".into(), "wiki".into())
+        );
+        assert_eq!(
+            route("GET", "/api/auth-profile/default/secrets"),
+            Route::AuthProfileSecrets("default".into())
         );
         assert_eq!(route("GET", "/nope"), Route::NotFound);
     }
