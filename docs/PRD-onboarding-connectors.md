@@ -116,7 +116,7 @@ in §7). The roadmap falls out of the right-hand column.
 | **Project init / scaffold** | offline `init`; registers project; `--agents auto` detects existing agent files | empty connector URLs; no guided wizard → **F2** |
 | **Skill generation** | profile-agnostic router skills + tool skills gated by integrations; `skills sync` expand-not-overwrite; Claude/Codex dirs + gemini/cursor guide; marker-block merge | no "re-sync into bound projects" nudge → **F4** |
 | **Config model** | 3 files (`~/.palugada.yaml`, `~/.palugada/secrets.yaml` 0600, `<repo>/.palugada/config.yaml`); `merge_integrations()` (project wins per-field); `resolve_project()` chokepoint | — (solid) |
-| **Connectors (6 slots)** | jira/github_issues · confluence/notion · figma · jenkins/github_actions/gitlab_ci · github/gitlab · slack; per-project edit + **verify-before-save** | no per-section picker UX → **F2**; no "verify all" sweep in onboarding → **F5** |
+| **Connectors (6 slots)** | jira/github_issues · confluence/notion · figma · jenkins/github_actions/gitlab_ci · github/gitlab · slack; per-project edit + **verify-before-save**; Notion DocSource renders full pages (paginate + tables + code + nesting, shipped 2026-06-28) | no per-section picker UX → **F2**; no "verify all" sweep in onboarding → **F5** |
 | **Credentials** | `auth_profiles` map; masked-on-read; blank=keep; loopback + host-guarded web console | only the `default` profile has a UI → **F1** |
 | **Profiles** | rust-cli / android-mvvm / flutter-bloc / kmp; `extends:` live inheritance; per-project convention overlay + `review_map` override; `profile new/list/validate/use` | `web-react` auto-detected but not on disk (🐞) → **F3** |
 | **Knowledge authoring** | web: create profile, add convention/recipe, flow editor, markdown import; CLI `convention add` / `recipe add` | import→validate→use not one guided path → **F4** |
@@ -179,6 +179,11 @@ docs, design, CI, git, chat come from).
   freelancer can set common wiring once globally and override only what differs per client.
 - **`resolve_project()`** is the single chokepoint where name → config → merged integrations →
   auth-profile resolve; every command (`brief`/`issue`/`wiki`/`ci`/`pr`/`notify`) inherits it.
+- **Project resolution order** is `--project <name>` → **cwd inside a registered repo** (deepest
+  match) → `projects.active`. So when you work *inside* a client repo, palugada auto-targets it
+  and `active` is ignored; `active` is only the last-resort default for commands run outside any
+  registered repo. For the freelance flow, prefer cwd + `--project` and treat `active` as a
+  convenience fallback (see §13 O5).
 
 ---
 
@@ -386,6 +391,14 @@ is **no wiki-corpus ingest** — fetching the PRD from Notion is a *live* `wiki 
    assembled pack contains the relevant PRD section **under budget** — palugada reading its own
    spec, cheaply. That is the end-to-end proof.
 
+**Outcome (first run, 2026-06-28).** Running this plan against the uploaded PRD paid off
+immediately: the Notion DocSource was *lossy* — it truncated at ~§10 of 14 (no pagination) and
+dropped every table and code block. Fixed the same session (`fix/notion-docsource-fidelity`,
+merged to `main`): paginate `/children`, render tables + code, recurse nested blocks, re-emit
+Markdown structure. The PRD now round-trips from Notion in full (§1–§14, tables + code). The
+dogfooding loop worked — testing the tool on its own spec surfaced and closed a real connector
+gap.
+
 ---
 
 ## 12. Risks & dependencies
@@ -409,6 +422,7 @@ is **no wiki-corpus ingest** — fetching the PRD from Notion is a *live* `wiki 
 | O2 | The broken `web-react` auto-detect | delete the detect branch · build the profile · neutral fallback | Neutral fallback + clear message now; build the profile later |
 | O3 | Auth secrets storage | 0600 file (today) · OS keychain · `env:` refs | Keep 0600 default; keychain/`env:` deferred (unified PRD §16 O4) |
 | O4 | Auth-profile creation ergonomics | from scratch · "clone from existing" | Offer clone-from-existing (a new client often mirrors another's shape) |
+| O5 | The `active` project's role | keep as today · de-emphasize (cwd-first) · warn on fallback | De-emphasize: cwd inference already resolves the project inside a repo, so `active` is only a last-resort default — and it is easy to misread as a lock. Consider a warning when a command falls back to `active`. |
 
 ---
 
