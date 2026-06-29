@@ -252,24 +252,20 @@ fn connectors_view_of(integrations: &Integrations, auth: &AuthProfile, auth_prof
     })
 }
 
-/// Masked, browser-safe view of global default wiring + the `default` auth profile.
-fn global_view_of(defaults: &Integrations, auth: &AuthProfile) -> Value {
-    connectors_view_of(defaults, auth, "default")
-}
-
-/// The Connectors page read model (global default wiring + `default` secrets).
-pub fn global_view() -> Result<Value, String> {
+/// The Connectors page read model: global default wiring + the named auth
+/// profile's masked secrets (the page's profile switcher selects `profile`).
+pub fn global_view(profile: &str) -> Result<Value, String> {
     let global = GlobalConfig::load_or_default()?;
     let secrets = Secrets::load_or_default()?;
-    let auth = secrets.auth_profiles.get("default").cloned().unwrap_or_default();
-    Ok(global_view_of(&global.default_integrations, &auth))
+    let auth = secrets.auth_profiles.get(profile).cloned().unwrap_or_default();
+    Ok(connectors_view_of(&global.default_integrations, &auth, profile))
 }
 
 /// Verify a connector from the GLOBAL page against the CURRENT form values
 /// (`body` = `ConnectorInput`), so a connector can be checked BEFORE it is saved.
-/// A blank token falls back to the saved `default`-profile token. Repo-bound
+/// A blank token falls back to the saved `profile`-scoped token. Repo-bound
 /// providers return `needs_repo` (a global default has no repo).
-pub fn global_verify(cap: &str, body: &str) -> Result<Value, String> {
+pub fn global_verify(profile: &str, cap: &str, body: &str) -> Result<Value, String> {
     if !is_known_cap(cap) {
         return Err(format!("unknown capability '{cap}'"));
     }
@@ -293,7 +289,7 @@ pub fn global_verify(cap: &str, body: &str) -> Result<Value, String> {
         return Ok(json!({ "ok": false, "needs_repo": true, "message": "verify from a project" }));
     }
     let secrets = Secrets::load_or_default()?;
-    let base = secrets.auth_profiles.get("default").cloned().unwrap_or_default();
+    let base = secrets.auth_profiles.get(profile).cloned().unwrap_or_default();
     match build_verify_config(base, cap, &provider, &base_url, "", &inp.secrets) {
         Some((pc, auth)) => run_verify(&pc, &auth, cap),
         None => Ok(json!({ "ok": false, "error": "no provider configured" })),
@@ -433,10 +429,14 @@ fn apply_one_connector(pc: &mut ProjectConfig, cap: &str, inp: &ConnectorInput) 
 }
 
 /// Save ONE connector globally: default wiring → `~/.palugada.yaml`
-/// (`default_integrations.<cap>`, `(none)`/blank clears); tokens → the `default`
-/// auth profile in `secrets.yaml`.
-pub fn apply_global(cap: &str, body: &str) -> Result<Value, String> {
+/// (`default_integrations.<cap>`, `(none)`/blank clears); tokens → the given
+/// `profile` in `secrets.yaml`. The profile must already exist (except the
+/// implicit `default`) so a typo'd route segment can't mint a ghost profile.
+pub fn apply_global(profile: &str, cap: &str, body: &str) -> Result<Value, String> {
     let inp: ConnectorInput = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+    if profile != "default" && !Secrets::load_or_default()?.auth_profiles.contains_key(profile) {
+        return Err(format!("auth profile '{profile}' does not exist — create it first"));
+    }
     let mut global = GlobalConfig::load_or_default()?;
     {
         let slot = integration_slot(&mut global.default_integrations, cap)
@@ -455,7 +455,7 @@ pub fn apply_global(cap: &str, body: &str) -> Result<Value, String> {
     global.save()?;
     if !inp.secrets.is_empty() {
         let mut secrets = Secrets::load_or_default()?;
-        let auth = secrets.auth_profiles.entry("default".to_string()).or_default();
+        let auth = secrets.auth_profiles.entry(profile.to_string()).or_default();
         apply_connector_secrets(auth, &inp.secrets);
         secrets.save()?;
     }
@@ -572,6 +572,77 @@ pub fn auth_profile_secrets(name: &str) -> Result<Value, String> {
     Ok(masked_secrets(&auth))
 }
 
+/// `(project, auth_profile)` for every registered project (unreadable configs skipped).
+fn project_auth_pairs(global: &GlobalConfig) -> Vec<(String, String)> {
+    global
+        .projects
+        .registered
+        .iter()
+        .filter_map(|(name, e)| {
+            ProjectConfig::load_from(&e.repo_path).ok().map(|pc| (name.clone(), pc.auth_profile))
+        })
+        .collect()
+}
+
+/// Auth profiles for the Connectors switcher: every name (always including
+/// `default`) plus which registered projects use it (delete is blocked while in use).
+pub fn list_auth_profiles_view() -> Result<Value, String> {
+    let global = GlobalConfig::load_or_default()?;
+    let secrets = Secrets::load_or_default()?;
+    let pairs = project_auth_pairs(&global);
+    let mut names = secrets.list_auth_profiles();
+    if !names.iter().any(|n| n == "default") {
+        names.insert(0, "default".to_string());
+    }
+    let profiles: Vec<Value> = names
+        .iter()
+        .map(|n| json!({ "name": n, "in_use_by": crate::config::projects_using_profile(&pairs, n) }))
+        .collect();
+    Ok(json!({ "profiles": profiles }))
+}
+
+/// Create an empty auth profile from `body = {"name": "..."}`.
+pub fn create_auth_profile(body: &str) -> Result<Value, String> {
+    #[derive(Deserialize)]
+    struct NameInput {
+        #[serde(default)]
+        name: String,
+    }
+    let inp: NameInput = serde_json::from_str(body).map_err(|e| format!("bad JSON: {e}"))?;
+    let mut secrets = Secrets::load_or_default()?;
+    secrets.add_auth_profile(&inp.name)?;
+    secrets.save()?;
+    Ok(json!({ "ok": true, "name": inp.name.trim() }))
+}
+
+/// Delete an auth profile. Refuses the implicit `default`, and blocks while any
+/// registered project references it — an unreadable project config also blocks,
+/// since we can't prove it doesn't use the profile (conservative, never orphans).
+pub fn delete_auth_profile(name: &str) -> Result<Value, String> {
+    if name == "default" {
+        return Err("the 'default' auth profile cannot be deleted (it is the implicit fallback)".into());
+    }
+    let global = GlobalConfig::load_or_default()?;
+    let mut in_use = Vec::new();
+    for (pname, e) in &global.projects.registered {
+        let pc = ProjectConfig::load_from(&e.repo_path)
+            .map_err(|err| format!("cannot verify usage — project '{pname}' config unreadable: {err}"))?;
+        if pc.auth_profile == name {
+            in_use.push(pname.clone());
+        }
+    }
+    if !in_use.is_empty() {
+        return Err(format!(
+            "auth profile '{name}' is in use by: {} — repoint those project(s) first",
+            in_use.join(", ")
+        ));
+    }
+    let mut secrets = Secrets::load_or_default()?;
+    secrets.delete_auth_profile(name)?;
+    secrets.save()?;
+    Ok(json!({ "ok": true, "deleted": name }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,7 +726,7 @@ mod tests {
             ..Default::default()
         };
         let auth = AuthProfile { git_token: "supersecret".into(), jira_email: "me@x.com".into(), ..Default::default() };
-        let v = global_view_of(&defaults, &auth);
+        let v = connectors_view_of(&defaults, &auth, "default");
         assert!(!v.to_string().contains("supersecret"), "plaintext leaked");
         assert_eq!(v["auth_profile"], "default");
         assert_eq!(v["wiring"]["git_host"]["provider"], "github");

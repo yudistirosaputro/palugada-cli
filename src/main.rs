@@ -253,6 +253,23 @@ enum ConfigCmd {
     Show,
     /// Test connectivity + auth for the active project's providers.
     Verify,
+    /// Manage named auth profiles (per-client credential sets).
+    Auth {
+        #[command(subcommand)]
+        action: AuthCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum AuthCmd {
+    /// List auth-profile names.
+    List,
+    /// Create an empty auth profile (add tokens via `palugada web`).
+    Add { name: String },
+    /// Delete an auth profile (blocked if a project still uses it).
+    Rm { name: String },
+    /// Show a profile's masked secrets.
+    Show { name: String },
 }
 
 #[derive(Subcommand)]
@@ -851,6 +868,7 @@ fn cmd_config(action: ConfigCmd, project: Option<&str>, insecure: bool) -> Resul
             }
             Ok(())
         }
+        ConfigCmd::Auth { action } => cmd_config_auth(action),
     }
 }
 
@@ -858,6 +876,57 @@ fn report(tag: &str, result: Result<String, String>) {
     match result {
         Ok(msg) => println!("  [{tag}] {msg}"),
         Err(e) => println!("  [{tag}] FAIL: {e}"),
+    }
+}
+
+fn cmd_config_auth(action: AuthCmd) -> Result<(), String> {
+    match action {
+        AuthCmd::List => {
+            let secrets = Secrets::load_or_default()?;
+            let names = secrets.list_auth_profiles();
+            if names.is_empty() {
+                println!("(no auth profiles — add one with `palugada config auth add <name>`)");
+            } else {
+                for n in names {
+                    println!("{n}");
+                }
+            }
+            Ok(())
+        }
+        AuthCmd::Add { name } => {
+            let mut secrets = Secrets::load_or_default()?;
+            secrets.add_auth_profile(&name)?;
+            secrets.save()?;
+            println!(
+                "created auth profile '{}' — add tokens via `palugada web` (Connectors → profile switcher)",
+                name.trim()
+            );
+            Ok(())
+        }
+        AuthCmd::Rm { name } => {
+            credentials::delete_auth_profile(&name)?;
+            println!("deleted auth profile '{name}'");
+            Ok(())
+        }
+        AuthCmd::Show { name } => {
+            let secrets = Secrets::load_or_default()?;
+            let a = secrets
+                .auth_profiles
+                .get(&name)
+                .ok_or_else(|| format!("auth profile '{name}' not found"))?;
+            let or_unset = |s: &str| if s.is_empty() { "(unset)".to_string() } else { s.to_string() };
+            println!("auth profile '{name}' (masked):");
+            println!("  jira_token:    {}", mask_secret(&a.jira_token));
+            println!("  jira_email:    {}", or_unset(&a.jira_email));
+            println!("  wiki_token:    {}", mask_secret(&a.wiki_token));
+            println!("  wiki_email:    {}", or_unset(&a.wiki_email));
+            println!("  figma_token:   {}", mask_secret(&a.figma_token));
+            println!("  git_token:     {}", mask_secret(&a.git_token));
+            println!("  jenkins_token: {}", mask_secret(&a.jenkins_token));
+            println!("  jenkins_user:  {}", or_unset(&a.jenkins_user));
+            println!("  chat_webhook:  {}", mask_secret(&a.chat_webhook));
+            Ok(())
+        }
     }
 }
 

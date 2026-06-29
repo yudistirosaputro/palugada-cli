@@ -499,8 +499,8 @@ function editReviewMap(name, current, anchor) {
 
 function credentialsCard(name, cfg) {
   const card = h(`<div class="card"><h3>Credentials &amp; Integrations</h3>
-    <label>auth profile</label><input id="cd-auth" value="${esc(cfg.auth_profile || "default")}">
-    <div class="muted">Shared by all projects using this auth-profile name.</div></div>`);
+    <label>auth profile</label><input id="cd-auth" list="cd-auth-list" value="${esc(cfg.auth_profile || "default")}"><datalist id="cd-auth-list"></datalist>
+    <div class="muted">Shared by all projects using this auth-profile name. Pick an existing one or type a new name.</div></div>`);
   const CAPS = [
     ["issue_tracker", "Issue tracker", true],
     ["wiki", "Wiki", false],
@@ -558,6 +558,12 @@ function credentialsCard(name, cfg) {
     });
     card.querySelectorAll(".cd-txt").forEach(i => { i.value = s[i.dataset.k] || ""; });
   };
+
+  // Populate the auth-profile combobox with the existing profile names.
+  api("/api/auth-profiles").then(d => {
+    const dl = card.querySelector("#cd-auth-list");
+    if (dl) dl.innerHTML = (d.profiles || []).map(p => `<option value="${esc(p.name)}"></option>`).join("");
+  }).catch(() => {});
 
   const save = h(`<div class="row" style="margin-top:10px"><span class="spacer"></span><button id="cd-save">Save credentials</button></div>`);
   card.appendChild(save);
@@ -644,6 +650,7 @@ function cxStatus(cap, provider, f, sec) {
 // Connectors target: "" = global defaults, else a project name. Set on first
 // render to the active project (what the CLI uses by default).
 let connTarget;
+let connProfile;
 
 async function renderConnectors() {
   view.innerHTML = viewHead("Setup", "Connectors & API Keys",
@@ -659,7 +666,17 @@ async function renderConnectors() {
   if (connTarget !== "" && !projects.some(p => p.name === connTarget)) connTarget = pj.active && projects.some(p => p.name === pj.active) ? pj.active : "";
 
   const isProject = connTarget !== "";
-  const prefix = isProject ? `/api/connectors/project/${encodeURIComponent(connTarget)}` : "/api/connectors";
+  // The global-default page scopes its token edits to a named auth profile.
+  let authProfiles = [];
+  if (!isProject) {
+    try { const ap = await api("/api/auth-profiles"); authProfiles = ap.profiles || []; }
+    catch (e) { toast(e.message, true); return; }
+    if (connProfile === undefined) connProfile = "default";
+    if (!authProfiles.some(p => p.name === connProfile)) connProfile = "default";
+  }
+  const prefix = isProject
+    ? `/api/connectors/project/${encodeURIComponent(connTarget)}`
+    : `/api/auth-profiles/${encodeURIComponent(connProfile)}/connectors`;
 
   const opts = [`<option value=""${!isProject ? " selected" : ""}>Global default (~/.palugada.yaml)</option>`]
     .concat(projects.map(p => `<option value="${esc(p.name)}"${p.name === connTarget ? " selected" : ""}>${esc(p.name)}${p.active ? " — active" : ""}</option>`))
@@ -667,13 +684,36 @@ async function renderConnectors() {
   const sel = h(`<div class="profile-chip"><span class="lbl">Editing</span>
     <select class="conn-target" style="max-width:320px">${opts}</select>
     <span class="soon">${isProject ? "writes this project's config.yaml" : "global defaults — projects inherit per-field"}</span></div>`);
-  sel.querySelector(".conn-target").onchange = e => { connTarget = e.target.value; renderConnectors(); };
+  sel.querySelector(".conn-target").onchange = e => { connTarget = e.target.value; connProfile = "default"; renderConnectors(); };
   view.appendChild(sel);
 
   let d;
   try { d = await api(prefix); }
   catch (e) { toast(e.message, true); return; }
-  view.appendChild(h(`<div class="profile-chip"><span class="lbl">Auth profile</span> <span class="id-chip">${esc(d.auth_profile || "default")}</span> <span class="soon">multi-profile soon</span></div>`));
+  if (isProject) {
+    view.appendChild(h(`<div class="profile-chip"><span class="lbl">Auth profile</span> <span class="id-chip">${esc(d.auth_profile || "default")}</span> <span class="soon">from this project's config.yaml</span></div>`));
+  } else {
+    const inUse = (authProfiles.find(p => p.name === connProfile) || {}).in_use_by || [];
+    const apOpts = authProfiles.map(p => `<option value="${esc(p.name)}"${p.name === connProfile ? " selected" : ""}>${esc(p.name)}${(p.in_use_by || []).length ? ` — used by ${(p.in_use_by || []).length}` : ""}</option>`).join("");
+    const chip = h(`<div class="profile-chip"><span class="lbl">Auth profile</span>
+      <select class="ap-switch" style="max-width:240px">${apOpts}</select>
+      <button class="ghost ap-new" type="button">+ New</button>
+      <button class="ghost ap-del" type="button"${connProfile === "default" || inUse.length ? " disabled" : ""}>Delete</button>
+      <span class="soon">tokens are per-profile; the wiring below is the shared global default</span></div>`);
+    chip.querySelector(".ap-switch").onchange = e => { connProfile = e.target.value; renderConnectors(); };
+    chip.querySelector(".ap-new").onclick = async () => {
+      const name = (prompt("New auth profile name (e.g. client-acme):") || "").trim();
+      if (!name) return;
+      try { await api("/api/auth-profiles", "POST", { name }); connProfile = name; toast(`created ${name}`); renderConnectors(); }
+      catch (e) { toast(e.message, true); }
+    };
+    chip.querySelector(".ap-del").onclick = async () => {
+      if (!confirm(`Delete auth profile "${connProfile}"? Its stored tokens are removed.`)) return;
+      try { await api(`/api/auth-profiles/${encodeURIComponent(connProfile)}`, "DELETE"); toast(`deleted ${connProfile}`); connProfile = "default"; renderConnectors(); }
+      catch (e) { toast(e.message, true); }
+    };
+    view.appendChild(chip);
+  }
   let configured = 0, repoReady = 0, notset = 0;
   CX.forEach(c => {
     const w = (d.wiring && d.wiring[c.cap]) || { provider: "" };
