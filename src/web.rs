@@ -58,6 +58,12 @@ pub enum Route {
     SaveProjectConnector(String, String),
     VerifyProjectConnector(String, String),
     AuthProfileSecrets(String),
+    AuthProfiles,
+    CreateAuthProfile,
+    DeleteAuthProfile(String),
+    ProfileConnectors(String),
+    SaveProfileConnector(String, String),
+    VerifyProfileConnector(String, String),
     NotFound,
 }
 
@@ -86,6 +92,18 @@ pub fn route(method: &str, path: &str) -> Route {
         ("POST", ["api", "connectors", cap, "verify"]) => Route::VerifyConnector((*cap).to_string()),
         ("GET", ["api", "auth-profile", name, "secrets"]) => {
             Route::AuthProfileSecrets((*name).to_string())
+        }
+        ("GET", ["api", "auth-profiles"]) => Route::AuthProfiles,
+        ("POST", ["api", "auth-profiles"]) => Route::CreateAuthProfile,
+        ("DELETE", ["api", "auth-profiles", name]) => Route::DeleteAuthProfile((*name).to_string()),
+        ("GET", ["api", "auth-profiles", name, "connectors"]) => {
+            Route::ProfileConnectors((*name).to_string())
+        }
+        ("POST", ["api", "auth-profiles", name, "connectors", cap]) => {
+            Route::SaveProfileConnector((*name).to_string(), (*cap).to_string())
+        }
+        ("POST", ["api", "auth-profiles", name, "connectors", cap, "verify"]) => {
+            Route::VerifyProfileConnector((*name).to_string(), (*cap).to_string())
         }
         ("GET", ["api", "profile", id]) => Route::Profile((*id).to_string()),
         ("GET", ["api", "profile", id, "convention", cid]) => {
@@ -409,9 +427,9 @@ fn api(route: Route, body: &str) -> (u16, String) {
             crate::config::set_review_map(&repo, req.review_map)?;
             Ok(json!({ "ok": true }))
         }),
-        Route::Connectors => read(crate::credentials::global_view),
-        Route::SaveConnector(cap) => write_op(|| crate::credentials::apply_global(&cap, body)),
-        Route::VerifyConnector(cap) => read(|| crate::credentials::global_verify(&cap, body)),
+        Route::Connectors => read(|| crate::credentials::global_view("default")),
+        Route::SaveConnector(cap) => write_op(|| crate::credentials::apply_global("default", &cap, body)),
+        Route::VerifyConnector(cap) => read(|| crate::credentials::global_verify("default", &cap, body)),
         Route::ProjectConnectors(name) => read(|| {
             let global = crate::config::GlobalConfig::load_or_default()?;
             let name = crate::http::decode_segment(&name);
@@ -430,6 +448,24 @@ fn api(route: Route, body: &str) -> (u16, String) {
         Route::AuthProfileSecrets(name) => read(|| {
             let name = crate::http::decode_segment(&name);
             crate::credentials::auth_profile_secrets(&name)
+        }),
+        Route::AuthProfiles => read(crate::credentials::list_auth_profiles_view),
+        Route::CreateAuthProfile => write_op(|| crate::credentials::create_auth_profile(body)),
+        Route::DeleteAuthProfile(name) => write_op(|| {
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::delete_auth_profile(&name)
+        }),
+        Route::ProfileConnectors(name) => read(|| {
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::global_view(&name)
+        }),
+        Route::SaveProfileConnector(name, cap) => write_op(|| {
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::apply_global(&name, &cap, body)
+        }),
+        Route::VerifyProfileConnector(name, cap) => read(|| {
+            let name = crate::http::decode_segment(&name);
+            crate::credentials::global_verify(&name, &cap, body)
         }),
         _ => (501, err_json("not implemented yet")),
     }

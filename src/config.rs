@@ -198,6 +198,56 @@ impl Secrets {
     pub fn save(&self) -> Result<(), String> {
         self.save_to_path(&Self::default_path())
     }
+
+    /// Auth-profile names, sorted (BTreeMap key order).
+    pub fn list_auth_profiles(&self) -> Vec<String> {
+        self.auth_profiles.keys().cloned().collect()
+    }
+
+    /// Create an empty auth profile. Errors on an invalid or duplicate name.
+    pub fn add_auth_profile(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        valid_auth_profile_name(name)?;
+        if self.auth_profiles.contains_key(name) {
+            return Err(format!("auth profile '{name}' already exists"));
+        }
+        self.auth_profiles.insert(name.to_string(), AuthProfile::default());
+        Ok(())
+    }
+
+    /// Remove an auth profile. Errors if it does not exist. The in-use guard
+    /// (a project still referencing it) lives in the caller that also holds the
+    /// project registry — see `credentials::delete_auth_profile`.
+    pub fn delete_auth_profile(&mut self, name: &str) -> Result<(), String> {
+        if self.auth_profiles.remove(name).is_none() {
+            return Err(format!("auth profile '{name}' not found"));
+        }
+        Ok(())
+    }
+}
+
+/// Validate an auth-profile name: 1–64 chars of `[A-Za-z0-9_-]`.
+pub fn valid_auth_profile_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name.len() > 64 {
+        return Err("auth profile name must be 1–64 characters".into());
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("auth profile name may only contain letters, digits, '-' and '_'".into());
+    }
+    Ok(())
+}
+
+/// Registered projects that reference auth-profile `name` exactly. `pairs` is
+/// `(project_name, auth_profile)`. A blank `auth_profile` matches nothing: at
+/// runtime it resolves to a blank `AuthProfile`, NOT the stored `default`
+/// profile (see `resolve_project`), so counting blanks as `default` would
+/// mis-report `default` as in use and block its (separately guarded) deletion.
+pub fn projects_using_profile(pairs: &[(String, String)], name: &str) -> Vec<String> {
+    pairs
+        .iter()
+        .filter(|(_, ap)| ap.as_str() == name)
+        .map(|(p, _)| p.clone())
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -812,5 +862,31 @@ doctor: { cmd: ["android -V", "adb version"] }
         s.save_to_path(&p).unwrap();
         let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn auth_profile_crud_and_validation() {
+        let mut s = Secrets::default();
+        s.add_auth_profile("client-a").unwrap();
+        s.add_auth_profile("client_b").unwrap();
+        assert_eq!(s.list_auth_profiles(), vec!["client-a".to_string(), "client_b".to_string()]);
+        assert!(s.add_auth_profile("client-a").is_err(), "duplicate must be rejected");
+        assert!(s.add_auth_profile("bad name").is_err(), "spaces invalid");
+        assert!(s.add_auth_profile("").is_err(), "empty invalid");
+        s.delete_auth_profile("client-a").unwrap();
+        assert_eq!(s.list_auth_profiles(), vec!["client_b".to_string()]);
+        assert!(s.delete_auth_profile("nope").is_err(), "deleting a missing profile errors");
+    }
+
+    #[test]
+    fn projects_using_profile_matches_exact_name_only() {
+        let pairs = vec![
+            ("alpha".to_string(), "client-a".to_string()),
+            ("beta".to_string(), String::new()),       // blank → blank AuthProfile at runtime, not stored "default"
+            ("gamma".to_string(), "default".to_string()),
+        ];
+        assert_eq!(projects_using_profile(&pairs, "client-a"), vec!["alpha".to_string()]);
+        assert_eq!(projects_using_profile(&pairs, "default"), vec!["gamma".to_string()]);
+        assert!(projects_using_profile(&pairs, "unused").is_empty());
     }
 }
