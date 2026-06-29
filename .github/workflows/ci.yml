@@ -36,7 +36,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           ./target/release/palugada --help
-          ./target/release/palugada q --list
+          ./target/release/palugada q --list --profile rust-cli
 
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
@@ -44,4 +44,4 @@ jobs:
           HOME: ${{ runner.temp }}
         run: |
           ./target/release/palugada.exe --help
-          ./target/release/palugada.exe q --list
+          ./target/release/palugada.exe q --list --profile rust-cli
