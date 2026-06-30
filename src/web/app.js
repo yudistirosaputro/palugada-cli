@@ -356,6 +356,37 @@ async function renderProjectDetail(name) {
     const rules = await api("/api/project/" + encodeURIComponent(name) + "/rules");
     view.appendChild(rulesCard(name, rules));
   } catch (e) { toast(e.message, true); }
+  try {
+    const d = await api("/api/project/" + encodeURIComponent(name) + "/docs");
+    view.appendChild(docsCard(name, d.docs || []));
+  } catch (e) { toast(e.message, true); }
+}
+
+// Fetched-docs cache for the project (pages/tickets pulled via wiki page / prd fetch).
+function docsCard(name, docs) {
+  const card = h(`<div class="card"><div class="card-head"><h3>Fetched docs</h3></div>
+    <div class="card-note">Local cache (<code>.palugada/docs/</code>, gitignored) of pages &amp; tickets pulled via <code>palugada wiki page</code> / <code>prd fetch</code>.</div></div>`);
+  if (!docs.length) {
+    card.appendChild(h(`<div class="muted">No docs yet — fetch one with <code>palugada wiki page &lt;id&gt;</code> or <code>palugada prd fetch &lt;KEY&gt;</code>.</div>`));
+    return card;
+  }
+  docs.forEach(d => {
+    const row = h(`<div class="lrow"><span class="id-chip">${esc(d.source || "doc")}</span>
+      <strong>${esc(d.title || d.name)}</strong>
+      <span class="spacer"></span><span class="muted">${esc(d.fetched_at || "")}</span> <a class="link doc-view">view</a></div>`);
+    row.querySelector(".doc-view").onclick = async () => {
+      const next = row.nextElementSibling;
+      if (next && next.classList.contains("doc-body")) { next.remove(); return; }
+      try {
+        const r = await api(`/api/project/${encodeURIComponent(name)}/docs/${encodeURIComponent(d.name)}`);
+        const body = h(`<pre class="doc-body" style="white-space:pre-wrap;overflow-x:auto;border-top:1px solid var(--ink);margin-top:6px;padding-top:6px"></pre>`);
+        body.textContent = r.body;
+        row.after(body);
+      } catch (e) { toast(e.message, true); }
+    };
+    card.appendChild(row);
+  });
+  return card;
 }
 
 const ORIGIN_LABEL = { profile: "profile", project: "project", overridden: "overridden" };

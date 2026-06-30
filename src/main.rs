@@ -1251,6 +1251,18 @@ fn cmd_wiki(action: WikiCmd, project: Option<&str>, insecure: bool) -> Result<()
             let page = docs.get_page(&id)?;
             println!("# {} (id {})", page.title, page.id);
             println!("\n{}", page.body_html);
+            // Cache into the per-project docs store (so `prd list/search` find it
+            // and the web console shows it) — BEST-EFFORT: a cache failure must
+            // not fail an otherwise-successful fetch+display.
+            let cache = || -> Result<std::path::PathBuf, String> {
+                let dir = project_docs_dir(&global, project)?;
+                personal::ensure_dir_ignored(&dir)?;
+                personal::save_wiki(&dir, &page, &chrono::Utc::now().to_rfc3339())
+            };
+            match cache() {
+                Ok(path) => println!("\n(saved to {})", path.display()),
+                Err(e) => eprintln!("(note: page shown but not cached — {e})"),
+            }
             Ok(())
         }
     }
@@ -1294,16 +1306,39 @@ fn cmd_pr(action: PrCmd, project: Option<&str>, insecure: bool) -> Result<(), St
     }
 }
 
+/// The per-project fetched-docs cache: `<repo>/.palugada/docs`. Resolves the
+/// project the same way every command does (`--project` → cwd → active).
+fn project_docs_dir(global: &GlobalConfig, project: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    let name = config::resolve_project_name(global, project, &cwd)?;
+    let entry = global
+        .projects
+        .registered
+        .get(&name)
+        .ok_or_else(|| format!("project '{name}' is not registered"))?;
+    if entry.repo_path.trim().is_empty() {
+        return Err(format!("project '{name}' has no repo_path — set it via `palugada project add`"));
+    }
+    Ok(config::expand_home(&entry.repo_path).join(".palugada").join("docs"))
+}
+
 fn cmd_prd(action: PrdCmd, project: Option<&str>, insecure: bool) -> Result<(), String> {
-    let dir = personal::dir();
+    let global = GlobalConfig::load_or_default()?;
+    let dir = project_docs_dir(&global, project)?;
     match action {
         PrdCmd::Fetch { key } => {
-            let global = GlobalConfig::load_or_default()?;
             let secrets = Secrets::load_or_default()?;
             let (_name, pc, auth) = resolve_project(&global, &secrets, project)?;
-            let tracker = clients::issue_tracker(&pc, &auth, insecure)?;
-            let issue = tracker.get_issue(&key)?;
+            // Wrap BOTH the client build and the fetch: the "base_url is empty"
+            // error comes from get_issue(), not the constructor.
+            let fetch = || -> Result<clients::Issue, String> {
+                clients::issue_tracker(&pc, &auth, insecure)?.get_issue(&key)
+            };
+            let issue = fetch().map_err(|e| {
+                format!("{e}\n(note: `prd fetch` reads the issue tracker; for a Notion/wiki page use `palugada wiki page <id>`)")
+            })?;
             let ts = chrono::Utc::now().to_rfc3339();
+            personal::ensure_dir_ignored(&dir)?;
             let path = personal::save_issue(&dir, &issue, &ts)?;
             println!("saved {} -> {}", issue.key, path.display());
             Ok(())
@@ -1311,7 +1346,7 @@ fn cmd_prd(action: PrdCmd, project: Option<&str>, insecure: bool) -> Result<(), 
         PrdCmd::List => {
             let names = personal::list(&dir)?;
             if names.is_empty() {
-                println!("(corpus empty — {})", dir.display());
+                println!("(no docs yet — {})", dir.display());
             }
             for n in names {
                 println!("  {n}");
@@ -1325,7 +1360,7 @@ fn cmd_prd(action: PrdCmd, project: Option<&str>, insecure: bool) -> Result<(), 
         PrdCmd::Search { query } => {
             let hits = personal::search(&dir, &query)?;
             if hits.is_empty() {
-                println!("(no corpus matches '{query}')");
+                println!("(no doc matches '{query}')");
             }
             for (name, line) in hits {
                 println!("{:<20} {}", name, line);
