@@ -1,6 +1,6 @@
 {
   "name": "palugada-cli",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Project-agnostic developer knowledge & connector CLI — one binary for stack conventions, task recipes, code indexing, and Jira/Confluence/GitLab/GitHub/Figma/Jenkins connectors.",
   "license": "MIT",
   "bin": {
