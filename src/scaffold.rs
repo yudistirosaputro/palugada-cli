@@ -527,12 +527,21 @@ allowed-tools: Bash(palugada *), Read
 
 # Issues, wiki & PRDs
 
-    palugada issue view <KEY>     # a ticket (Jira / GitHub Issues)
-    palugada wiki page <ID>       # a wiki/doc page (Confluence / Notion)
-    palugada prd fetch <KEY>      # save a ticket into the personal corpus
-    palugada prd list             # list saved corpus docs
-    palugada prd cat <name>       # read one
-    palugada prd search <kw>      # search the corpus offline
+When you need a ticket / PRD / spec / wiki page, SEARCH this project's docs FIRST —
+fetched docs are cached locally per-project, so it may already be here:
+
+    palugada prd search <kw>      # search this project's fetched docs (offline)
+    palugada prd list             # list them
+    palugada prd cat <name>       # read one in full
+
+To pull a NEW one — it is auto-saved into this project's `.palugada/docs/` cache
+(so the next `prd search` finds it and the web console shows it):
+
+    palugada wiki page <ID>       # a wiki/doc PAGE (Notion / Confluence)
+    palugada prd fetch <KEY>      # a TICKET (Jira / GitHub Issues)
+    palugada issue view <KEY>     # quick ticket view (no save)
+
+Note: `prd fetch` reads the ISSUE TRACKER; for a Notion/wiki page use `wiki page <ID>`.
 "#;
 
 const SKILL_CI: &str = r#"---

@@ -47,6 +47,8 @@ pub enum Route {
     ImportCommit(String),
     SetFlows(String),
     ProjectRules(String),
+    ProjectDocs(String),
+    ProjectDoc(String, String),
     OverlayConventionBody(String, String),
     AddOverlayConvention(String),
     SetOverlayConventionBody(String, String),
@@ -139,6 +141,10 @@ pub fn route(method: &str, path: &str) -> Route {
             Route::VerifyCapability((*name).to_string(), (*cap).to_string())
         }
         ("GET", ["api", "project", name, "rules"]) => Route::ProjectRules((*name).to_string()),
+        ("GET", ["api", "project", name, "docs"]) => Route::ProjectDocs((*name).to_string()),
+        ("GET", ["api", "project", name, "docs", doc]) => {
+            Route::ProjectDoc((*name).to_string(), (*doc).to_string())
+        }
         ("GET", ["api", "project", name, "convention", id]) => {
             Route::OverlayConventionBody((*name).to_string(), (*id).to_string())
         }
@@ -389,6 +395,22 @@ fn api(route: Route, body: &str) -> (u16, String) {
             let name = crate::http::decode_segment(&name);
             Ok(jv(&crate::effective::effective_rules(&global, &name)?))
         }),
+        Route::ProjectDocs(name) => read(|| {
+            let dir = docs_dir(&name)?;
+            let docs: Vec<serde_json::Value> = crate::personal::list(&dir)?
+                .iter()
+                .map(|n| {
+                    let (title, source, fetched_at) = crate::personal::doc_summary(&dir, n);
+                    json!({ "name": n, "title": title, "source": source, "fetched_at": fetched_at })
+                })
+                .collect();
+            Ok(json!({ "docs": docs }))
+        }),
+        Route::ProjectDoc(name, doc) => read(|| {
+            let dir = docs_dir(&name)?;
+            let doc = crate::http::decode_segment(&doc);
+            Ok(json!({ "name": doc, "body": crate::personal::cat(&dir, &doc)? }))
+        }),
         Route::OverlayConventionBody(name, id) => read(|| {
             let repo = project_repo(&name)?;
             let markdown =
@@ -487,6 +509,11 @@ fn write_op<F: FnOnce() -> Result<serde_json::Value, String>>(f: F) -> (u16, Str
 }
 
 /// Resolve a (URL-encoded) project name to its repo path via the registry.
+/// The per-project fetched-docs cache dir for a registered project (web side).
+fn docs_dir(name: &str) -> Result<std::path::PathBuf, String> {
+    Ok(crate::config::expand_home(&project_repo(name)?).join(".palugada").join("docs"))
+}
+
 fn project_repo(name: &str) -> Result<String, String> {
     let global = crate::config::GlobalConfig::load_or_default()?;
     let name = crate::http::decode_segment(name);
