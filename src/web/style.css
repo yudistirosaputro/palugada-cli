@@ -100,7 +100,7 @@ strong, b { font-weight: 700; }
   border-bottom: var(--bw) solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: var(--s2); }
-.brand .mark { font-size: 24px; line-height: 1; }
+.brand .mark { font-size: 15px; line-height: 1; color: var(--accent); }
 .brand .name {
   font-family: var(--font-display); font-weight: 400; font-size: 30px;
   color: var(--ink); letter-spacing: .03em; line-height: 1;
