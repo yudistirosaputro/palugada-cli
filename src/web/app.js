@@ -1034,8 +1034,9 @@ async function renderCreate(profileId, opts) {
       host.appendChild(h(`<div class="empty">No sections yet — check pieces on the left, click <b>+ add blank section</b>, or clone a whole convention.</div>`));
     } else {
       canvas.forEach((c, i) => {
+        const originClass = ["own", "overridden", "inherited", "other-profile"].includes(c.origin) ? c.origin : "other-profile";
         const originLabel = c.origin === "own" ? "own"
-          : c.origin === "overridden" ? "base·" + c.from
+          : c.origin === "overridden" ? "overridden"
           : c.origin === "inherited" ? "base·" + c.from
           : c.from || "other";
         const card = h(`<div class="seccard">
@@ -1043,7 +1044,7 @@ async function renderCreate(profileId, opts) {
             <span class="grip" aria-hidden="true">⋮⋮</span>
             <span class="secid mono">#${esc(c.section_id)}</span>
             <span class="sectitle"></span>
-            <span class="pc-origin ${esc(c.origin === "own" ? "own" : c.origin === "other-profile" ? "other-profile" : "overridden")}">${esc(originLabel)}</span>
+            <span class="pc-origin ${esc(originClass)}">${esc(originLabel)}</span>
             <a class="link sec-up" title="move up">↑</a>
             <a class="link sec-down" title="move down">↓</a>
             <button class="secx" type="button" title="remove" aria-label="remove">✕</button>
@@ -1171,7 +1172,7 @@ async function renderCreate(profileId, opts) {
   ];
   const recCanvasEl = document.getElementById("recCanvas");
 
-  // recipe picker state: pickedRefs = convention ids toggled on, pickedRelated = recipe ids toggled on.
+  // recipe picker state: pickedRefs = {topic, section} objects toggled on (section preserved on clone), pickedRelated = recipe ids toggled on.
   let convIds = [];   // this profile's convention ids (from profile detail, below)
   let recipeIds = []; // this profile's recipe ids (from profile detail)
   let recipeList = []; // full recipe metas (for clone prefill of refs)
@@ -1182,10 +1183,10 @@ async function renderCreate(profileId, opts) {
     const cr = document.getElementById("convRefs");
     cr.innerHTML = "";
     convIds.forEach(cid => {
-      const chip = h(`<button type="button" class="chip${pickedRefs.includes(cid) ? " on" : ""}">${esc(cid)}</button>`);
+      const chip = h(`<button type="button" class="chip${pickedRefs.some(r => r.topic === cid) ? " on" : ""}">${esc(cid)}</button>`);
       chip.onclick = () => {
-        const idx = pickedRefs.indexOf(cid);
-        if (idx === -1) pickedRefs.push(cid); else pickedRefs.splice(idx, 1);
+        const idx = pickedRefs.findIndex(r => r.topic === cid);
+        if (idx === -1) pickedRefs.push({ topic: cid, section: "" }); else pickedRefs.splice(idx, 1);
         renderRefPickers();
       };
       cr.appendChild(chip);
@@ -1301,7 +1302,7 @@ async function renderCreate(profileId, opts) {
       pickedRefs.length = 0;
       pickedRelated.length = 0;
       if (meta) {
-        (meta.convention_refs || []).forEach(cr => { if (!pickedRefs.includes(cr.topic)) pickedRefs.push(cr.topic); });
+        (meta.convention_refs || []).forEach(cr => { if (!pickedRefs.some(r => r.topic === cr.topic)) pickedRefs.push({ topic: cr.topic, section: cr.section || "" }); });
         (meta.related_recipes || []).forEach(id => { if (!pickedRelated.includes(id)) pickedRelated.push(id); });
       }
       renderRefPickers();
@@ -1344,7 +1345,7 @@ async function renderCreate(profileId, opts) {
       description: document.getElementById("f-desc").value.trim(),
       tags: splitCsv(document.getElementById("f-tags").value),
       body: document.getElementById("rec-body").value,
-      convention_refs: pickedRefs.map(t => ({ topic: t, section: "" })),
+      convention_refs: pickedRefs.map(r => ({ topic: r.topic, section: r.section || "" })),
       related_recipes: pickedRelated.slice(),
     };
     try {
