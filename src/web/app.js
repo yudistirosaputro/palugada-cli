@@ -955,6 +955,7 @@ async function renderCreate(profileId, opts) {
   view.appendChild(h(`<div class="crumb">Profiles / <b>${esc(profileId)}</b> / Create new</div>`));
 
   let kind = opts.kind || "convention";
+  const presetId = opts.presetId || null;
   const vhead = h(`<div class="vhead">
     <div class="seg" role="group" aria-label="Type">
       <button class="on" id="seg-conv" type="button">Convention</button>
@@ -987,9 +988,25 @@ async function renderCreate(profileId, opts) {
         </div>
         <div class="assembled" id="assembled"></div>
         <div class="row" style="margin-top:6px"><button class="ghost btn sm" id="addBlank" type="button">+ add blank section</button></div>
+        <div id="recCanvas" style="display:none">
+          <textarea class="bodyarea" id="rec-body" spellcheck="false" placeholder="## When to use this&#10;...&#10;## Steps&#10;1. ..."></textarea>
+          <div class="refblock">
+            <div class="rl">Convention refs</div>
+            <div class="chips" id="convRefs"></div>
+          </div>
+          <div class="refblock">
+            <div class="rl">Related recipes</div>
+            <div class="chips" id="relRecs"></div>
+          </div>
+          <div class="clone" id="cloneRecBox">
+            <label for="cloneRecSel" class="hint">Clone recipe</label>
+            <select id="cloneRecSel"><option value="">Pick a recipe to copy its body + refs…</option></select>
+          </div>
+        </div>
         <div class="canvasfoot">
           <span class="spacer"></span>
           <button class="btn primary" id="saveConv" type="button">Save convention</button>
+          <button class="btn primary" id="saveRec" type="button" style="display:none">Save recipe</button>
         </div>
       </div>
     </section>
@@ -1147,16 +1164,44 @@ async function renderCreate(profileId, opts) {
     document.getElementById("palN").textContent = shown + " pieces";
   }
 
-  const canvasPaneBody = composer.querySelector("#canvas-pane .panebody");
+  // convention-only canvas pieces (section assembly); recipe-only lives in #recCanvas.
   const convCanvasEls = [
-    composer.querySelector(".fields"),
     document.getElementById("assembled"),
     composer.querySelector("#canvas-pane .row"),
-    composer.querySelector(".canvasfoot"),
   ];
-  const recStub = h(`<div class="empty">Recipe composer is coming in a follow-up task — switch back to Convention to assemble sections.</div>`);
-  recStub.style.display = "none";
-  canvasPaneBody.appendChild(recStub);
+  const recCanvasEl = document.getElementById("recCanvas");
+
+  // recipe picker state: pickedRefs = convention ids toggled on, pickedRelated = recipe ids toggled on.
+  let convIds = [];   // this profile's convention ids (from profile detail, below)
+  let recipeIds = []; // this profile's recipe ids (from profile detail)
+  let recipeList = []; // full recipe metas (for clone prefill of refs)
+  const pickedRefs = [];
+  const pickedRelated = [];
+
+  function renderRefPickers() {
+    const cr = document.getElementById("convRefs");
+    cr.innerHTML = "";
+    convIds.forEach(cid => {
+      const chip = h(`<button type="button" class="chip${pickedRefs.includes(cid) ? " on" : ""}">${esc(cid)}</button>`);
+      chip.onclick = () => {
+        const idx = pickedRefs.indexOf(cid);
+        if (idx === -1) pickedRefs.push(cid); else pickedRefs.splice(idx, 1);
+        renderRefPickers();
+      };
+      cr.appendChild(chip);
+    });
+    const rr = document.getElementById("relRecs");
+    rr.innerHTML = "";
+    recipeIds.forEach(rid => {
+      const chip = h(`<button type="button" class="chip rec${pickedRelated.includes(rid) ? " on" : ""}">${esc(rid)}</button>`);
+      chip.onclick = () => {
+        const idx = pickedRelated.indexOf(rid);
+        if (idx === -1) pickedRelated.push(rid); else pickedRelated.splice(idx, 1);
+        renderRefPickers();
+      };
+      rr.appendChild(chip);
+    });
+  }
 
   function setKind(k) {
     kind = k;
@@ -1165,8 +1210,10 @@ async function renderCreate(profileId, opts) {
     document.getElementById("canvasTitle").textContent = k === "convention" ? "New convention" : "New recipe";
     const isConv = k === "convention";
     convCanvasEls.forEach(el => { if (el) el.style.display = isConv ? "" : "none"; });
-    recStub.style.display = isConv ? "none" : "";
+    recCanvasEl.style.display = isConv ? "none" : "";
     document.getElementById("cloneBox").style.display = isConv ? "" : "none";
+    document.getElementById("saveConv").style.display = isConv ? "" : "none";
+    document.getElementById("saveRec").style.display = isConv ? "none" : "";
   }
 
   vhead.querySelector("#seg-conv").onclick = () => setKind("convention");
@@ -1184,21 +1231,36 @@ async function renderCreate(profileId, opts) {
     renderCanvas();
   };
 
-  // Clone whole convention: fetch the profile's own (unmerged) raw markdown,
-  // strip front-matter, split on `## ` headings, push each as a canvas section.
+  // One profile-detail fetch feeds: the "clone whole convention" select, the
+  // "clone recipe" select, and both ref-picker id lists (convention ids +
+  // recipe ids — profile_json's conventions[]/recipes[] already carry the
+  // merged ids, so this is simpler than re-deriving convention ids from the
+  // palette's topic_ids).
   (async () => {
     const sel = document.getElementById("cloneSel");
+    const recSel = document.getElementById("cloneRecSel");
     let convs = [];
     try {
       const d = await api(`/api/profile/${encodeURIComponent(profileId)}`);
       convs = (d.conventions || []).filter(c => c.origin !== "inherited");
-    } catch (e) { /* clone list is best-effort; palette already loaded above */ }
+      convIds = (d.conventions || []).map(c => c.id);
+      recipeList = d.recipes || [];
+      recipeIds = recipeList.map(r => r.id);
+    } catch (e) { /* clone lists + pickers are best-effort; palette already loaded above */ }
     convs.forEach(c => {
       const opt = document.createElement("option");
       opt.value = c.id;
       opt.textContent = (c.title || c.id) + "  (" + (c.sections || []).length + " sections)";
       sel.appendChild(opt);
     });
+    recipeList.forEach(r => {
+      const opt = document.createElement("option");
+      opt.value = r.id;
+      opt.textContent = r.title || r.id;
+      recSel.appendChild(opt);
+    });
+    renderRefPickers();
+
     sel.onchange = async () => {
       const cid = sel.value;
       sel.value = "";
@@ -1220,6 +1282,30 @@ async function renderCreate(profileId, opts) {
       });
       renderCanvas();
       toast("Cloned " + cid + " · " + parts.length + " sections");
+    };
+
+    // Clone recipe: fetch raw markdown, strip front-matter into the body
+    // textarea, and prefill the ref pickers from that recipe's metadata
+    // (already present in profile_json's recipes[] entry — no extra fetch).
+    recSel.onchange = async () => {
+      const rid = recSel.value;
+      recSel.value = "";
+      if (!rid) return;
+      let markdown;
+      try {
+        const r = await api(`/api/profile/${encodeURIComponent(profileId)}/recipe/${encodeURIComponent(rid)}/raw`);
+        markdown = r.markdown;
+      } catch (e) { toast(e.message, true); return; }
+      document.getElementById("rec-body").value = stripFrontMatter(markdown);
+      const meta = recipeList.find(r => r.id === rid);
+      pickedRefs.length = 0;
+      pickedRelated.length = 0;
+      if (meta) {
+        (meta.convention_refs || []).forEach(cr => { if (!pickedRefs.includes(cr.topic)) pickedRefs.push(cr.topic); });
+        (meta.related_recipes || []).forEach(id => { if (!pickedRelated.includes(id)) pickedRelated.push(id); });
+      }
+      renderRefPickers();
+      toast("Cloned " + rid);
     };
   })();
 
@@ -1244,6 +1330,38 @@ async function renderCreate(profileId, opts) {
       renderProfileDetail(profileId);
     } catch (e) { toast(e.message, true); }
   };
+
+  composer.querySelector("#saveRec").onclick = async () => {
+    const idInput = document.getElementById("f-id");
+    const titleInput = document.getElementById("f-title");
+    const id = idInput.value.trim();
+    const title = titleInput.value.trim();
+    if (!/^[a-z0-9_-]+$/.test(id)) { toast("id: use [a-z0-9_-] only", true); return; }
+    if (!title) { toast("title required", true); return; }
+    const spec = {
+      id,
+      title,
+      description: document.getElementById("f-desc").value.trim(),
+      tags: splitCsv(document.getElementById("f-tags").value),
+      body: document.getElementById("rec-body").value,
+      convention_refs: pickedRefs.map(t => ({ topic: t, section: "" })),
+      related_recipes: pickedRelated.slice(),
+    };
+    try {
+      await api(`/api/profile/${encodeURIComponent(profileId)}/recipe`, "POST", spec);
+      toast(`Saved recipe · ${id}`);
+      renderProfileDetail(profileId);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // A presetId (from an inherited-doc "Override" link) locks the id field so
+  // saving overwrites that id in this profile, and prefills title/tags from
+  // the source doc where cheaply available.
+  if (presetId) {
+    const idInput = document.getElementById("f-id");
+    idInput.value = presetId;
+    idInput.setAttribute("readonly", "readonly");
+  }
 
   setKind(kind);
   renderCanvas();
@@ -1313,16 +1431,8 @@ function docRow(meta, kind, profileId) {
   const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span>${originBadge} <span class="meta">· ${metaBits}</span><span class="actions"><a class="link doc-view">View</a>${secondAction}</span></div>`);
   row.querySelector(".doc-view").onclick = () => renderDoc(meta, kind, profileId, row);
   if (isInherited) {
-    row.querySelector(".doc-override").onclick = () => {
-      // Find the nearest add-form host or create one after the row's parent list
-      const list = row.parentElement;
-      const existingHost = list.querySelector(".doc-override-host-" + CSS.escape(meta.id));
-      if (existingHost) { existingHost.remove(); return; }
-      const host = h(`<div class="doc-override-host-${esc(meta.id)}"></div>`);
-      const form = kind === "convention" ? addConventionForm(profileId, meta.id) : addRecipeForm(profileId, meta.id);
-      host.appendChild(form);
-      row.insertAdjacentElement("afterend", host);
-    };
+    // Override now opens the composer with the id locked, so saving overwrites this id in this profile.
+    row.querySelector(".doc-override").onclick = () => renderCreate(profileId, { kind, presetId: meta.id });
   } else {
     row.querySelector(".doc-edit").onclick = () => editDoc(profileId, kind, meta.id, row);
   }
@@ -1345,34 +1455,20 @@ async function renderProfileDetail(id) {
 
   // ── Browse: conventions ──
   const cv = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${d.conventions.length}</span></div>
-    <div class="card-note">Standing standards for this stack — the "right way" to write code here. Agents pull these automatically (CLI: <code>q</code>, <code>brief</code>).</div>
-    <div class="list" id="cv-list"></div>
-    <div class="row" id="cv-addrow" style="margin-top:6px"><button class="ghost cv-add">+ Add convention</button></div></div>`);
+    <div class="card-note">Standing standards for this stack — the "right way" to write code here. Agents pull these automatically (CLI: <code>q</code>, <code>brief</code>). Use <b>+ Create new</b> above to add one.</div>
+    <div class="list" id="cv-list"></div></div>`);
   const cvList = cv.querySelector("#cv-list");
   if (!d.conventions.length) cvList.appendChild(h(`<div class="muted">No conventions yet — add one to start this profile's playbook.</div>`));
   d.conventions.forEach(c => cvList.appendChild(docRow(c, "convention", id)));
-  cv.querySelector(".cv-add").onclick = () => {
-    if (cv.querySelector(".ac-host")) return;
-    const host = h(`<div class="ac-host"></div>`);
-    host.appendChild(addConventionForm(id));
-    cv.querySelector("#cv-addrow").insertAdjacentElement("beforebegin", host);
-  };
   view.appendChild(cv);
 
   // ── Browse: recipes ──
   const rc = h(`<div class="card"><div class="card-head"><h3>Recipes</h3><span class="count">${d.recipes.length}</span></div>
-    <div class="card-note">Step-by-step guides for one task. Agents pull these by name (CLI: <code>for &lt;task&gt;</code>, <code>brief feature/refactor</code>).</div>
-    <div class="list" id="rc-list"></div>
-    <div class="row" id="rc-addrow" style="margin-top:6px"><button class="ghost rc-add">+ Add recipe</button></div></div>`);
+    <div class="card-note">Step-by-step guides for one task. Agents pull these by name (CLI: <code>for &lt;task&gt;</code>, <code>brief feature/refactor</code>). Use <b>+ Create new</b> above to add one.</div>
+    <div class="list" id="rc-list"></div></div>`);
   const rcList = rc.querySelector("#rc-list");
   if (!d.recipes.length) rcList.appendChild(h(`<div class="muted">No recipes yet.</div>`));
   d.recipes.forEach(r => rcList.appendChild(docRow(r, "recipe", id)));
-  rc.querySelector(".rc-add").onclick = () => {
-    if (rc.querySelector(".ar-host")) return;
-    const host = h(`<div class="ar-host"></div>`);
-    host.appendChild(addRecipeForm(id));
-    rc.querySelector("#rc-addrow").insertAdjacentElement("beforebegin", host);
-  };
   view.appendChild(rc);
 
   // ── Author & configure (separated lower region) ──
@@ -1529,82 +1625,6 @@ function flowsCard(id, d) {
     } catch (e) { toast(e.message, true); }
   };
   return card;
-}
-
-function addConventionForm(id, presetId) {
-  const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>${presetId ? "Override convention: " + esc(presetId) : "+ Add convention"}</strong>
-    <div class="muted" style="margin:2px 0 6px">A standing standard for this stack. palugada writes the front-matter,
-    section ids, and index for you — you only fill the fields below. (CLI equivalent: <code>palugada convention add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ac-id" placeholder="errorhandling"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
-    <div class="muted">lowercase slug — used in <code>palugada q errorhandling</code> (a-z, 0-9, - _).</div>
-    <label>title</label><input class="ac-title" placeholder="Error Handling">
-    <label>description</label><input class="ac-desc" placeholder="one-line summary">
-    <div class="muted">one line shown in <code>q --list</code> and search.</div>
-    <label>tags (comma-separated)</label><input class="ac-tags" placeholder="error, coroutines">
-    <label style="margin-top:8px;display:block"><strong>Sections</strong></label>
-    <div class="muted">Split the rule into titled chunks — each is a token-cheap piece <code>q</code>/<code>brief</code> pull on demand.</div>
-    <div class="ac-sections"></div>
-    <div class="row" style="margin-top:6px"><button class="ghost ac-addsec">+ section</button><span class="spacer"></span><button class="ac-save">Save convention</button></div>
-  </div>`);
-  if (presetId) box.querySelector(".ac-id").setAttribute("readonly", "readonly");
-  const secs = box.querySelector(".ac-sections");
-  const addSec = () => secs.appendChild(h(`<div class="section-row">
-    <label>section title</label><input class="sec-title" placeholder="Modeling Failures">
-    <label>section body (markdown)</label><textarea class="sec-body"></textarea>
-    <label class="row" style="margin-top:4px"><input type="checkbox" class="sec-code" style="width:auto"> &nbsp;contains code</label>
-  </div>`));
-  box.querySelector(".ac-addsec").onclick = e => { e.preventDefault(); addSec(); };
-  addSec();
-  box.querySelector(".ac-save").onclick = async e => {
-    e.preventDefault();
-    const sections = [...secs.querySelectorAll(".section-row")].map(s => ({
-      title: s.querySelector(".sec-title").value.trim(),
-      body: s.querySelector(".sec-body").value,
-      code: s.querySelector(".sec-code").checked,
-    })).filter(s => s.title);
-    const spec = {
-      id: box.querySelector(".ac-id").value.trim(),
-      title: box.querySelector(".ac-title").value.trim(),
-      description: box.querySelector(".ac-desc").value.trim(),
-      tags: splitCsv(box.querySelector(".ac-tags").value),
-      sections,
-    };
-    if (!spec.id || !spec.title) { toast("id and title required", true); return; }
-    try { await api(`/api/profile/${id}/convention`, "POST", spec); toast("saved convention " + spec.id); renderProfileDetail(id); }
-    catch (err) { toast(err.message, true); }
-  };
-  return box;
-}
-
-function addRecipeForm(id, presetId) {
-  const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>${presetId ? "Override recipe: " + esc(presetId) : "+ Add recipe"}</strong>
-    <div class="muted" style="margin:2px 0 6px">A step-by-step guide for one task. (CLI equivalent: <code>palugada recipe add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ar-id" placeholder="pagination"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
-    <div class="muted">lowercase slug — used in <code>palugada for pagination</code>.</div>
-    <label>title</label><input class="ar-title" placeholder="Add pagination">
-    <label>description</label><input class="ar-desc" placeholder="one-line summary">
-    <label>tags (comma-separated)</label><input class="ar-tags" placeholder="recipe, list">
-    <label>body (markdown)</label><textarea class="ar-body" placeholder="## When to use this&#10;...&#10;## Steps&#10;1. ..."></textarea>
-    <div class="muted">the full procedure — write it as plain markdown (use <code>## </code> for steps/sections).</div>
-    <div class="row" style="margin-top:6px"><span class="spacer"></span><button class="ar-save">Save recipe</button></div>
-  </div>`);
-  if (presetId) box.querySelector(".ar-id").setAttribute("readonly", "readonly");
-  box.querySelector(".ar-save").onclick = async e => {
-    e.preventDefault();
-    const spec = {
-      id: box.querySelector(".ar-id").value.trim(),
-      title: box.querySelector(".ar-title").value.trim(),
-      description: box.querySelector(".ar-desc").value.trim(),
-      tags: splitCsv(box.querySelector(".ar-tags").value),
-      body: box.querySelector(".ar-body").value,
-    };
-    if (!spec.id || !spec.title) { toast("id and title required", true); return; }
-    try { await api(`/api/profile/${id}/recipe`, "POST", spec); toast("saved recipe " + spec.id); renderProfileDetail(id); }
-    catch (err) { toast(err.message, true); }
-  };
-  return box;
 }
 
 function generateForm(id) {
