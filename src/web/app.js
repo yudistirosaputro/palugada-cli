@@ -926,6 +926,145 @@ async function editDoc(profile, kind, id, anchor) {
   };
 }
 
+// ── Create composer: palette (left) + canvas (right) ───────────────────────
+// Groups palette sections by (origin, from): this profile's own sections,
+// per-source "overridden"/"inherited" chain sections, then one collapsed
+// group per other-profile id (lazily fetched via GET .../palette/{other}).
+function paletteGroups(pal) {
+  const chainSections = pal.sections.filter(s => s.origin !== "other-profile");
+  const byKey = new Map();
+  chainSections.forEach(s => {
+    const key = s.origin + " " + s.from;
+    if (!byKey.has(key)) byKey.set(key, { origin: s.origin, from: s.from, items: [] });
+    byKey.get(key).items.push(s);
+  });
+  // "own" (this profile) first, then overridden/inherited by from-profile.
+  const order = { own: 0, overridden: 1, inherited: 2 };
+  const groups = [...byKey.values()].sort((a, b) => (order[a.origin] ?? 9) - (order[b.origin] ?? 9));
+  return groups;
+}
+function groupLabel(g) {
+  if (g.origin === "own") return "This profile";
+  if (g.origin === "overridden") return "Overridden · " + g.from;
+  if (g.origin === "inherited") return "Inherited · " + g.from;
+  return g.from;
+}
+
+async function renderCreate(profileId, opts) {
+  view.innerHTML = "";
+  view.appendChild(h(`<div class="crumb">Profiles / <b>${esc(profileId)}</b> / Create new</div>`));
+
+  let kind = opts.kind || "convention";
+  const vhead = h(`<div class="vhead">
+    <div class="seg" role="group" aria-label="Type">
+      <button class="on" id="seg-conv" type="button">Convention</button>
+      <button id="seg-rec" type="button">Recipe</button>
+    </div>
+    <div class="right"><button class="btn ghost sm" id="startblank" type="button">Start blank</button></div>
+  </div>`);
+  view.appendChild(vhead);
+
+  const composer = h(`<div class="composer">
+    <section class="pane" id="pal-pane">
+      <div class="panehead"><h3>Palette</h3><span class="n" id="palN">0 pieces</span></div>
+      <div class="panebody">
+        <input class="search" id="pal-search" type="text" placeholder="Search section / convention…">
+        <div id="palette"></div>
+      </div>
+    </section>
+    <section class="pane" id="canvas-pane">
+      <div class="panehead"><h3 id="canvasTitle">New convention</h3><span class="n" id="canvasN">0 sections</span></div>
+      <div class="panebody">
+        <div class="empty">Canvas coming soon — pick pieces on the left; assembling into a new convention/recipe lands in the next step.</div>
+      </div>
+    </section>
+  </div>`);
+  view.appendChild(composer);
+
+  let pal;
+  try { pal = await api(`/api/profile/${encodeURIComponent(profileId)}/palette`); }
+  catch (e) { toast(e.message, true); return; }
+
+  // other_profiles groups: lazily fetched on first expand, then cached here.
+  const otherCache = {}; // id -> sections[] once fetched
+
+  function renderPalette() {
+    const q = (document.getElementById("pal-search").value || "").trim().toLowerCase();
+    const host = document.getElementById("palette");
+    host.innerHTML = "";
+    let shown = 0;
+
+    paletteGroups(pal).forEach(g => {
+      const matches = g.items.filter(s => (s.topic_id + " " + s.section_id + " " + s.title).toLowerCase().includes(q));
+      if (!matches.length) return;
+      const gd = h(`<div class="grp"><div class="grptitle">${esc(groupLabel(g))}</div></div>`);
+      matches.forEach(s => {
+        shown++;
+        const row = h(`<label class="pitem">
+          <input type="checkbox">
+          <span class="pid mono">${esc(s.topic_id)}#${esc(s.section_id)}</span>
+          <span class="ptitle">${esc(s.title)}</span>
+          <span class="ptok mono">${s.tokens}t</span>
+        </label>`);
+        row.querySelector("input").onchange = () => { /* canvas wiring lands in B5 */ };
+        gd.appendChild(row);
+      });
+      host.appendChild(gd);
+    });
+
+    // One collapsed group per other-profile id, fetched lazily on expand.
+    (pal.other_profiles || []).forEach(otherId => {
+      const gd = h(`<div class="grp"><div class="grptitle" style="cursor:pointer">▸ Other profile · ${esc(otherId)}</div></div>`);
+      const title = gd.querySelector(".grptitle");
+      const body = h(`<div class="pal-other-body" style="display:none"></div>`);
+      gd.appendChild(body);
+      title.onclick = async () => {
+        const open = body.style.display !== "none";
+        if (open) { body.style.display = "none"; title.textContent = "▸ Other profile · " + otherId; return; }
+        title.textContent = "▾ Other profile · " + otherId;
+        body.style.display = "";
+        if (!otherCache[otherId]) {
+          try {
+            const r = await api(`/api/profile/${encodeURIComponent(profileId)}/palette/${encodeURIComponent(otherId)}`);
+            otherCache[otherId] = r.sections || [];
+          } catch (e) { toast(e.message, true); otherCache[otherId] = []; }
+        }
+        body.innerHTML = "";
+        const items = otherCache[otherId].filter(s => (s.topic_id + " " + s.section_id + " " + s.title).toLowerCase().includes(q));
+        if (!items.length) { body.appendChild(h(`<div class="muted">No matching sections.</div>`)); return; }
+        items.forEach(s => {
+          const row = h(`<label class="pitem">
+            <input type="checkbox">
+            <span class="pid mono">${esc(s.topic_id)}#${esc(s.section_id)}</span>
+            <span class="ptitle">${esc(s.title)}</span>
+            <span class="ptok mono">${s.tokens}t</span>
+          </label>`);
+          row.querySelector("input").onchange = () => { /* canvas wiring lands in B5 */ };
+          body.appendChild(row);
+        });
+      };
+      host.appendChild(gd);
+    });
+
+    document.getElementById("palN").textContent = shown + " pieces";
+  }
+
+  function setKind(k) {
+    kind = k;
+    vhead.querySelector("#seg-conv").classList.toggle("on", k === "convention");
+    vhead.querySelector("#seg-rec").classList.toggle("on", k === "recipe");
+    document.getElementById("canvasTitle").textContent = k === "convention" ? "New convention" : "New recipe";
+  }
+
+  vhead.querySelector("#seg-conv").onclick = () => setKind("convention");
+  vhead.querySelector("#seg-rec").onclick = () => setKind("recipe");
+  vhead.querySelector("#startblank").onclick = () => toast("Canvas cleared");
+  composer.querySelector("#pal-search").oninput = renderPalette;
+
+  setKind(kind);
+  renderPalette();
+}
+
 async function renderProfiles() {
   view.innerHTML = viewHead("Knowledge", "Profiles",
     "A profile is one stack's playbook — its conventions, recipes, and the flows your agents assemble. Pick one to edit, or start a new stack.");
@@ -1008,6 +1147,9 @@ function docRow(meta, kind, profileId) {
 async function renderProfileDetail(id) {
   view.innerHTML = backLink("Profiles") + viewHead("Profile", id);
   document.getElementById("back").onclick = renderProfiles;
+  const head = view.querySelector(".view-head");
+  head.appendChild(h(`<button class="btn primary" id="pc-create">+ Create new</button>`));
+  head.querySelector("#pc-create").onclick = () => renderCreate(id, {});
   let d;
   try { d = await api("/api/profile/" + encodeURIComponent(id)); }
   catch (e) { toast(e.message, true); return; }

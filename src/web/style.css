@@ -478,3 +478,52 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .vres.ok{color:var(--ok);}.vres.info{color:var(--rev);}.vres.muted{color:var(--ink-soft);}.vres.err{color:var(--err);}
 .locked-note{font-size:12.5px;color:var(--faint);}
 @media (max-width:880px){.cx-fields{grid-template-columns:1fr;}}
+
+/* ── create composer (palette + canvas) ── */
+.crumb{font-size:12.5px;color:var(--ink-soft);margin-bottom:var(--s3);}
+.crumb b{color:var(--ink);}
+.vhead{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;margin-bottom:var(--s4);}
+.vhead .right{margin-left:auto;display:flex;gap:var(--s2);}
+.seg{display:inline-flex;border:var(--bw) solid var(--border);border-radius:var(--r-sm);overflow:hidden;background:var(--surface);}
+.seg button{font-family:var(--font-ui);border:0;background:transparent;color:var(--ink-soft);font-size:13px;font-weight:700;padding:7px 15px;cursor:pointer;box-shadow:none;border-radius:0;}
+.seg button.on{background:var(--accent);color:var(--on-accent);}
+.seg button:not(.on):hover{background:var(--surface-2);color:var(--ink);}
+.btn.sm{padding:4px 11px;font-size:13px;}
+.btn.ghost{background:var(--surface);color:var(--ink);}
+.btn.ghost:hover{background:var(--surface-2);}
+
+.composer{display:grid;grid-template-columns:320px 1fr;gap:var(--s4);flex:1;min-height:0;}
+.pane{border:var(--bw) solid var(--border);border-radius:var(--r-lg);background:var(--surface);display:flex;flex-direction:column;min-height:0;}
+.panehead{display:flex;align-items:center;gap:var(--s2);padding:11px var(--s4);border-bottom:var(--bw) solid var(--border);}
+.panehead h3{margin:0;font-family:var(--font-display);font-size:13px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-soft);font-weight:700;}
+.panehead .n{margin-left:auto;font-family:var(--font-mono);font-size:11.5px;font-weight:700;color:var(--ink-soft);background:var(--surface-2);border-radius:var(--r-pill);padding:2px 9px;}
+.panebody{padding:var(--s3) var(--s4);overflow-y:auto;flex:1;}
+
+.search{width:100%;font-family:var(--font-ui);font-size:13.5px;padding:8px 10px;border:var(--bw) solid var(--border);border-radius:var(--r-sm);background:var(--surface-2);color:var(--ink);margin-bottom:var(--s3);}
+.search::placeholder{color:var(--faint);}
+.search:focus{outline:none;box-shadow:0 0 0 2px var(--accent-tint),0 0 0 3px var(--accent);}
+
+.grp{margin-bottom:var(--s3);}
+.grptitle{display:flex;align-items:center;gap:7px;font-family:var(--font-ui);font-size:11.5px;font-weight:700;color:var(--ink-soft);margin:0 0 6px;letter-spacing:.01em;}
+.pitem{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:var(--r-sm);cursor:pointer;}
+.pitem:hover{background:var(--surface-2);}
+.pitem input{margin:0;accent-color:var(--accent);width:15px;height:15px;flex-shrink:0;}
+.pid{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-soft);flex-shrink:0;}
+.ptitle{font-size:12.5px;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ptok{font-family:var(--font-mono);font-size:10.5px;color:var(--faint);flex-shrink:0;}
+
+/* section cards (composer canvas, filled in a later task) */
+.seccard{border:var(--bw) solid var(--border);border-radius:var(--r);background:var(--surface-2);overflow:hidden;}
+.sechead{display:flex;align-items:center;gap:9px;padding:9px 11px;}
+.secid{font-family:var(--font-mono);font-size:11px;color:var(--ink-soft);flex-shrink:0;}
+.sectitle{font-size:13.5px;color:var(--ink);font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.secbody{padding:0 11px 10px 11px;color:var(--ink-soft);font-size:12px;line-height:1.5;}
+
+/* palette provenance badge — namespaced pc- to avoid the table .origin class */
+.pc-origin{font-size:10.5px;font-weight:700;border-radius:var(--r-pill);padding:2px 8px;flex-shrink:0;}
+.pc-origin.own{color:var(--ink-soft);background:var(--surface-2);border:var(--bw) solid var(--border);}
+.pc-origin.overridden{color:var(--rec);background:var(--rec-bg);}
+.pc-origin.inherited{color:var(--rev);background:var(--rev-bg);}
+.pc-origin.other-profile{color:var(--eng);background:var(--eng-bg);}
+
+@media (max-width:880px){.composer{grid-template-columns:1fr;}}
