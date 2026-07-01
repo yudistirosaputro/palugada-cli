@@ -320,6 +320,10 @@ pub struct RecipeSpec {
     pub tags: Vec<String>,
     #[serde(default)]
     pub body: String,
+    #[serde(default)]
+    pub convention_refs: Vec<ConvRef>,
+    #[serde(default)]
+    pub related_recipes: Vec<String>,
 }
 
 /// Kebab-case a heading: lowercase, runs of non-alphanumeric → single '-', trimmed.
@@ -528,11 +532,15 @@ pub fn add_recipe(kn: &Path, profile: &str, spec: &RecipeSpec) -> Result<(), Str
         &spec.description,
         &spec.tags,
         &body,
+        &spec.convention_refs,
+        &spec.related_recipes,
     )
 }
 
 /// Write `<id>.md` (front-matter + the given body, verbatim) and upsert the
-/// recipes index.
+/// recipes index. `convention_refs`/`related_recipes` are index-only (not
+/// reflected into the `.md` front-matter).
+#[allow(clippy::too_many_arguments)]
 fn write_recipe_files(
     dir: &Path,
     id: &str,
@@ -540,6 +548,8 @@ fn write_recipe_files(
     description: &str,
     tags: &[String],
     body: &str,
+    convention_refs: &[ConvRef],
+    related_recipes: &[String],
 ) -> Result<(), String> {
     validate_doc_id(id)?;
     fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
@@ -555,6 +565,7 @@ fn write_recipe_files(
     let entry = serde_json::json!({
         "id": id, "title": title, "description": description,
         "file": format!("{id}.md"), "tags": tags,
+        "convention_refs": convention_refs, "related_recipes": related_recipes,
     });
     upsert_index(&dir.join("_index.json"), "recipes", id, entry)
 }
@@ -573,7 +584,7 @@ pub fn add_recipe_from_markdown(dir: &Path, raw: &str) -> Result<(String, bool),
     let id = meta.id.clone().unwrap_or_else(|| slug(&title));
     validate_doc_id(&id)?;
     let replaced = dir.join(format!("{id}.md")).exists();
-    write_recipe_files(dir, &id, &title, &meta.description, &meta.tags, body)?;
+    write_recipe_files(dir, &id, &title, &meta.description, &meta.tags, body, &[], &[])?;
     Ok((id, replaced))
 }
 
@@ -1041,6 +1052,30 @@ mod tests {
     }
 
     #[test]
+    fn recipe_refs_round_trip_and_survive_resave() {
+        let tmp = std::env::temp_dir().join(format!("rr-{}", std::process::id()));
+        let kn = tmp.join("kn");
+        std::fs::create_dir_all(kn.join("profiles").join("p").join("recipes")).unwrap();
+        let spec = RecipeSpec {
+            id: "feature".into(), title: "Add a feature".into(),
+            description: "d".into(), tags: vec!["r".into()], body: "## Steps\n1.".into(),
+            convention_refs: vec![ConvRef { topic: "architecture".into(), section: String::new() },
+                                  ConvRef { topic: "testing".into(), section: "fixtures".into() }],
+            related_recipes: vec!["refactor".into()],
+        };
+        add_recipe(&kn, "p", &spec).unwrap();
+        let r = recipes(&kn, "p").unwrap().into_iter().find(|r| r.id == "feature").unwrap();
+        assert_eq!(r.convention_refs.len(), 2);
+        assert_eq!(r.convention_refs[0].topic, "architecture");
+        assert_eq!(r.related_recipes, vec!["refactor".to_string()]);
+        // Re-save (the old bug wiped refs here) — refs must persist.
+        add_recipe(&kn, "p", &spec).unwrap();
+        let r2 = recipes(&kn, "p").unwrap().into_iter().find(|r| r.id == "feature").unwrap();
+        assert_eq!(r2.convention_refs.len(), 2, "re-save must not drop refs (regression)");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn set_body_overwrites_verbatim_and_guards() {
         let kn = tempfile::tempdir().unwrap();
         let kp = kn.path();
@@ -1081,6 +1116,8 @@ mod tests {
                 description: "".into(),
                 tags: vec![],
                 body: "steps".into(),
+                convention_refs: vec![],
+                related_recipes: vec![],
             },
         )
         .unwrap();
