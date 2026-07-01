@@ -1,7 +1,3 @@
-@font-face { font-family: "Bangers"; src: url("/bangers.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
-@font-face { font-family: "Comic Neue"; src: url("/comic400.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
-@font-face { font-family: "Comic Neue"; src: url("/comic700.woff2") format("woff2"); font-weight: 700; font-style: normal; font-display: swap; }
-
 /* ============================================================
    palugada web console — "POP WORKBENCH" (elegant comic / pop-art)
    Ink outlines · restrained hard shadows · faint halftone · bold flats.
@@ -9,8 +5,8 @@
    ============================================================ */
 
 :root {
-  --font-display: "Bangers", "Comic Sans MS", Impact, fantasy;
-  --font-ui: "Comic Neue", "Comic Sans MS", system-ui, sans-serif;
+  --font-display: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 
   --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px; --s7: 32px; --s8: 40px;
