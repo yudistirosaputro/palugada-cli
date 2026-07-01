@@ -20,8 +20,6 @@
 //!
 //! This module (Task B1) is not yet wired to any caller — the HTTP routes
 //! that consume `palette()`/`profile_sections()` land in Task B2 (`src/web.rs`).
-//! `#[allow(dead_code)]` below is intentional and temporary until that wiring lands.
-#![allow(dead_code)]
 use serde::Serialize;
 use std::path::Path;
 

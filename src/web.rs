@@ -62,6 +62,8 @@ pub enum Route {
     ProfileConnectors(String),
     SaveProfileConnector(String, String),
     VerifyProfileConnector(String, String),
+    Palette(String),
+    PaletteProfile(String, String),
     NotFound,
 }
 
@@ -114,6 +116,10 @@ pub fn route(method: &str, path: &str) -> Route {
         }
         ("GET", ["api", "profile", id, "recipe", rid, "raw"]) => {
             Route::RecipeRaw((*id).to_string(), (*rid).to_string())
+        }
+        ("GET", ["api", "profile", id, "palette"]) => Route::Palette((*id).to_string()),
+        ("GET", ["api", "profile", id, "palette", other]) => {
+            Route::PaletteProfile((*id).to_string(), (*other).to_string())
         }
         ("POST", ["api", "profile"]) => Route::CreateProfile,
         ("POST", ["api", "profile", id, "convention"]) => Route::AddConvention((*id).to_string()),
@@ -240,6 +246,14 @@ fn api(route: Route, body: &str) -> (u16, String) {
         Route::RecipeRaw(id, rid) => read(|| {
             let kn = knowledge_dir()?;
             Ok(json!({ "markdown": crate::knowledge::recipe_md(&kn, &id, &rid)? }))
+        }),
+        Route::Palette(id) => read(|| {
+            let kn = knowledge_dir()?;
+            Ok(serde_json::to_value(crate::palette::palette(&kn, &id)?).map_err(|e| e.to_string())?)
+        }),
+        Route::PaletteProfile(_id, other) => read(|| {
+            let kn = knowledge_dir()?;
+            Ok(json!({ "sections": crate::palette::profile_sections(&kn, &other)? }))
         }),
         Route::CreateProfile => write_op(|| create_profile(body)),
         Route::AddConvention(id) => write_op(|| {
@@ -767,6 +781,11 @@ mod tests {
         assert_eq!(
             route("GET", "/api/profile/p/recipe/feature/raw"),
             Route::RecipeRaw("p".into(), "feature".into())
+        );
+        assert_eq!(route("GET", "/api/profile/p/palette"), Route::Palette("p".into()));
+        assert_eq!(
+            route("GET", "/api/profile/p/palette/other"),
+            Route::PaletteProfile("p".into(), "other".into())
         );
         assert_eq!(route("POST", "/api/profile"), Route::CreateProfile);
         assert_eq!(route("POST", "/api/profile/p/convention"), Route::AddConvention("p".into()));
