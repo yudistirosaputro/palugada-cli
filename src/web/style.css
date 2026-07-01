@@ -512,12 +512,29 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .ptitle{font-size:12.5px;color:var(--ink);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ptok{font-family:var(--font-mono);font-size:10.5px;color:var(--faint);flex-shrink:0;}
 
-/* section cards (composer canvas, filled in a later task) */
+.clone{margin-top:var(--s3);padding-top:var(--s3);border-top:1.5px dashed var(--border);}
+.clone select{width:100%;font-family:var(--font-ui);font-size:12.5px;padding:7px 9px;border:var(--bw) solid var(--border);border-radius:var(--r-sm);background:var(--surface-2);color:var(--ink);}
+
+/* canvas fields row */
+.fields{display:flex;gap:var(--s3);flex-wrap:wrap;margin-bottom:var(--s4);}
+.fields .field{flex:1;min-width:140px;margin-top:0;}
+.fields .field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);font-weight:700;margin-bottom:4px;}
+.fields .field input{width:100%;font-family:var(--font-ui);font-size:13px;padding:7px 9px;border:var(--bw) solid var(--border);border-radius:var(--r-sm);background:var(--surface-2);color:var(--ink);}
+.fields .field input.mono{font-family:var(--font-mono);}
+
+/* section cards (composer canvas) */
+.assembled{display:flex;flex-direction:column;gap:var(--s3);}
 .seccard{border:var(--bw) solid var(--border);border-radius:var(--r);background:var(--surface-2);overflow:hidden;}
 .sechead{display:flex;align-items:center;gap:9px;padding:9px 11px;}
+.grip{color:var(--faint);font-size:14px;flex-shrink:0;letter-spacing:-2px;}
 .secid{font-family:var(--font-mono);font-size:11px;color:var(--ink-soft);flex-shrink:0;}
 .sectitle{font-size:13.5px;color:var(--ink);font-weight:700;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .secbody{padding:0 11px 10px 11px;color:var(--ink-soft);font-size:12px;line-height:1.5;}
+.secbody textarea{font-family:var(--font-ui);font-size:12.5px;padding:7px 9px;border:var(--bw) solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--ink);resize:vertical;}
+.secbody .sec-title-edit{font-weight:700;min-height:32px;}
+.secbody .sec-body-edit{font-family:var(--font-mono);min-height:100px;}
+.secx{border:0;background:transparent;color:var(--faint);cursor:pointer;font-size:15px;padding:2px 4px;border-radius:5px;flex-shrink:0;box-shadow:none;}
+.secx:hover{background:var(--surface);color:var(--ink);}
 
 /* palette provenance badge — namespaced pc- to avoid the table .origin class */
 .pc-origin{font-size:10.5px;font-weight:700;border-radius:var(--r-pill);padding:2px 8px;flex-shrink:0;}
@@ -526,4 +543,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 .pc-origin.inherited{color:var(--rev);background:var(--rev-bg);}
 .pc-origin.other-profile{color:var(--eng);background:var(--eng-bg);}
 
-@media (max-width:880px){.composer{grid-template-columns:1fr;}}
+.canvasfoot{display:flex;align-items:center;gap:var(--s3);padding-top:var(--s4);margin-top:var(--s4);border-top:var(--bw) solid var(--border);}
+
+@media (max-width:880px){.composer{grid-template-columns:1fr;}.fields{flex-direction:column;}}

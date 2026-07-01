@@ -970,12 +970,27 @@ async function renderCreate(profileId, opts) {
       <div class="panebody">
         <input class="search" id="pal-search" type="text" placeholder="Search section / convention…">
         <div id="palette"></div>
+        <div class="clone" id="cloneBox">
+          <label for="cloneSel" class="hint">Clone whole convention</label>
+          <select id="cloneSel"><option value="">Pick a convention to copy all its sections…</option></select>
+        </div>
       </div>
     </section>
     <section class="pane" id="canvas-pane">
       <div class="panehead"><h3 id="canvasTitle">New convention</h3><span class="n" id="canvasN">0 sections</span></div>
       <div class="panebody">
-        <div class="empty">Canvas coming soon — pick pieces on the left; assembling into a new convention/recipe lands in the next step.</div>
+        <div class="fields">
+          <div class="field"><label>id</label><input class="mono" id="f-id" placeholder="error-handling"></div>
+          <div class="field"><label>title</label><input id="f-title" placeholder="Error handling"></div>
+          <div class="field"><label>description</label><input id="f-desc" placeholder="one-line summary"></div>
+          <div class="field"><label>tags (comma-separated)</label><input id="f-tags" placeholder="error, result"></div>
+        </div>
+        <div class="assembled" id="assembled"></div>
+        <div class="row" style="margin-top:6px"><button class="ghost btn sm" id="addBlank" type="button">+ add blank section</button></div>
+        <div class="canvasfoot">
+          <span class="spacer"></span>
+          <button class="btn primary" id="saveConv" type="button">Save convention</button>
+        </div>
       </div>
     </section>
   </div>`);
@@ -987,6 +1002,65 @@ async function renderCreate(profileId, opts) {
 
   // other_profiles groups: lazily fetched on first expand, then cached here.
   const otherCache = {}; // id -> sections[] once fetched
+
+  // canvas: ordered list of { section_id, title, body, origin, from }
+  // - checked palette rows are copied here (own/overridden/inherited/other-profile origin)
+  // - "+ add blank section" pushes an "own" entry with empty body
+  // key() identifies a palette row for checkbox<->canvas sync.
+  const canvas = [];
+  function keyOf(from, topicId, sectionId) { return `${from}::${topicId}#${sectionId}`; }
+
+  function renderCanvas() {
+    const host = document.getElementById("assembled");
+    host.innerHTML = "";
+    if (!canvas.length) {
+      host.appendChild(h(`<div class="empty">No sections yet — check pieces on the left, click <b>+ add blank section</b>, or clone a whole convention.</div>`));
+    } else {
+      canvas.forEach((c, i) => {
+        const originLabel = c.origin === "own" ? "own"
+          : c.origin === "overridden" ? "base·" + c.from
+          : c.origin === "inherited" ? "base·" + c.from
+          : c.from || "other";
+        const card = h(`<div class="seccard">
+          <div class="sechead">
+            <span class="grip" aria-hidden="true">⋮⋮</span>
+            <span class="secid mono">#${esc(c.section_id)}</span>
+            <span class="sectitle"></span>
+            <span class="pc-origin ${esc(c.origin === "own" ? "own" : c.origin === "other-profile" ? "other-profile" : "overridden")}">${esc(originLabel)}</span>
+            <a class="link sec-up" title="move up">↑</a>
+            <a class="link sec-down" title="move down">↓</a>
+            <button class="secx" type="button" title="remove" aria-label="remove">✕</button>
+          </div>
+          <div class="secbody">
+            <textarea class="sec-title-edit" style="width:100%;margin-bottom:6px" placeholder="section title"></textarea>
+            <textarea class="sec-body-edit" style="width:100%;min-height:100px"></textarea>
+          </div>
+        </div>`);
+        card.querySelector(".sec-title-edit").value = c.title;
+        card.querySelector(".sec-body-edit").value = c.body;
+        card.querySelector(".sec-title-edit").oninput = e => { c.title = e.target.value; card.querySelector(".sectitle").textContent = c.title; };
+        card.querySelector(".sec-body-edit").oninput = e => { c.body = e.target.value; };
+        card.querySelector(".sectitle").textContent = c.title;
+        card.querySelector(".secx").onclick = () => {
+          canvas.splice(i, 1);
+          renderCanvas();
+          renderPalette();
+        };
+        card.querySelector(".sec-up").onclick = () => {
+          if (i === 0) return;
+          [canvas[i - 1], canvas[i]] = [canvas[i], canvas[i - 1]];
+          renderCanvas();
+        };
+        card.querySelector(".sec-down").onclick = () => {
+          if (i === canvas.length - 1) return;
+          [canvas[i], canvas[i + 1]] = [canvas[i + 1], canvas[i]];
+          renderCanvas();
+        };
+        host.appendChild(card);
+      });
+    }
+    document.getElementById("canvasN").textContent = canvas.length + " sections";
+  }
 
   function renderPalette() {
     const q = (document.getElementById("pal-search").value || "").trim().toLowerCase();
@@ -1000,13 +1074,25 @@ async function renderCreate(profileId, opts) {
       const gd = h(`<div class="grp"><div class="grptitle">${esc(groupLabel(g))}</div></div>`);
       matches.forEach(s => {
         shown++;
+        const k = keyOf(s.from, s.topic_id, s.section_id);
+        const checked = canvas.some(c => c._key === k);
         const row = h(`<label class="pitem">
-          <input type="checkbox">
+          <input type="checkbox" ${checked ? "checked" : ""}>
           <span class="pid mono">${esc(s.topic_id)}#${esc(s.section_id)}</span>
           <span class="ptitle">${esc(s.title)}</span>
           <span class="ptok mono">${s.tokens}t</span>
         </label>`);
-        row.querySelector("input").onchange = () => { /* canvas wiring lands in B5 */ };
+        row.querySelector("input").onchange = e => {
+          if (e.target.checked) {
+            if (!canvas.some(c => c._key === k)) {
+              canvas.push({ section_id: s.section_id, title: s.title, body: s.body, origin: s.origin, from: s.from, _key: k });
+            }
+          } else {
+            const idx = canvas.findIndex(c => c._key === k);
+            if (idx !== -1) canvas.splice(idx, 1);
+          }
+          renderCanvas();
+        };
         gd.appendChild(row);
       });
       host.appendChild(gd);
@@ -1033,13 +1119,25 @@ async function renderCreate(profileId, opts) {
         const items = otherCache[otherId].filter(s => (s.topic_id + " " + s.section_id + " " + s.title).toLowerCase().includes(q));
         if (!items.length) { body.appendChild(h(`<div class="muted">No matching sections.</div>`)); return; }
         items.forEach(s => {
+          const k = keyOf(s.from, s.topic_id, s.section_id);
+          const checked = canvas.some(c => c._key === k);
           const row = h(`<label class="pitem">
-            <input type="checkbox">
+            <input type="checkbox" ${checked ? "checked" : ""}>
             <span class="pid mono">${esc(s.topic_id)}#${esc(s.section_id)}</span>
             <span class="ptitle">${esc(s.title)}</span>
             <span class="ptok mono">${s.tokens}t</span>
           </label>`);
-          row.querySelector("input").onchange = () => { /* canvas wiring lands in B5 */ };
+          row.querySelector("input").onchange = e => {
+            if (e.target.checked) {
+              if (!canvas.some(c => c._key === k)) {
+                canvas.push({ section_id: s.section_id, title: s.title, body: s.body, origin: s.origin, from: s.from, _key: k });
+              }
+            } else {
+              const idx = canvas.findIndex(c => c._key === k);
+              if (idx !== -1) canvas.splice(idx, 1);
+            }
+            renderCanvas();
+          };
           body.appendChild(row);
         });
       };
@@ -1049,19 +1147,106 @@ async function renderCreate(profileId, opts) {
     document.getElementById("palN").textContent = shown + " pieces";
   }
 
+  const canvasPaneBody = composer.querySelector("#canvas-pane .panebody");
+  const convCanvasEls = [
+    composer.querySelector(".fields"),
+    document.getElementById("assembled"),
+    composer.querySelector("#canvas-pane .row"),
+    composer.querySelector(".canvasfoot"),
+  ];
+  const recStub = h(`<div class="empty">Recipe composer is coming in a follow-up task — switch back to Convention to assemble sections.</div>`);
+  recStub.style.display = "none";
+  canvasPaneBody.appendChild(recStub);
+
   function setKind(k) {
     kind = k;
     vhead.querySelector("#seg-conv").classList.toggle("on", k === "convention");
     vhead.querySelector("#seg-rec").classList.toggle("on", k === "recipe");
     document.getElementById("canvasTitle").textContent = k === "convention" ? "New convention" : "New recipe";
+    const isConv = k === "convention";
+    convCanvasEls.forEach(el => { if (el) el.style.display = isConv ? "" : "none"; });
+    recStub.style.display = isConv ? "none" : "";
+    document.getElementById("cloneBox").style.display = isConv ? "" : "none";
   }
 
   vhead.querySelector("#seg-conv").onclick = () => setKind("convention");
   vhead.querySelector("#seg-rec").onclick = () => setKind("recipe");
-  vhead.querySelector("#startblank").onclick = () => toast("Canvas cleared");
+  vhead.querySelector("#startblank").onclick = () => {
+    canvas.length = 0;
+    renderCanvas();
+    renderPalette();
+    toast("Canvas cleared");
+  };
   composer.querySelector("#pal-search").oninput = renderPalette;
 
+  composer.querySelector("#addBlank").onclick = () => {
+    canvas.push({ section_id: "section-" + (canvas.length + 1), title: "New section", body: "", origin: "own", from: profileId, _key: null });
+    renderCanvas();
+  };
+
+  // Clone whole convention: fetch the profile's own (unmerged) raw markdown,
+  // strip front-matter, split on `## ` headings, push each as a canvas section.
+  (async () => {
+    const sel = document.getElementById("cloneSel");
+    let convs = [];
+    try {
+      const d = await api(`/api/profile/${encodeURIComponent(profileId)}`);
+      convs = (d.conventions || []).filter(c => c.origin !== "inherited");
+    } catch (e) { /* clone list is best-effort; palette already loaded above */ }
+    convs.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = (c.title || c.id) + "  (" + (c.sections || []).length + " sections)";
+      sel.appendChild(opt);
+    });
+    sel.onchange = async () => {
+      const cid = sel.value;
+      sel.value = "";
+      if (!cid) return;
+      let markdown;
+      try {
+        const r = await api(`/api/profile/${encodeURIComponent(profileId)}/convention/${encodeURIComponent(cid)}/raw`);
+        markdown = r.markdown;
+      } catch (e) { toast(e.message, true); return; }
+      const body = stripFrontMatter(markdown);
+      const parts = body.split(/^##\s+/m).slice(1); // drop content before first "## "
+      if (!parts.length) { toast("no ## sections found in " + cid, true); return; }
+      parts.forEach(part => {
+        const nl = part.indexOf("\n");
+        // Section headings are written as `## Title {#slug}` — drop the anchor suffix.
+        const title = (nl === -1 ? part : part.slice(0, nl)).replace(/\s*\{#[a-z0-9-]+\}\s*$/, "").trim();
+        const secBody = (nl === -1 ? "" : part.slice(nl + 1)).replace(/\s+$/, "");
+        canvas.push({ section_id: slugify(title) || "section", title: title || "Section", body: secBody, origin: "own", from: cid, _key: null });
+      });
+      renderCanvas();
+      toast("Cloned " + cid + " · " + parts.length + " sections");
+    };
+  })();
+
+  composer.querySelector("#saveConv").onclick = async () => {
+    const idInput = document.getElementById("f-id");
+    const titleInput = document.getElementById("f-title");
+    const id = idInput.value.trim();
+    if (!/^[a-z0-9_-]+$/.test(id)) { toast("id: use [a-z0-9_-] only", true); return; }
+    if (!canvas.length) { toast("add at least one section", true); return; }
+    const titles = canvas.map(c => slugify(c.title));
+    if (new Set(titles).size !== titles.length) { toast("two sections share a title — rename one", true); return; }
+    const spec = {
+      id,
+      title: titleInput.value.trim(),
+      description: document.getElementById("f-desc").value.trim(),
+      tags: splitCsv(document.getElementById("f-tags").value),
+      sections: canvas.map(c => ({ title: c.title, body: c.body, code: /```/.test(c.body) })),
+    };
+    try {
+      await api(`/api/profile/${encodeURIComponent(profileId)}/convention`, "POST", spec);
+      toast(`Saved convention · ${id}`);
+      renderProfileDetail(profileId);
+    } catch (e) { toast(e.message, true); }
+  };
+
   setKind(kind);
+  renderCanvas();
   renderPalette();
 }
 
