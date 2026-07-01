@@ -14,6 +14,7 @@ mod http;
 mod indexer;
 mod inherit;
 mod knowledge;
+mod palette;
 mod personal;
 mod profile;
 mod scaffold;

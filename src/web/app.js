@@ -926,6 +926,449 @@ async function editDoc(profile, kind, id, anchor) {
   };
 }
 
+// ── Create composer: palette (left) + canvas (right) ───────────────────────
+// Groups palette sections by (origin, from): this profile's own sections,
+// per-source "overridden"/"inherited" chain sections, then one collapsed
+// group per other-profile id (lazily fetched via GET .../palette/{other}).
+function paletteGroups(pal) {
+  const chainSections = pal.sections.filter(s => s.origin !== "other-profile");
+  const byKey = new Map();
+  chainSections.forEach(s => {
+    const key = s.origin + " " + s.from;
+    if (!byKey.has(key)) byKey.set(key, { origin: s.origin, from: s.from, items: [] });
+    byKey.get(key).items.push(s);
+  });
+  // "own" (this profile) first, then overridden/inherited by from-profile.
+  const order = { own: 0, overridden: 1, inherited: 2 };
+  const groups = [...byKey.values()].sort((a, b) => (order[a.origin] ?? 9) - (order[b.origin] ?? 9));
+  return groups;
+}
+function groupLabel(g) {
+  if (g.origin === "own") return "This profile";
+  if (g.origin === "overridden") return "Overridden · " + g.from;
+  if (g.origin === "inherited") return "Inherited · " + g.from;
+  return g.from;
+}
+
+async function renderCreate(profileId, opts) {
+  view.innerHTML = "";
+  view.appendChild(h(`<div class="crumb">Profiles / <b>${esc(profileId)}</b> / Create new</div>`));
+
+  let kind = opts.kind || "convention";
+  const presetId = opts.presetId || null;
+  const vhead = h(`<div class="vhead">
+    <div class="seg" role="group" aria-label="Type">
+      <button class="on" id="seg-conv" type="button">Convention</button>
+      <button id="seg-rec" type="button">Recipe</button>
+    </div>
+    <div class="right"><button class="btn ghost sm" id="startblank" type="button">Start blank</button></div>
+  </div>`);
+  view.appendChild(vhead);
+
+  const composer = h(`<div class="composer">
+    <section class="pane" id="pal-pane">
+      <div class="panehead"><h3>Palette</h3><span class="n" id="palN">0 pieces</span></div>
+      <div class="panebody">
+        <input class="search" id="pal-search" type="text" placeholder="Search section / convention…">
+        <div id="palette"></div>
+        <div class="clone" id="cloneBox">
+          <label for="cloneSel" class="hint">Clone whole convention</label>
+          <select id="cloneSel"><option value="">Pick a convention to copy all its sections…</option></select>
+        </div>
+      </div>
+    </section>
+    <section class="pane" id="canvas-pane">
+      <div class="panehead"><h3 id="canvasTitle">New convention</h3><span class="n" id="canvasN">0 sections</span></div>
+      <div class="panebody">
+        <div class="fields">
+          <div class="field"><label>id</label><input class="mono" id="f-id" placeholder="error-handling"></div>
+          <div class="field"><label>title</label><input id="f-title" placeholder="Error handling"></div>
+          <div class="field"><label>description</label><input id="f-desc" placeholder="one-line summary"></div>
+          <div class="field"><label>tags (comma-separated)</label><input id="f-tags" placeholder="error, result"></div>
+        </div>
+        <div class="assembled" id="assembled"></div>
+        <div class="row" style="margin-top:6px"><button class="ghost btn sm" id="addBlank" type="button">+ add blank section</button></div>
+        <div id="recCanvas" style="display:none">
+          <textarea class="bodyarea" id="rec-body" spellcheck="false" placeholder="## When to use this&#10;...&#10;## Steps&#10;1. ..."></textarea>
+          <div class="refblock">
+            <div class="rl">Convention refs</div>
+            <div class="chips" id="convRefs"></div>
+          </div>
+          <div class="refblock">
+            <div class="rl">Related recipes</div>
+            <div class="chips" id="relRecs"></div>
+          </div>
+          <div class="clone" id="cloneRecBox">
+            <label for="cloneRecSel" class="hint">Clone recipe</label>
+            <select id="cloneRecSel"><option value="">Pick a recipe to copy its body + refs…</option></select>
+          </div>
+        </div>
+        <div class="canvasfoot">
+          <span class="spacer"></span>
+          <button class="btn primary" id="saveConv" type="button">Save convention</button>
+          <button class="btn primary" id="saveRec" type="button" style="display:none">Save recipe</button>
+        </div>
+      </div>
+    </section>
+  </div>`);
+  view.appendChild(composer);
+
+  let pal;
+  try { pal = await api(`/api/profile/${encodeURIComponent(profileId)}/palette`); }
+  catch (e) { toast(e.message, true); return; }
+
+  // other_profiles groups: lazily fetched on first expand, then cached here.
+  const otherCache = {}; // id -> sections[] once fetched
+
+  // canvas: ordered list of { section_id, title, body, origin, from }
+  // - checked palette rows are copied here (own/overridden/inherited/other-profile origin)
+  // - "+ add blank section" pushes an "own" entry with empty body
+  // key() identifies a palette row for checkbox<->canvas sync.
+  const canvas = [];
+  function keyOf(from, topicId, sectionId) { return `${from}::${topicId}#${sectionId}`; }
+
+  function renderCanvas() {
+    const host = document.getElementById("assembled");
+    host.innerHTML = "";
+    if (!canvas.length) {
+      host.appendChild(h(`<div class="empty">No sections yet — check pieces on the left, click <b>+ add blank section</b>, or clone a whole convention.</div>`));
+    } else {
+      canvas.forEach((c, i) => {
+        const originClass = ["own", "overridden", "inherited", "other-profile"].includes(c.origin) ? c.origin : "other-profile";
+        const originLabel = c.origin === "own" ? "own"
+          : c.origin === "overridden" ? "overridden"
+          : c.origin === "inherited" ? "base·" + c.from
+          : c.from || "other";
+        const card = h(`<div class="seccard">
+          <div class="sechead">
+            <span class="grip" aria-hidden="true">⋮⋮</span>
+            <span class="secid mono">#${esc(c.section_id)}</span>
+            <span class="sectitle"></span>
+            <span class="pc-origin ${esc(originClass)}">${esc(originLabel)}</span>
+            <a class="link sec-up" title="move up">↑</a>
+            <a class="link sec-down" title="move down">↓</a>
+            <button class="secx" type="button" title="remove" aria-label="remove">✕</button>
+          </div>
+          <div class="secbody">
+            <textarea class="sec-title-edit" style="width:100%;margin-bottom:6px" placeholder="section title"></textarea>
+            <textarea class="sec-body-edit" style="width:100%;min-height:100px"></textarea>
+          </div>
+        </div>`);
+        card.querySelector(".sec-title-edit").value = c.title;
+        card.querySelector(".sec-body-edit").value = c.body;
+        card.querySelector(".sec-title-edit").oninput = e => { c.title = e.target.value; card.querySelector(".sectitle").textContent = c.title; };
+        card.querySelector(".sec-body-edit").oninput = e => { c.body = e.target.value; };
+        card.querySelector(".sectitle").textContent = c.title;
+        card.querySelector(".secx").onclick = () => {
+          canvas.splice(i, 1);
+          renderCanvas();
+          renderPalette();
+        };
+        card.querySelector(".sec-up").onclick = () => {
+          if (i === 0) return;
+          [canvas[i - 1], canvas[i]] = [canvas[i], canvas[i - 1]];
+          renderCanvas();
+        };
+        card.querySelector(".sec-down").onclick = () => {
+          if (i === canvas.length - 1) return;
+          [canvas[i], canvas[i + 1]] = [canvas[i + 1], canvas[i]];
+          renderCanvas();
+        };
+        host.appendChild(card);
+      });
+    }
+    document.getElementById("canvasN").textContent = canvas.length + " sections";
+  }
+
+  function renderPalette() {
+    const q = (document.getElementById("pal-search").value || "").trim().toLowerCase();
+    const host = document.getElementById("palette");
+    host.innerHTML = "";
+    let shown = 0;
+
+    paletteGroups(pal).forEach(g => {
+      const matches = g.items.filter(s => (s.topic_id + " " + s.section_id + " " + s.title).toLowerCase().includes(q));
+      if (!matches.length) return;
+      const gd = h(`<div class="grp"><div class="grptitle">${esc(groupLabel(g))}</div></div>`);
+      matches.forEach(s => {
+        shown++;
+        const k = keyOf(s.from, s.topic_id, s.section_id);
+        const checked = canvas.some(c => c._key === k);
+        const row = h(`<label class="pitem">
+          <input type="checkbox" ${checked ? "checked" : ""}>
+          <span class="pid mono">${esc(s.topic_id)}#${esc(s.section_id)}</span>
+          <span class="ptitle">${esc(s.title)}</span>
+          <span class="ptok mono">${s.tokens}t</span>
+        </label>`);
+        row.querySelector("input").onchange = e => {
+          if (e.target.checked) {
+            if (!canvas.some(c => c._key === k)) {
+              canvas.push({ section_id: s.section_id, title: s.title, body: s.body, origin: s.origin, from: s.from, _key: k });
+            }
+          } else {
+            const idx = canvas.findIndex(c => c._key === k);
+            if (idx !== -1) canvas.splice(idx, 1);
+          }
+          renderCanvas();
+        };
+        gd.appendChild(row);
+      });
+      host.appendChild(gd);
+    });
+
+    // One collapsed group per other-profile id, fetched lazily on expand.
+    (pal.other_profiles || []).forEach(otherId => {
+      const gd = h(`<div class="grp"><div class="grptitle" style="cursor:pointer">▸ Other profile · ${esc(otherId)}</div></div>`);
+      const title = gd.querySelector(".grptitle");
+      const body = h(`<div class="pal-other-body" style="display:none"></div>`);
+      gd.appendChild(body);
+      title.onclick = async () => {
+        const open = body.style.display !== "none";
+        if (open) { body.style.display = "none"; title.textContent = "▸ Other profile · " + otherId; return; }
+        title.textContent = "▾ Other profile · " + otherId;
+        body.style.display = "";
+        if (!otherCache[otherId]) {
+          try {
+            const r = await api(`/api/profile/${encodeURIComponent(profileId)}/palette/${encodeURIComponent(otherId)}`);
+            otherCache[otherId] = r.sections || [];
+          } catch (e) { toast(e.message, true); otherCache[otherId] = []; }
+        }
+        body.innerHTML = "";
+        const items = otherCache[otherId].filter(s => (s.topic_id + " " + s.section_id + " " + s.title).toLowerCase().includes(q));
+        if (!items.length) { body.appendChild(h(`<div class="muted">No matching sections.</div>`)); return; }
+        items.forEach(s => {
+          const k = keyOf(s.from, s.topic_id, s.section_id);
+          const checked = canvas.some(c => c._key === k);
+          const row = h(`<label class="pitem">
+            <input type="checkbox" ${checked ? "checked" : ""}>
+            <span class="pid mono">${esc(s.topic_id)}#${esc(s.section_id)}</span>
+            <span class="ptitle">${esc(s.title)}</span>
+            <span class="ptok mono">${s.tokens}t</span>
+          </label>`);
+          row.querySelector("input").onchange = e => {
+            if (e.target.checked) {
+              if (!canvas.some(c => c._key === k)) {
+                canvas.push({ section_id: s.section_id, title: s.title, body: s.body, origin: s.origin, from: s.from, _key: k });
+              }
+            } else {
+              const idx = canvas.findIndex(c => c._key === k);
+              if (idx !== -1) canvas.splice(idx, 1);
+            }
+            renderCanvas();
+          };
+          body.appendChild(row);
+        });
+      };
+      host.appendChild(gd);
+    });
+
+    document.getElementById("palN").textContent = shown + " pieces";
+  }
+
+  // convention-only canvas pieces (section assembly); recipe-only lives in #recCanvas.
+  const convCanvasEls = [
+    document.getElementById("assembled"),
+    composer.querySelector("#canvas-pane .row"),
+  ];
+  const recCanvasEl = document.getElementById("recCanvas");
+
+  // recipe picker state: pickedRefs = {topic, section} objects toggled on (section preserved on clone), pickedRelated = recipe ids toggled on.
+  let convIds = [];   // this profile's convention ids (from profile detail, below)
+  let recipeIds = []; // this profile's recipe ids (from profile detail)
+  let recipeList = []; // full recipe metas (for clone prefill of refs)
+  const pickedRefs = [];
+  const pickedRelated = [];
+
+  function renderRefPickers() {
+    const cr = document.getElementById("convRefs");
+    cr.innerHTML = "";
+    convIds.forEach(cid => {
+      const chip = h(`<button type="button" class="chip${pickedRefs.some(r => r.topic === cid) ? " on" : ""}">${esc(cid)}</button>`);
+      chip.onclick = () => {
+        const idx = pickedRefs.findIndex(r => r.topic === cid);
+        if (idx === -1) pickedRefs.push({ topic: cid, section: "" }); else pickedRefs.splice(idx, 1);
+        renderRefPickers();
+      };
+      cr.appendChild(chip);
+    });
+    const rr = document.getElementById("relRecs");
+    rr.innerHTML = "";
+    recipeIds.forEach(rid => {
+      const chip = h(`<button type="button" class="chip rec${pickedRelated.includes(rid) ? " on" : ""}">${esc(rid)}</button>`);
+      chip.onclick = () => {
+        const idx = pickedRelated.indexOf(rid);
+        if (idx === -1) pickedRelated.push(rid); else pickedRelated.splice(idx, 1);
+        renderRefPickers();
+      };
+      rr.appendChild(chip);
+    });
+  }
+
+  function setKind(k) {
+    kind = k;
+    vhead.querySelector("#seg-conv").classList.toggle("on", k === "convention");
+    vhead.querySelector("#seg-rec").classList.toggle("on", k === "recipe");
+    document.getElementById("canvasTitle").textContent = k === "convention" ? "New convention" : "New recipe";
+    const isConv = k === "convention";
+    convCanvasEls.forEach(el => { if (el) el.style.display = isConv ? "" : "none"; });
+    recCanvasEl.style.display = isConv ? "none" : "";
+    document.getElementById("cloneBox").style.display = isConv ? "" : "none";
+    document.getElementById("saveConv").style.display = isConv ? "" : "none";
+    document.getElementById("saveRec").style.display = isConv ? "none" : "";
+  }
+
+  vhead.querySelector("#seg-conv").onclick = () => setKind("convention");
+  vhead.querySelector("#seg-rec").onclick = () => setKind("recipe");
+  vhead.querySelector("#startblank").onclick = () => {
+    canvas.length = 0;
+    renderCanvas();
+    renderPalette();
+    toast("Canvas cleared");
+  };
+  composer.querySelector("#pal-search").oninput = renderPalette;
+
+  composer.querySelector("#addBlank").onclick = () => {
+    canvas.push({ section_id: "section-" + (canvas.length + 1), title: "New section", body: "", origin: "own", from: profileId, _key: null });
+    renderCanvas();
+  };
+
+  // One profile-detail fetch feeds: the "clone whole convention" select, the
+  // "clone recipe" select, and both ref-picker id lists (convention ids +
+  // recipe ids — profile_json's conventions[]/recipes[] already carry the
+  // merged ids, so this is simpler than re-deriving convention ids from the
+  // palette's topic_ids).
+  (async () => {
+    const sel = document.getElementById("cloneSel");
+    const recSel = document.getElementById("cloneRecSel");
+    let convs = [];
+    try {
+      const d = await api(`/api/profile/${encodeURIComponent(profileId)}`);
+      convs = (d.conventions || []).filter(c => c.origin !== "inherited");
+      convIds = (d.conventions || []).map(c => c.id);
+      recipeList = d.recipes || [];
+      recipeIds = recipeList.map(r => r.id);
+    } catch (e) { /* clone lists + pickers are best-effort; palette already loaded above */ }
+    convs.forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = (c.title || c.id) + "  (" + (c.sections || []).length + " sections)";
+      sel.appendChild(opt);
+    });
+    recipeList.forEach(r => {
+      const opt = document.createElement("option");
+      opt.value = r.id;
+      opt.textContent = r.title || r.id;
+      recSel.appendChild(opt);
+    });
+    renderRefPickers();
+
+    sel.onchange = async () => {
+      const cid = sel.value;
+      sel.value = "";
+      if (!cid) return;
+      let markdown;
+      try {
+        const r = await api(`/api/profile/${encodeURIComponent(profileId)}/convention/${encodeURIComponent(cid)}/raw`);
+        markdown = r.markdown;
+      } catch (e) { toast(e.message, true); return; }
+      const body = stripFrontMatter(markdown);
+      const parts = body.split(/^##\s+/m).slice(1); // drop content before first "## "
+      if (!parts.length) { toast("no ## sections found in " + cid, true); return; }
+      parts.forEach(part => {
+        const nl = part.indexOf("\n");
+        // Section headings are written as `## Title {#slug}` — drop the anchor suffix.
+        const title = (nl === -1 ? part : part.slice(0, nl)).replace(/\s*\{#[a-z0-9-]+\}\s*$/, "").trim();
+        const secBody = (nl === -1 ? "" : part.slice(nl + 1)).replace(/\s+$/, "");
+        canvas.push({ section_id: slugify(title) || "section", title: title || "Section", body: secBody, origin: "own", from: cid, _key: null });
+      });
+      renderCanvas();
+      toast("Cloned " + cid + " · " + parts.length + " sections");
+    };
+
+    // Clone recipe: fetch raw markdown, strip front-matter into the body
+    // textarea, and prefill the ref pickers from that recipe's metadata
+    // (already present in profile_json's recipes[] entry — no extra fetch).
+    recSel.onchange = async () => {
+      const rid = recSel.value;
+      recSel.value = "";
+      if (!rid) return;
+      let markdown;
+      try {
+        const r = await api(`/api/profile/${encodeURIComponent(profileId)}/recipe/${encodeURIComponent(rid)}/raw`);
+        markdown = r.markdown;
+      } catch (e) { toast(e.message, true); return; }
+      document.getElementById("rec-body").value = stripFrontMatter(markdown);
+      const meta = recipeList.find(r => r.id === rid);
+      pickedRefs.length = 0;
+      pickedRelated.length = 0;
+      if (meta) {
+        (meta.convention_refs || []).forEach(cr => { if (!pickedRefs.some(r => r.topic === cr.topic)) pickedRefs.push({ topic: cr.topic, section: cr.section || "" }); });
+        (meta.related_recipes || []).forEach(id => { if (!pickedRelated.includes(id)) pickedRelated.push(id); });
+      }
+      renderRefPickers();
+      toast("Cloned " + rid);
+    };
+  })();
+
+  composer.querySelector("#saveConv").onclick = async () => {
+    const idInput = document.getElementById("f-id");
+    const titleInput = document.getElementById("f-title");
+    const id = idInput.value.trim();
+    if (!/^[a-z0-9_-]+$/.test(id)) { toast("id: use [a-z0-9_-] only", true); return; }
+    if (!canvas.length) { toast("add at least one section", true); return; }
+    const titles = canvas.map(c => slugify(c.title));
+    if (new Set(titles).size !== titles.length) { toast("two sections share a title — rename one", true); return; }
+    const spec = {
+      id,
+      title: titleInput.value.trim(),
+      description: document.getElementById("f-desc").value.trim(),
+      tags: splitCsv(document.getElementById("f-tags").value),
+      sections: canvas.map(c => ({ title: c.title, body: c.body, code: /```/.test(c.body) })),
+    };
+    try {
+      await api(`/api/profile/${encodeURIComponent(profileId)}/convention`, "POST", spec);
+      toast(`Saved convention · ${id}`);
+      renderProfileDetail(profileId);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  composer.querySelector("#saveRec").onclick = async () => {
+    const idInput = document.getElementById("f-id");
+    const titleInput = document.getElementById("f-title");
+    const id = idInput.value.trim();
+    const title = titleInput.value.trim();
+    if (!/^[a-z0-9_-]+$/.test(id)) { toast("id: use [a-z0-9_-] only", true); return; }
+    if (!title) { toast("title required", true); return; }
+    const spec = {
+      id,
+      title,
+      description: document.getElementById("f-desc").value.trim(),
+      tags: splitCsv(document.getElementById("f-tags").value),
+      body: document.getElementById("rec-body").value,
+      convention_refs: pickedRefs.map(r => ({ topic: r.topic, section: r.section || "" })),
+      related_recipes: pickedRelated.slice(),
+    };
+    try {
+      await api(`/api/profile/${encodeURIComponent(profileId)}/recipe`, "POST", spec);
+      toast(`Saved recipe · ${id}`);
+      renderProfileDetail(profileId);
+    } catch (e) { toast(e.message, true); }
+  };
+
+  // A presetId (from an inherited-doc "Override" link) locks the id field so
+  // saving overwrites that id in this profile, and prefills title/tags from
+  // the source doc where cheaply available.
+  if (presetId) {
+    const idInput = document.getElementById("f-id");
+    idInput.value = presetId;
+    idInput.setAttribute("readonly", "readonly");
+  }
+
+  setKind(kind);
+  renderCanvas();
+  renderPalette();
+}
+
 async function renderProfiles() {
   view.innerHTML = viewHead("Knowledge", "Profiles",
     "A profile is one stack's playbook — its conventions, recipes, and the flows your agents assemble. Pick one to edit, or start a new stack.");
@@ -989,16 +1432,8 @@ function docRow(meta, kind, profileId) {
   const row = h(`<div class="lrow"><span class="id-chip">${esc(meta.id)}</span> <span class="ttl">${esc(meta.title || meta.id)}</span>${originBadge} <span class="meta">· ${metaBits}</span><span class="actions"><a class="link doc-view">View</a>${secondAction}</span></div>`);
   row.querySelector(".doc-view").onclick = () => renderDoc(meta, kind, profileId, row);
   if (isInherited) {
-    row.querySelector(".doc-override").onclick = () => {
-      // Find the nearest add-form host or create one after the row's parent list
-      const list = row.parentElement;
-      const existingHost = list.querySelector(".doc-override-host-" + CSS.escape(meta.id));
-      if (existingHost) { existingHost.remove(); return; }
-      const host = h(`<div class="doc-override-host-${esc(meta.id)}"></div>`);
-      const form = kind === "convention" ? addConventionForm(profileId, meta.id) : addRecipeForm(profileId, meta.id);
-      host.appendChild(form);
-      row.insertAdjacentElement("afterend", host);
-    };
+    // Override now opens the composer with the id locked, so saving overwrites this id in this profile.
+    row.querySelector(".doc-override").onclick = () => renderCreate(profileId, { kind, presetId: meta.id });
   } else {
     row.querySelector(".doc-edit").onclick = () => editDoc(profileId, kind, meta.id, row);
   }
@@ -1008,6 +1443,9 @@ function docRow(meta, kind, profileId) {
 async function renderProfileDetail(id) {
   view.innerHTML = backLink("Profiles") + viewHead("Profile", id);
   document.getElementById("back").onclick = renderProfiles;
+  const head = view.querySelector(".view-head");
+  head.appendChild(h(`<button class="btn primary" id="pc-create">+ Create new</button>`));
+  head.querySelector("#pc-create").onclick = () => renderCreate(id, {});
   let d;
   try { d = await api("/api/profile/" + encodeURIComponent(id)); }
   catch (e) { toast(e.message, true); return; }
@@ -1018,34 +1456,20 @@ async function renderProfileDetail(id) {
 
   // ── Browse: conventions ──
   const cv = h(`<div class="card"><div class="card-head"><h3>Conventions</h3><span class="count">${d.conventions.length}</span></div>
-    <div class="card-note">Standing standards for this stack — the "right way" to write code here. Agents pull these automatically (CLI: <code>q</code>, <code>brief</code>).</div>
-    <div class="list" id="cv-list"></div>
-    <div class="row" id="cv-addrow" style="margin-top:6px"><button class="ghost cv-add">+ Add convention</button></div></div>`);
+    <div class="card-note">Standing standards for this stack — the "right way" to write code here. Agents pull these automatically (CLI: <code>q</code>, <code>brief</code>). Use <b>+ Create new</b> above to add one.</div>
+    <div class="list" id="cv-list"></div></div>`);
   const cvList = cv.querySelector("#cv-list");
   if (!d.conventions.length) cvList.appendChild(h(`<div class="muted">No conventions yet — add one to start this profile's playbook.</div>`));
   d.conventions.forEach(c => cvList.appendChild(docRow(c, "convention", id)));
-  cv.querySelector(".cv-add").onclick = () => {
-    if (cv.querySelector(".ac-host")) return;
-    const host = h(`<div class="ac-host"></div>`);
-    host.appendChild(addConventionForm(id));
-    cv.querySelector("#cv-addrow").insertAdjacentElement("beforebegin", host);
-  };
   view.appendChild(cv);
 
   // ── Browse: recipes ──
   const rc = h(`<div class="card"><div class="card-head"><h3>Recipes</h3><span class="count">${d.recipes.length}</span></div>
-    <div class="card-note">Step-by-step guides for one task. Agents pull these by name (CLI: <code>for &lt;task&gt;</code>, <code>brief feature/refactor</code>).</div>
-    <div class="list" id="rc-list"></div>
-    <div class="row" id="rc-addrow" style="margin-top:6px"><button class="ghost rc-add">+ Add recipe</button></div></div>`);
+    <div class="card-note">Step-by-step guides for one task. Agents pull these by name (CLI: <code>for &lt;task&gt;</code>, <code>brief feature/refactor</code>). Use <b>+ Create new</b> above to add one.</div>
+    <div class="list" id="rc-list"></div></div>`);
   const rcList = rc.querySelector("#rc-list");
   if (!d.recipes.length) rcList.appendChild(h(`<div class="muted">No recipes yet.</div>`));
   d.recipes.forEach(r => rcList.appendChild(docRow(r, "recipe", id)));
-  rc.querySelector(".rc-add").onclick = () => {
-    if (rc.querySelector(".ar-host")) return;
-    const host = h(`<div class="ar-host"></div>`);
-    host.appendChild(addRecipeForm(id));
-    rc.querySelector("#rc-addrow").insertAdjacentElement("beforebegin", host);
-  };
   view.appendChild(rc);
 
   // ── Author & configure (separated lower region) ──
@@ -1202,82 +1626,6 @@ function flowsCard(id, d) {
     } catch (e) { toast(e.message, true); }
   };
   return card;
-}
-
-function addConventionForm(id, presetId) {
-  const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>${presetId ? "Override convention: " + esc(presetId) : "+ Add convention"}</strong>
-    <div class="muted" style="margin:2px 0 6px">A standing standard for this stack. palugada writes the front-matter,
-    section ids, and index for you — you only fill the fields below. (CLI equivalent: <code>palugada convention add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ac-id" placeholder="errorhandling"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
-    <div class="muted">lowercase slug — used in <code>palugada q errorhandling</code> (a-z, 0-9, - _).</div>
-    <label>title</label><input class="ac-title" placeholder="Error Handling">
-    <label>description</label><input class="ac-desc" placeholder="one-line summary">
-    <div class="muted">one line shown in <code>q --list</code> and search.</div>
-    <label>tags (comma-separated)</label><input class="ac-tags" placeholder="error, coroutines">
-    <label style="margin-top:8px;display:block"><strong>Sections</strong></label>
-    <div class="muted">Split the rule into titled chunks — each is a token-cheap piece <code>q</code>/<code>brief</code> pull on demand.</div>
-    <div class="ac-sections"></div>
-    <div class="row" style="margin-top:6px"><button class="ghost ac-addsec">+ section</button><span class="spacer"></span><button class="ac-save">Save convention</button></div>
-  </div>`);
-  if (presetId) box.querySelector(".ac-id").setAttribute("readonly", "readonly");
-  const secs = box.querySelector(".ac-sections");
-  const addSec = () => secs.appendChild(h(`<div class="section-row">
-    <label>section title</label><input class="sec-title" placeholder="Modeling Failures">
-    <label>section body (markdown)</label><textarea class="sec-body"></textarea>
-    <label class="row" style="margin-top:4px"><input type="checkbox" class="sec-code" style="width:auto"> &nbsp;contains code</label>
-  </div>`));
-  box.querySelector(".ac-addsec").onclick = e => { e.preventDefault(); addSec(); };
-  addSec();
-  box.querySelector(".ac-save").onclick = async e => {
-    e.preventDefault();
-    const sections = [...secs.querySelectorAll(".section-row")].map(s => ({
-      title: s.querySelector(".sec-title").value.trim(),
-      body: s.querySelector(".sec-body").value,
-      code: s.querySelector(".sec-code").checked,
-    })).filter(s => s.title);
-    const spec = {
-      id: box.querySelector(".ac-id").value.trim(),
-      title: box.querySelector(".ac-title").value.trim(),
-      description: box.querySelector(".ac-desc").value.trim(),
-      tags: splitCsv(box.querySelector(".ac-tags").value),
-      sections,
-    };
-    if (!spec.id || !spec.title) { toast("id and title required", true); return; }
-    try { await api(`/api/profile/${id}/convention`, "POST", spec); toast("saved convention " + spec.id); renderProfileDetail(id); }
-    catch (err) { toast(err.message, true); }
-  };
-  return box;
-}
-
-function addRecipeForm(id, presetId) {
-  const box = h(`<div style="margin-top:12px;border-top:1px solid var(--ink);padding-top:10px">
-    <strong>${presetId ? "Override recipe: " + esc(presetId) : "+ Add recipe"}</strong>
-    <div class="muted" style="margin:2px 0 6px">A step-by-step guide for one task. (CLI equivalent: <code>palugada recipe add &lt;file.md&gt;</code>.)</div>
-    <label>id</label><input class="ar-id" placeholder="pagination"${presetId ? ' value="' + esc(presetId) + '"' : ""}>
-    <div class="muted">lowercase slug — used in <code>palugada for pagination</code>.</div>
-    <label>title</label><input class="ar-title" placeholder="Add pagination">
-    <label>description</label><input class="ar-desc" placeholder="one-line summary">
-    <label>tags (comma-separated)</label><input class="ar-tags" placeholder="recipe, list">
-    <label>body (markdown)</label><textarea class="ar-body" placeholder="## When to use this&#10;...&#10;## Steps&#10;1. ..."></textarea>
-    <div class="muted">the full procedure — write it as plain markdown (use <code>## </code> for steps/sections).</div>
-    <div class="row" style="margin-top:6px"><span class="spacer"></span><button class="ar-save">Save recipe</button></div>
-  </div>`);
-  if (presetId) box.querySelector(".ar-id").setAttribute("readonly", "readonly");
-  box.querySelector(".ar-save").onclick = async e => {
-    e.preventDefault();
-    const spec = {
-      id: box.querySelector(".ar-id").value.trim(),
-      title: box.querySelector(".ar-title").value.trim(),
-      description: box.querySelector(".ar-desc").value.trim(),
-      tags: splitCsv(box.querySelector(".ar-tags").value),
-      body: box.querySelector(".ar-body").value,
-    };
-    if (!spec.id || !spec.title) { toast("id and title required", true); return; }
-    try { await api(`/api/profile/${id}/recipe`, "POST", spec); toast("saved recipe " + spec.id); renderProfileDetail(id); }
-    catch (err) { toast(err.message, true); }
-  };
-  return box;
 }
 
 function generateForm(id) {
