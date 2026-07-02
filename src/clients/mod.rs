@@ -296,4 +296,77 @@ mod tests {
         assert!(h.iter().any(|(k, _)| *k == "X-GitHub-Api-Version"));
         assert!(github_headers("").iter().all(|(k, _)| *k != "Authorization"));
     }
+
+    // ── mocked-HTTP client tests (WP2.3) ────────────────────────────────────
+    // A one-shot std-TCP HTTP server (no mock-server dependency): serves one
+    // response and captures the request so tests can assert path + auth headers
+    // and response parsing / error handling for the connector clients.
+    mod http_mock {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+
+        pub fn serve_once(status: u16, body: &'static str) -> (String, mpsc::Receiver<String>) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                if let Ok((mut sock, _)) = listener.accept() {
+                    // Read until end-of-headers so a fragmented request isn't
+                    // truncated (GETs have no body → headers are the whole thing).
+                    let mut data = Vec::new();
+                    let mut tmp = [0u8; 1024];
+                    loop {
+                        match sock.read(&mut tmp) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                data.extend_from_slice(&tmp[..n]);
+                                if data.windows(4).any(|w| w == b"\r\n\r\n") {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let _ = tx.send(String::from_utf8_lossy(&data).into_owned());
+                    let resp = format!(
+                        "HTTP/1.1 {status} S\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes());
+                }
+            });
+            (format!("http://127.0.0.1:{port}"), rx)
+        }
+    }
+
+    #[test]
+    fn github_verify_parses_user_and_sends_bearer() {
+        let (base, rx) = http_mock::serve_once(200, r#"{"login":"octocat","name":"The Octocat"}"#);
+        let gh = super::github::GitHub::new(&base, "", "ghp_SECRETXYZ", false);
+        let msg = gh.verify().unwrap();
+        assert!(msg.contains("octocat"), "{msg}");
+        let req = rx.recv().unwrap();
+        assert!(req.starts_with("GET /user "), "wrong path: {req}");
+        assert!(req.contains("Authorization: Bearer ghp_SECRETXYZ"), "bearer missing: {req}");
+    }
+
+    #[test]
+    fn github_401_is_readable_and_does_not_leak_the_token() {
+        let (base, _rx) = http_mock::serve_once(401, r#"{"message":"Bad credentials"}"#);
+        let gh = super::github::GitHub::new(&base, "", "ghp_SECRETXYZ", false);
+        let err = gh.verify().unwrap_err();
+        assert!(err.contains("401"), "status not surfaced: {err}");
+        assert!(!err.contains("ghp_SECRETXYZ"), "token leaked into error: {err}");
+    }
+
+    #[test]
+    fn jira_verify_parses_myself_and_sends_basic_auth() {
+        let (base, rx) = http_mock::serve_once(200, r#"{"displayName":"Jane Dev"}"#);
+        let j = super::jira::Jira::new(&base, "jane@x.com", "tok", false);
+        let msg = j.verify().unwrap();
+        assert!(msg.contains("Jane Dev"), "{msg}");
+        let req = rx.recv().unwrap();
+        assert!(req.contains("GET /myself"), "wrong path: {req}");
+        assert!(req.contains("Authorization: Basic "), "basic auth missing: {req}");
+    }
 }
