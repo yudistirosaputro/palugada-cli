@@ -53,12 +53,22 @@ pub struct EngineSection {
     pub knowledge_path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Defaults {
     #[serde(default)]
     pub profile: String,
     #[serde(default = "default_stale")]
     pub stale_warning_days: u32,
+}
+
+// Manual Default so `Defaults::default()` matches the serde field default
+// (`default_stale` = 7) instead of deriving 0 — the two used to disagree, so
+// the effective staleness window depended on whether the YAML had a `defaults:`
+// key.
+impl Default for Defaults {
+    fn default() -> Self {
+        Self { profile: String::new(), stale_warning_days: default_stale() }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

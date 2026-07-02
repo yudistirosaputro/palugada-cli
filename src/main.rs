@@ -566,6 +566,14 @@ fn cmd_index(repo: Option<String>, profile: Option<String>, project: Option<&str
     indexer::run(&repo_path, &kn, &prof)
 }
 
+/// Print a one-line staleness warning to stderr (stdout stays clean for agents)
+/// when the repo's index is behind the checkout.
+fn warn_if_stale(global: &GlobalConfig, repo: &std::path::Path) {
+    if let Some(note) = indexer::staleness_note(repo, global.defaults.stale_warning_days) {
+        eprintln!("warning: {note}");
+    }
+}
+
 fn cmd_symbol(
     query: String,
     kind: Option<String>,
@@ -575,6 +583,7 @@ fn cmd_symbol(
     let global = GlobalConfig::load_or_default()?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo_path = config::resolve_repo(&global, project, repo, &cwd)?;
+    warn_if_stale(&global, &repo_path);
     indexer::symbol_search(&repo_path, &query, kind.as_deref())
 }
 
@@ -589,6 +598,7 @@ fn cmd_fact(
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    warn_if_stale(&global, &repo);
     let report = indexer::fact_report(&repo, &kn, &prof, &family, name.as_deref())?;
     println!("{}", report.trim_end());
     Ok(())
@@ -610,6 +620,7 @@ fn cmd_brief(
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    warn_if_stale(&global, &repo);
     // Best-effort: brief works without a project (local steps); only prd.context needs this.
     let connectors = Secrets::load_or_default()
         .ok()

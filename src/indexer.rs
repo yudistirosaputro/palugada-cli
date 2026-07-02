@@ -44,12 +44,13 @@ struct Symbol {
     line: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Manifest {
     indexed_at: String,
     git_sha: String,
     total: usize,
     symbols: usize,
+    #[serde(default)]
     counts: BTreeMap<String, usize>,
 }
 
@@ -631,6 +632,65 @@ fn write_json<T: Serialize>(path: &Path, val: &T) -> Result<(), String> {
     fs::write(path, data).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+/// A one-line staleness note for the repo's index, or `None` when it is fresh
+/// (or absent). Primary signal is the git commit: if the checkout's HEAD differs
+/// from the sha recorded at index time, the index is behind. When git is
+/// unavailable, falls back to age vs `stale_days` (0 disables the time check).
+/// This is why `palugada symbol/fact/brief` can warn that line numbers may be
+/// stale instead of silently serving them (P3).
+pub fn staleness_note(repo: &Path, stale_days: u32) -> Option<String> {
+    let mpath = repo.join(".palugada").join("index").join("manifest.json");
+    let raw = fs::read_to_string(&mpath).ok()?;
+    let m: Manifest = serde_json::from_str(&raw).ok()?;
+
+    let head = git_sha(repo);
+    if !head.is_empty() && !m.git_sha.is_empty() {
+        if head == m.git_sha {
+            return None; // indexed at the current commit
+        }
+        let behind = commits_between(repo, &m.git_sha, &head);
+        return Some(match behind {
+            Some(n) if n > 0 => {
+                format!("index is {n} commit(s) behind HEAD — run `palugada index` to refresh")
+            }
+            _ => "index was built at a different commit — run `palugada index` to refresh"
+                .to_string(),
+        });
+    }
+
+    // No git: fall back to age of the index.
+    if stale_days > 0 {
+        if let Some(days) = index_age_days(&m.indexed_at) {
+            if days >= stale_days as i64 {
+                return Some(format!(
+                    "index is {days} day(s) old — run `palugada index` to refresh"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Number of commits in `from..to` (i.e. how far `to` is ahead of `from`).
+fn commits_between(repo: &Path, from: &str, to: &str) -> Option<usize> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-list", "--count", &format!("{from}..{to}")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse::<usize>().ok()
+}
+
+/// Whole days between an RFC3339 `indexed_at` and now (None if unparseable).
+fn index_age_days(indexed_at: &str) -> Option<i64> {
+    let then = chrono::DateTime::parse_from_rfc3339(indexed_at).ok()?;
+    Some((chrono::Utc::now().signed_duration_since(then.with_timezone(&chrono::Utc))).num_days())
+}
+
 fn git_sha(repo: &Path) -> String {
     std::process::Command::new("git")
         .arg("-C")
@@ -660,6 +720,26 @@ mod tests {
         fs::write(prof.join("extractors.yaml"), extractors_yaml).unwrap();
         let repo = tempfile::tempdir().unwrap();
         (kn, repo)
+    }
+
+    #[test]
+    fn staleness_note_flags_old_index_and_absent_index(/* P3 */) {
+        let repo = tempfile::tempdir().unwrap();
+        // No index yet → no note (the "run index" hint is handled elsewhere).
+        assert_eq!(staleness_note(repo.path(), 7), None);
+
+        // Write a manifest with no git_sha and an old indexed_at → time fallback.
+        let idx = repo.path().join(".palugada").join("index");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(
+            idx.join("manifest.json"),
+            r#"{"indexed_at":"2000-01-01T00:00:00Z","git_sha":"","total":0,"symbols":0,"counts":{}}"#,
+        )
+        .unwrap();
+        let note = staleness_note(repo.path(), 7).expect("old index should warn");
+        assert!(note.contains("day(s) old"), "{note}");
+        // stale_days = 0 disables the time-based check.
+        assert_eq!(staleness_note(repo.path(), 0), None);
     }
 
     #[test]
