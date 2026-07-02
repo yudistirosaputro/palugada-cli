@@ -20,11 +20,19 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --release --locked
+
+      # Lint gate (Linux only — the code is platform-agnostic). Fails on any
+      # warning so drift can't accumulate.
+      - name: Clippy
+        if: runner.os == 'Linux'
+        run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Test
         run: cargo test --release --locked

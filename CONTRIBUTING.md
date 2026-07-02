@@ -17,14 +17,19 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```bash
 cargo build              # debug build
 cargo build --release    # optimized binary at target/release/palugada
-cargo test               # unit tests
-cargo fmt --all          # format
-cargo clippy --all-targets   # lint
+cargo test               # unit + integration tests (tests/cli.rs runs the binary)
+cargo clippy --all-targets   # lint — must be warning-free
 ```
 
-Run `cargo fmt` and `cargo clippy` before opening a PR. CI
-(`.github/workflows/ci.yml`) builds, tests, and smoke-tests on Linux, macOS,
-and Windows and must be green to merge.
+Run `cargo clippy` (and the tests) before opening a PR. CI
+(`.github/workflows/ci.yml`) builds, **lints with `-D warnings`**, tests, and
+smoke-tests on Linux, macOS, and Windows, and validates every bundled profile;
+all must be green to merge.
+
+> **Do NOT run `cargo fmt` on this repo.** There is no `rustfmt.toml`; the code
+> is hand-formatted in a compact wide style and a blanket `cargo fmt` churns
+> unrelated lines. Match the style of the surrounding code instead. The lint
+> gate is `clippy -D warnings`, not `rustfmt`.
 
 Try the CLI without installing — run from inside the repo so it finds the
 bundled profiles:
