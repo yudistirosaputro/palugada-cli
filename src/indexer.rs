@@ -82,6 +82,14 @@ pub fn compile_families(cfg: &Extractors, profile_dir: &Path) -> Result<Vec<Comp
                 f.id
             ));
         }
+        // `symbols`/`manifest` are the generic-index file names; a family with
+        // either id would overwrite them and serve wrong data (minor 4).
+        if f.id == "symbols" || f.id == "manifest" {
+            return Err(format!(
+                "family id '{}' is reserved (collides with the generic index file {}.json)",
+                f.id, f.id
+            ));
+        }
         let has_regex = !f.regex.is_empty();
         let has_query = !f.query.is_empty();
         let extractor = match (has_regex, has_query) {
@@ -432,10 +440,15 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
     let mut facts: Vec<Symbol> = Vec::new();
     let mut defs: Vec<SymbolDef> = Vec::new();
 
-    for entry in WalkDir::new(repo)
-        .into_iter()
-        .filter_entry(|e| !is_ignored(e, &ignore))
-    {
+    // Never index our own output dir, regardless of the profile's ignore_dirs
+    // (M3: a profile that omits `.palugada` would otherwise index the previous
+    // run's symbols.json into a feedback loop).
+    let self_dir = repo.join(".palugada");
+    for entry in WalkDir::new(repo).into_iter().filter_entry(|e| {
+        // Never filter the walk ROOT — a repo cloned into a dir named like an
+        // ignore entry (e.g. `build`/`target`) must still be scanned (M2).
+        e.depth() == 0 || (e.path() != self_dir && !is_ignored(e, &ignore))
+    }) {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
@@ -448,10 +461,17 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
             .extension()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let path_str = path.to_string_lossy();
+        // Match families on the REPO-RELATIVE path, not the absolute walk path —
+        // otherwise a `path_contains` rule can match a segment of the checkout's
+        // parent dirs (M1), and it also matches `brief`'s git-relative classify.
+        let rel = path
+            .strip_prefix(repo)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
 
         let applicable: Vec<&CompiledFamily> =
-            families.iter().filter(|f| family_matches(f, &path_str, &ext)).collect();
+            families.iter().filter(|f| family_matches(f, &rel, &ext)).collect();
         let lang = language_for_ext(&ext).filter(|l| tags_query(l).is_some());
         if applicable.is_empty() && lang.is_none() {
             continue;
@@ -461,11 +481,6 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
             Ok(t) => t,
             Err(_) => continue, // skip binary / unreadable files
         };
-        let rel = path
-            .strip_prefix(repo)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .to_string();
 
         if !applicable.is_empty() {
             extract_file(&text, &rel, &applicable, &mut facts);
@@ -843,6 +858,92 @@ mod tests {
         );
         let err = run(repo.path(), kn.path(), "p").unwrap_err();
         assert!(err.contains("../evil"), "{err}");
+    }
+
+    #[test]
+    fn rejects_reserved_family_id_symbols() {
+        // A family named `symbols` would overwrite the generic index (minor 4).
+        let cfg: Extractors = serde_yaml::from_str(
+            "families:\n  - id: symbols\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let err = compile_families(&cfg, dir.path()).unwrap_err();
+        assert!(err.contains("reserved"), "{err}");
+    }
+
+    #[test]
+    fn family_path_contains_matches_repo_relative_not_absolute(/* M1 */) {
+        // Repo rooted at a dir whose name contains "myvalues"; a file at the repo
+        // ROOT must NOT match `path_contains: myvalues` (only the absolute path
+        // does). The family should produce no fact for it.
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(&prof).unwrap();
+        fs::write(
+            prof.join("extractors.yaml"),
+            "families:\n  - id: special\n    path_contains: myvalues\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        )
+        .unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let repo = base.path().join("myvalues");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("A.kt"), "class Foo {}\n").unwrap();
+
+        run(&repo, kn.path(), "p").unwrap();
+        let special = repo.join(".palugada/index/special.json");
+        assert!(
+            !special.exists(),
+            "root file matched path_contains via the absolute path (M1 regression)"
+        );
+    }
+
+    #[test]
+    fn walk_root_named_like_ignore_dir_is_still_scanned(/* M2 */) {
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(&prof).unwrap();
+        fs::write(
+            prof.join("extractors.yaml"),
+            "ignore_dirs: [build]\nfamilies:\n  - id: t\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        )
+        .unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let repo = base.path().join("build"); // repo cloned into a `build/` dir
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("A.kt"), "class Foo {}\n").unwrap();
+
+        run(&repo, kn.path(), "p").unwrap();
+        let syms = fs::read_to_string(repo.join(".palugada/index/symbols.json")).unwrap();
+        assert!(syms.contains("Foo"), "walk root `build` was wrongly ignored (M2): {syms}");
+    }
+
+    #[test]
+    fn does_not_index_its_own_output_dir(/* M3 */) {
+        // A profile that omits `.palugada` from ignore_dirs must still not eat its
+        // own previous output on the next run.
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(&prof).unwrap();
+        fs::write(
+            prof.join("extractors.yaml"),
+            // no ignore_dirs; `leak` (no ext) would scan symbols.json's JSON text.
+            "families:\n  - id: leak\n    regex: '\"name\":\"(?P<name>\\w+)\"'\n",
+        )
+        .unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(repo.path().join("A.kt"), "class Foo {}\n").unwrap();
+
+        run(repo.path(), kn.path(), "p").unwrap(); // run 1 writes symbols.json (has "name":"Foo")
+        run(repo.path(), kn.path(), "p").unwrap(); // run 2 must not scan .palugada/index
+        let leak = repo.path().join(".palugada/index/leak.json");
+        if leak.exists() {
+            let body = fs::read_to_string(&leak).unwrap();
+            assert!(
+                !body.contains(".palugada"),
+                "indexed its own output dir (M3 self-index loop): {body}"
+            );
+        }
     }
 
     #[test]
