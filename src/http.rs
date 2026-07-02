@@ -89,7 +89,17 @@ fn describe_ureq(method: &str, url: &str, e: ureq::Error) -> String {
             let snippet: String = body.chars().take(300).collect();
             format!("{method} {url} -> HTTP {code}: {snippet}")
         }
-        ureq::Error::Transport(t) => format!("{method} {url}: transport error: {t}"),
+        ureq::Error::Transport(t) => {
+            // Do NOT interpolate `t` directly: `Transport`'s Display prepends the
+            // full request URL, which for a Slack webhook IS the secret. Rebuild
+            // the message from the URL-free parts (kind + message).
+            let mut detail = t.kind().to_string();
+            if let Some(m) = t.message() {
+                detail.push_str(": ");
+                detail.push_str(m);
+            }
+            format!("{method} {url}: transport error: {detail}")
+        }
     }
 }
 
@@ -165,6 +175,17 @@ mod tests {
         assert_eq!(encode_segment("PROJ-123"), "PROJ-123");
         assert_eq!(encode_segment("a b/c?d"), "a%20b%2Fc%3Fd");
         assert_eq!(encode_segment("naïve"), "na%C3%AFve");
+    }
+
+    #[test]
+    fn transport_error_does_not_leak_secret_url() {
+        // Connection refused (nothing on 127.0.0.1:1) → Transport error. The
+        // returned message must not echo the secret-bearing path.
+        let err = Http::new(false)
+            .get_text("http://127.0.0.1:1/services/T00/B00/SUPERSECRET", &[])
+            .unwrap_err();
+        assert!(!err.contains("SUPERSECRET"), "transport error leaked the URL path: {err}");
+        assert!(!err.contains("/services/"), "transport error leaked the URL path: {err}");
     }
 
     #[test]
