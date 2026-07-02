@@ -10,19 +10,10 @@
 use crate::clients;
 use crate::config::{AuthProfile, ProjectConfig};
 use crate::{indexer, knowledge};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::Path;
 use std::process::Command;
-
-#[derive(Deserialize, Default)]
-struct ProfileMeta {
-    #[serde(default)]
-    flows: BTreeMap<String, Vec<String>>,
-    #[serde(default)]
-    review_map: BTreeMap<String, Vec<String>>,
-}
 
 #[derive(Default)]
 struct BriefContext {
@@ -202,13 +193,12 @@ pub fn run(
     opts: &BriefOptions,
     connectors: Option<&BriefConnectors>,
 ) -> Result<(), String> {
-    let pf_path = kn.join("profiles").join(profile).join("profile.yaml");
-    let raw = fs::read_to_string(&pf_path).map_err(|e| format!("read {}: {e}", pf_path.display()))?;
-    let pf: ProfileMeta =
-        serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", pf_path.display()))?;
-
-    let steps = pf.flows.get(&opts.flow).ok_or_else(|| {
-        let have: Vec<&str> = pf.flows.keys().map(String::as_str).collect();
+    // Resolve flows + review_map across the `extends` chain so a child profile
+    // inherits its parent's flows/review_map — consistent with q/for and
+    // effective_rules (M4). Was reading only the direct profile's manifest.
+    let flows = crate::inherit::chain_flows(kn, profile)?;
+    let steps = flows.get(&opts.flow).ok_or_else(|| {
+        let have: Vec<&str> = flows.keys().map(String::as_str).collect();
         format!(
             "flow '{}' not defined in profile '{}' (available: {})",
             opts.flow,
@@ -216,6 +206,7 @@ pub fn run(
             if have.is_empty() { "none".to_string() } else { have.join(", ") }
         )
     })?;
+    let chain_review_map = crate::effective::chain_review_map(kn, profile);
 
     // Per-project overlay: review_map override + overlay convention bodies.
     // brief also works without a project config (local steps), so a missing
@@ -223,8 +214,8 @@ pub fn run(
     let repo_str = repo.to_string_lossy().to_string();
     let overlay = crate::effective::overlay_dir(&repo_str);
     let review_map = match ProjectConfig::load_from(&repo_str) {
-        Ok(pc) => crate::effective::apply_review_overlay(&pf.review_map, &pc.review_map),
-        Err(_) => pf.review_map.clone(),
+        Ok(pc) => crate::effective::apply_review_overlay(&chain_review_map, &pc.review_map),
+        Err(_) => chain_review_map.clone(),
     };
     let outline = |id: &str| crate::effective::convention_outline_overlaid(kn, profile, &overlay, id);
 

@@ -41,12 +41,18 @@ pub fn merged_verbs(
             && profile != ".."
             && !Path::new(profile).is_absolute();
         if safe_id {
-            let pf_path = kn.join("profiles").join(profile).join("profile.yaml");
-            if let Ok(raw) = fs::read_to_string(&pf_path) {
-                let pf: ProfileExec = serde_yaml::from_str(&raw)
-                    .map_err(|e| format!("parse {}: {e}", pf_path.display()))?;
-                for (k, v) in pf.exec {
-                    out.insert(k, (v, "profile"));
+            // Fold `exec:` verbs across the `extends` chain (parent→child, child
+            // wins) so a child profile inherits its parent's build/test/... verbs
+            // (M4). All are tagged "profile" (bundled = trusted).
+            let chain = crate::inherit::resolve_chain(kn, profile)?;
+            for id in chain.iter().rev() {
+                let pf_path = kn.join("profiles").join(id).join("profile.yaml");
+                if let Ok(raw) = fs::read_to_string(&pf_path) {
+                    let pf: ProfileExec = serde_yaml::from_str(&raw)
+                        .map_err(|e| format!("parse {}: {e}", pf_path.display()))?;
+                    for (k, v) in pf.exec {
+                        out.insert(k, (v, "profile"));
+                    }
                 }
             }
         }
@@ -277,6 +283,34 @@ mod tests {
         );
         let err = substitute("run {apk} {device}", &BTreeMap::new()).unwrap_err();
         assert!(err.contains("apk") && err.contains("device"), "{err}");
+    }
+
+    #[test]
+    fn merged_verbs_inherits_exec_across_extends_chain() {
+        // base defines `build`; child extends base and overrides `test`.
+        let kn = tempfile::tempdir().unwrap();
+        let base = kn.path().join("profiles/base");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("profile.yaml"),
+            "id: base\nexec:\n  build: \"cargo build\"\n  test: \"cargo test\"\n",
+        )
+        .unwrap();
+        let child = kn.path().join("profiles/child");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(
+            child.join("profile.yaml"),
+            "id: child\nextends: base\nexec:\n  test: \"cargo nextest run\"\n",
+        )
+        .unwrap();
+
+        let repo = tempfile::tempdir().unwrap();
+        let v = merged_verbs(Some(kn.path()), "child", repo.path()).unwrap();
+        // inherited from base, tagged trusted "profile"
+        assert_eq!(v["build"].0.commands(), vec!["cargo build".to_string()]);
+        assert_eq!(v["build"].1, "profile");
+        // child overrides base's `test`
+        assert_eq!(v["test"].0.commands(), vec!["cargo nextest run".to_string()]);
     }
 
     #[test]
