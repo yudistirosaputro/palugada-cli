@@ -410,22 +410,9 @@ pub fn load_families(kn: &Path, profile: &str) -> Result<(Vec<String>, Vec<Compi
     Ok((cfg.ignore_dirs, families))
 }
 
-#[derive(Deserialize, Default)]
-struct ProfileFacts {
-    #[serde(default)]
-    fact_families: Vec<FactFamily>,
-}
-#[derive(Deserialize)]
-struct FactFamily {
-    id: String,
-}
-
 /// The fact-family ids the profile declares (validates `fact <family>`).
 pub fn fact_families(kn: &Path, profile: &str) -> Result<Vec<String>, String> {
-    let p = kn.join("profiles").join(profile).join("profile.yaml");
-    let raw = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
-    let pf: ProfileFacts = serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", p.display()))?;
-    Ok(pf.fact_families.into_iter().map(|f| f.id).collect())
+    Ok(crate::manifest::ProfileManifest::load(kn, profile)?.fact_family_ids())
 }
 
 /// Look up indexed facts of one family, optionally filtered by name substring.

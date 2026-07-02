@@ -784,15 +784,7 @@ fn profile_json(id: &str) -> Result<serde_json::Value, String> {
 
 /// The profile's flow → step-list map, read from `profile.yaml`.
 fn flows(kn: &std::path::Path, profile: &str) -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
-    #[derive(serde::Deserialize, Default)]
-    struct F {
-        #[serde(default)]
-        flows: std::collections::BTreeMap<String, Vec<String>>,
-    }
-    let p = kn.join("profiles").join(profile).join("profile.yaml");
-    let raw = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
-    let f: F = serde_yaml::from_str(&raw).map_err(|e| e.to_string())?;
-    Ok(f.flows)
+    Ok(crate::manifest::ProfileManifest::load(kn, profile)?.flows)
 }
 
 // ── response helpers ──────────────────────────────────────────────────────

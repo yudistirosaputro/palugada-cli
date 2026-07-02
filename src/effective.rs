@@ -132,20 +132,11 @@ pub fn overlay_dir(repo_path: &str) -> PathBuf {
     crate::config::expand_home(repo_path).join(".palugada").join("conventions")
 }
 
-#[derive(serde::Deserialize, Default)]
-struct ProfileReview {
-    #[serde(default)]
-    review_map: BTreeMap<String, Vec<String>>,
-}
-
 /// The profile's OWN `review_map` (family → convention ids) from its
 /// `profile.yaml`, ignoring inheritance. See `chain_review_map` for the
 /// `extends`-aware version.
 pub fn profile_review_map(kn: &Path, profile: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
-    let p = kn.join("profiles").join(profile).join("profile.yaml");
-    let raw = std::fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
-    let pr: ProfileReview = serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", p.display()))?;
-    Ok(pr.review_map)
+    Ok(crate::manifest::ProfileManifest::load(kn, profile)?.review_map)
 }
 
 /// The effective `review_map` folded across the profile's `extends` chain:
