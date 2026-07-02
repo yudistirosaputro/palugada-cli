@@ -113,8 +113,10 @@ curl -fsSL https://raw.githubusercontent.com/yudistirosaputro/palugada-cli/main/
 
 This downloads the right prebuilt archive for your OS/arch from the
 [Releases](https://github.com/yudistirosaputro/palugada-cli/releases) page,
-installs the binary to `~/.local/bin`, and keeps the bundled `knowledge/`
-profiles next to it so `q` / `for` / `s` / `brief` work immediately.
+**verifies its sha256** against the published checksum, installs the binary to
+`~/.local/bin`, and keeps the bundled `knowledge/` profiles next to it so
+`q` / `for` / `s` / `brief` work immediately. Pin a specific version with
+`PALUGADA_VERSION=v0.2.4 curl … | sh`.
 
 ### Package managers
 
@@ -321,6 +323,14 @@ palugada exec test --json                  # capture a JSON outcome instead of s
 Each verb may set `timeout_secs` (default 600; `0` = unlimited). palugada exits
 with the child's exit code (a timeout exits 124 and kills the whole process
 group), so agents and CI can branch on it.
+
+**Repo-defined verbs are gated (trust-on-first-use).** A verb declared in a
+cloned repo's `.palugada/config.yaml` runs a shell command from that checkout,
+so the first time you run one palugada shows the command and asks for approval,
+caching it per `(repo, verb)` in `~/.palugada/exec-trust.json` (editing the verb
+re-prompts). Profile-bundled verbs are trusted. In trusted CI, approve
+non-interactively with `--yes` or `PALUGADA_TRUST_REPO_EXEC=1`. **AI agents
+should not auto-approve verbs from repositories you don't trust.**
 
 `doctor` checks repo readiness: it runs the `doctor` verb (tool checks) and, when
 a project + connectors resolve, verifies each connector. It exits non-zero if any
