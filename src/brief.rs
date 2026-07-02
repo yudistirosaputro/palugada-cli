@@ -88,8 +88,17 @@ struct Pack {
     kind: String,
     title: String,
     content: String,
+    /// This step produced no real content (a `(…)` degradation note or empty).
+    degraded: bool,
     #[serde(skip)]
     rerun: String,
+}
+
+/// A step "degraded" when it yielded no real content — the codebase-wide
+/// convention is a parenthesised note like `(no index — run ...)`.
+fn is_degraded(content: &str) -> bool {
+    let t = content.trim();
+    t.is_empty() || (t.starts_with('(') && t.ends_with(')'))
 }
 
 enum Render {
@@ -186,13 +195,15 @@ fn prd_context_content(connectors: Option<&BriefConnectors>, target: &str) -> St
     }
 }
 
+/// Returns `Ok(true)` when the assembled pack is fully degraded (every step
+/// produced only a note) so the caller can set a distinct exit code.
 pub fn run(
     kn: &Path,
     repo: &Path,
     profile: &str,
     opts: &BriefOptions,
     connectors: Option<&BriefConnectors>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     // Resolve flows + review_map across the `extends` chain so a child profile
     // inherits its parent's flows/review_map — consistent with q/for and
     // effective_rules (M4). Was reading only the direct profile's manifest.
@@ -248,6 +259,11 @@ pub fn run(
                 format!("recipe: {arg}"),
                 knowledge::recipe_body(kn, profile, &arg).unwrap_or_else(|e| format!("({e})")),
             ),
+            "symbol.find" if !opts.target.is_empty() && repo.join(&opts.target).is_file() => (
+                // A path target: list what's DEFINED in that file, not a name match.
+                format!("symbols defined in {}", opts.target),
+                indexer::symbols_in_file(repo, &opts.target).unwrap_or_else(|e| format!("({e})")),
+            ),
             "symbol.find" => (
                 format!("symbols matching '{}'", opts.target),
                 indexer::symbol_report(repo, &opts.target, None).unwrap_or_else(|e| format!("({e})")),
@@ -291,19 +307,25 @@ pub fn run(
                 format!("(step '{step}' not yet available in this build)"),
             ),
         };
+        let degraded = is_degraded(&content);
         packs.push(Pack {
             step: step.clone(),
             kind: kind.clone(),
             title,
             content,
+            degraded,
             rerun: rerun_hint(&kind, &arg, &opts.target),
         });
     }
 
+    // The whole pack is "degraded" when every step produced only notes — that's
+    // the case an agent must be able to branch on (P5).
+    let all_degraded = !packs.is_empty() && packs.iter().all(|p| p.degraded);
+
     if opts.json {
-        let data = serde_json::to_string_pretty(&packs).map_err(|e| e.to_string())?;
-        println!("{data}");
-        return Ok(());
+        let out = serde_json::json!({ "degraded": all_degraded, "packs": packs });
+        println!("{}", serde_json::to_string_pretty(&out).map_err(|e| e.to_string())?);
+        return Ok(all_degraded);
     }
 
     let target = if opts.target.is_empty() { "(no target)" } else { opts.target.as_str() };
@@ -329,7 +351,10 @@ pub fn run(
         }
     }
     println!("(~{used} tokens)");
-    Ok(())
+    if all_degraded {
+        println!("\n(brief is degraded — no step produced content; check the index/target)");
+    }
+    Ok(all_degraded)
 }
 
 /// The command an agent runs to get a step's full content (shown when truncated/omitted).
@@ -414,7 +439,22 @@ mod tests {
     }
 
     fn pack(kind: &str, content: &str) -> Pack {
-        Pack { step: kind.into(), kind: kind.into(), title: kind.into(), content: content.into(), rerun: "x".into() }
+        Pack {
+            step: kind.into(),
+            kind: kind.into(),
+            title: kind.into(),
+            degraded: is_degraded(content),
+            content: content.into(),
+            rerun: "x".into(),
+        }
+    }
+
+    #[test]
+    fn is_degraded_flags_notes_not_real_content() {
+        assert!(is_degraded("(no index — run `palugada index`)"));
+        assert!(is_degraded("   "));
+        assert!(!is_degraded("class Foo {}"));
+        assert!(!is_degraded("- commit one\n- commit two"));
     }
 
     #[test]

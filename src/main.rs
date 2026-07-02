@@ -626,7 +626,13 @@ fn cmd_brief(
         .ok()
         .and_then(|s| config::resolve_project(&global, &s, project).ok())
         .map(|(_n, pc, auth)| brief::BriefConnectors { pc, auth, insecure });
-    brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json }, connectors.as_ref())
+    let degraded =
+        brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json }, connectors.as_ref())?;
+    if degraded {
+        // Distinct exit code so agents/CI can branch on "got nothing useful".
+        std::process::exit(3);
+    }
+    Ok(())
 }
 
 // ── exec: profile-declared execution toolbelt ──────────────────────────────

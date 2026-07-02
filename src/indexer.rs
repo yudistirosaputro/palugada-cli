@@ -576,6 +576,46 @@ pub fn symbol_report(repo: &Path, query: &str, kind: Option<&str>) -> Result<Str
     Ok(out)
 }
 
+/// Symbols DEFINED IN a specific repo-relative file. Used when `brief`'s target
+/// is a path — name-matching a path string never hits, so `brief bugfix <file>`
+/// used to always show a dead symbol step (P5). Empty note if none/absent index.
+pub fn symbols_in_file(repo: &Path, file: &str) -> Result<String, String> {
+    let p = repo.join(".palugada").join("index").join("symbols.json");
+    let data = match fs::read_to_string(&p) {
+        Ok(d) => d,
+        Err(_) => return Ok(format!("(no index at {} — run `palugada index`)", p.display())),
+    };
+    let symbols: Vec<SymbolDef> =
+        serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))?;
+    let norm = |s: &str| s.replace('\\', "/");
+    let target = norm(file);
+    let mut out = String::new();
+    let mut hits = 0;
+    for s in &symbols {
+        let f = norm(&s.file);
+        // exact match, or one is a path-suffix of the other (target may carry an
+        // extra leading segment, e.g. a workspace prefix).
+        if f != target
+            && !f.ends_with(&format!("/{target}"))
+            && !target.ends_with(&format!("/{f}"))
+        {
+            continue;
+        }
+        let sig = if s.signature.is_empty() { s.name.clone() } else { s.signature.clone() };
+        let scope = if s.scope.is_empty() { String::new() } else { format!("{}  ·  ", s.scope) };
+        out.push_str(&format!("{:<9} {}  ·  {}{}\n", s.kind, sig, scope, s.line));
+        hits += 1;
+        if hits >= 40 {
+            out.push_str("… (more; open the file)\n");
+            break;
+        }
+    }
+    if hits == 0 {
+        out.push_str(&format!("(no indexed symbols in {file})"));
+    }
+    Ok(out)
+}
+
 /// Module prefix for a target: a file → its parent dir; anything else → itself.
 fn module_prefix(target: &str) -> String {
     let p = Path::new(target);
@@ -874,6 +914,24 @@ mod tests {
         let out = module_report(repo.path(), "feature/auth/Login.kt");
         assert!(out.contains("LoginViewModel") && out.contains("AuthService"));
         assert!(!out.contains("HomeViewModel"), "home is outside feature/auth");
+    }
+
+    #[test]
+    fn symbols_in_file_lists_only_that_files_defs(/* P5 */) {
+        let repo = tempfile::tempdir().unwrap();
+        let idx = repo.path().join(".palugada").join("index");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(
+            idx.join("symbols.json"),
+            r#"[{"name":"Foo","kind":"struct","file":"src/a.rs","line":3},
+                {"name":"Bar","kind":"struct","file":"src/b.rs","line":9}]"#,
+        )
+        .unwrap();
+        let out = symbols_in_file(repo.path(), "src/a.rs").unwrap();
+        assert!(out.contains("Foo"), "{out}");
+        assert!(!out.contains("Bar"), "other files must not leak: {out}");
+        // a file with no indexed symbols → a degraded note
+        assert!(symbols_in_file(repo.path(), "src/none.rs").unwrap().contains("no indexed symbols"));
     }
 
     #[test]
