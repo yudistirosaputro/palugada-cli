@@ -7,15 +7,5 @@ project: palugada
 profile: rust-cli
 auth_profile: default
 
-integrations:
-  issue_tracker:
-    provider: jira
-    base_url: ""
-  wiki:
-    provider: confluence
-    base_url: ""
-  git_host:
-    provider: gitlab
-    base_url: ""
-  # design: { provider: figma }
-  # ci:     { provider: jenkins, base_url: "" }
+# palugada dogfoods its own rust-cli profile; it uses no external connectors.
+integrations: {}
