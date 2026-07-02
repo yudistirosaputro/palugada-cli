@@ -288,6 +288,18 @@ pub fn global_verify(profile: &str, cap: &str, body: &str) -> Result<Value, Stri
     if verify_kind(cap, &provider) == "repo" {
         return Ok(json!({ "ok": false, "needs_repo": true, "message": "verify from a project" }));
     }
+    // Never leak a stored token to a base_url it wasn't saved against.
+    let saved_base = {
+        let global = GlobalConfig::load_or_default()?;
+        saved_provider(&global.default_integrations, cap)
+            .filter(|p| p.provider == provider)
+            .map(|p| p.base_url.clone())
+    };
+    if let Some(refused) =
+        guard_saved_token_base_url(has_explicit_token(&inp.secrets), &base_url, saved_base.as_deref())
+    {
+        return Ok(refused);
+    }
     let secrets = Secrets::load_or_default()?;
     let base = secrets.auth_profiles.get(profile).cloned().unwrap_or_default();
     match build_verify_config(base, cap, &provider, &base_url, "", &inp.secrets) {
@@ -379,6 +391,40 @@ fn keep_or_set(posted: &str, saved: Option<&str>) -> String {
         saved.unwrap_or("").to_string()
     } else {
         p.to_string()
+    }
+}
+
+/// True when the posted form carried at least one non-empty secret — i.e. the
+/// user typed a credential this session, so verify is NOT falling back to a
+/// stored token.
+fn has_explicit_token(secrets: &BTreeMap<String, String>) -> bool {
+    secrets.values().any(|v| !v.trim().is_empty())
+}
+
+/// Defense-in-depth for the verify path: refuse to send a STORED token to a
+/// `base_url` that differs from the one it was saved against. Returns
+/// `Some(error-json)` to refuse, `None` to allow. When the user supplied a
+/// token this session (`explicit_token`) any base_url is fine; when falling
+/// back to the saved token, the base_url must be blank (= use saved) or match
+/// the saved one — otherwise a forged/edited base_url could exfiltrate the
+/// stored token to an attacker host.
+pub fn guard_saved_token_base_url(
+    explicit_token: bool,
+    posted_base_url: &str,
+    saved_base_url: Option<&str>,
+) -> Option<Value> {
+    if explicit_token {
+        return None;
+    }
+    let posted = posted_base_url.trim();
+    let saved = saved_base_url.unwrap_or("").trim();
+    if posted.is_empty() || posted == saved {
+        None
+    } else {
+        Some(json!({
+            "ok": false,
+            "error": "refusing to send the stored token to a different base URL — enter the token to verify a new host"
+        }))
     }
 }
 
@@ -554,6 +600,14 @@ pub fn project_verify(
     if verify_kind(cap, provider) == "repo" && repo.is_empty() {
         return Ok(json!({ "ok": false, "needs_repo": true, "message": "set a repo to verify" }));
     }
+    // Never leak a stored token to a base_url it wasn't saved against.
+    if let Some(refused) = guard_saved_token_base_url(
+        has_explicit_token(&inp.secrets),
+        &inp.base_url,
+        saved.map(|p| p.base_url.as_str()),
+    ) {
+        return Ok(refused);
+    }
     let profile = if pc.auth_profile.is_empty() { "default" } else { pc.auth_profile.as_str() };
     let secrets = Secrets::load_or_default()?;
     let base = secrets.auth_profiles.get(profile).cloned().unwrap_or_default();
@@ -646,6 +700,35 @@ pub fn delete_auth_profile(name: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_token_guard_blocks_new_base_url_but_allows_saved_or_explicit() {
+        let saved = Some("https://git.corp.internal");
+        // Falling back to the stored token against a DIFFERENT host → refuse.
+        let refused =
+            guard_saved_token_base_url(false, "https://attacker.example", saved).unwrap();
+        assert_eq!(refused["ok"], false);
+        assert!(refused["error"].as_str().unwrap().contains("different base URL"));
+        // Same saved host → allowed (re-verify an existing connector).
+        assert!(guard_saved_token_base_url(false, "https://git.corp.internal", saved).is_none());
+        // Blank posted base_url means "use saved" → allowed.
+        assert!(guard_saved_token_base_url(false, "", saved).is_none());
+        // User typed a token this session → any host is fine.
+        assert!(
+            guard_saved_token_base_url(true, "https://attacker.example", saved).is_none(),
+            "explicit token bypasses the saved-token guard"
+        );
+    }
+
+    #[test]
+    fn has_explicit_token_detects_any_nonblank_secret() {
+        let mut s = BTreeMap::new();
+        assert!(!has_explicit_token(&s));
+        s.insert("git_token".to_string(), "   ".to_string());
+        assert!(!has_explicit_token(&s), "whitespace-only is not explicit");
+        s.insert("git_token".to_string(), "ghp_abc".to_string());
+        assert!(has_explicit_token(&s));
+    }
 
     #[test]
     fn config_view_masks_tokens() {

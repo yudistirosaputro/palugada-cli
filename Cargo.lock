@@ -607,6 +607,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "getrandom 0.2.17",
  "libc",
  "regex",
  "rustls",

@@ -168,27 +168,89 @@ pub fn host_ok(host: &str) -> bool {
     h == "localhost" || h == "127.0.0.1"
 }
 
+/// Placeholder in `index.html` replaced with the per-session token at serve time.
+const TOKEN_PLACEHOLDER: &str = "__PALUGADA_TOKEN__";
+
+/// Mint a 256-bit random hex session token from the OS CSPRNG. It is injected
+/// into the served `index.html` and required on every `/api/*` request. A
+/// cross-origin web page cannot read the served HTML (the browser blocks it),
+/// so it cannot learn the token and therefore cannot forge API calls — this is
+/// the primary CSRF defense that the loopback + Host guard alone does NOT give.
+fn new_session_token() -> Result<String, String> {
+    let mut buf = [0u8; 32];
+    getrandom::getrandom(&mut buf).map_err(|e| format!("OS RNG unavailable: {e}"))?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Compare the request's token against the session token without an early-exit
+/// timing signal. `got` is `None` when the header is absent.
+pub fn token_ok(expected: &str, got: Option<&str>) -> bool {
+    match got {
+        Some(g) if g.len() == expected.len() && !expected.is_empty() => {
+            let mut diff = 0u8;
+            for (a, b) in expected.bytes().zip(g.bytes()) {
+                diff |= a ^ b;
+            }
+            diff == 0
+        }
+        _ => false,
+    }
+}
+
+/// Reject cross-site requests. `Sec-Fetch-Site` (set by modern browsers, not
+/// settable by page JS) must be `same-origin`/`none` when present; otherwise
+/// `Origin`, when present, must be a loopback origin. When neither header is
+/// present (non-browser clients) the request is allowed here and gated solely
+/// by the session token.
+pub fn origin_ok(sec_fetch_site: Option<&str>, origin: Option<&str>) -> bool {
+    if let Some(sfs) = sec_fetch_site {
+        return matches!(sfs, "same-origin" | "none");
+    }
+    if let Some(o) = origin {
+        return origin_is_loopback(o);
+    }
+    true
+}
+
+fn origin_is_loopback(origin: &str) -> bool {
+    let rest = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"));
+    match rest {
+        Some(r) => {
+            let host = r.split(['/', ':']).next().unwrap_or("");
+            host == "localhost" || host == "127.0.0.1"
+        }
+        None => false,
+    }
+}
+
+/// Read a request header by name (case-insensitive), owned copy.
+fn req_header(request: &tiny_http::Request, name: &str) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.to_string().eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str().to_string())
+}
+
 pub fn run(port: u16, open: bool) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
     let server = tiny_http::Server::http(&addr).map_err(|e| format!("bind {addr}: {e}"))?;
+    let token = new_session_token()?;
     let url = format!("http://{addr}");
     println!("palugada web → {url}   (Ctrl-C to stop)");
     if open {
         open_browser(&url);
     }
     for request in server.incoming_requests() {
-        handle(request);
+        handle(request, &token);
     }
     Ok(())
 }
 
-fn handle(mut request: tiny_http::Request) {
-    let host = request
-        .headers()
-        .iter()
-        .find(|h| h.field.equiv("Host"))
-        .map(|h| h.value.as_str().to_string())
-        .unwrap_or_default();
+fn handle(mut request: tiny_http::Request, token: &str) {
+    let host = req_header(&request, "Host").unwrap_or_default();
     if !host_ok(&host) {
         let _ = request.respond(text(403, "forbidden host"));
         return;
@@ -197,7 +259,11 @@ fn handle(mut request: tiny_http::Request) {
     let path = request.url().split('?').next().unwrap_or("/").to_string();
     match route(&method, &path) {
         Route::Index => {
-            let _ = request.respond(asset(INDEX_HTML, "text/html; charset=utf-8"));
+            // Inject the per-session token so app.js can echo it back on every
+            // API call. A cross-origin page cannot read this response, so the
+            // token stays secret from a CSRF attacker.
+            let html = INDEX_HTML.replace(TOKEN_PLACEHOLDER, token);
+            let _ = request.respond(body(200, "text/html; charset=utf-8", html));
         }
         Route::AppJs => {
             let _ = request.respond(asset(APP_JS, "application/javascript; charset=utf-8"));
@@ -209,6 +275,20 @@ fn handle(mut request: tiny_http::Request) {
             let _ = request.respond(json_resp(404, err_json("not found")));
         }
         other => {
+            // CSRF defense on every /api/* route: reject cross-site requests and
+            // require the per-session token. Either check failing → 403, before
+            // any handler (which may read/verify credentials) runs.
+            let sfs = req_header(&request, "Sec-Fetch-Site");
+            let origin = req_header(&request, "Origin");
+            if !origin_ok(sfs.as_deref(), origin.as_deref()) {
+                let _ = request.respond(json_resp(403, err_json("cross-site request refused")));
+                return;
+            }
+            if !token_ok(token, req_header(&request, "X-Palugada-Token").as_deref()) {
+                let _ =
+                    request.respond(json_resp(403, err_json("missing or invalid session token")));
+                return;
+            }
             let mut body = String::new();
             let _ = request.as_reader().read_to_string(&mut body);
             let (status, payload) = api(other, &body);
@@ -855,6 +935,49 @@ mod tests {
         assert!(host_ok("localhost"));
         assert!(!host_ok("evil.example.com"));
         assert!(!host_ok(""));
+    }
+
+    #[test]
+    fn session_token_is_64_hex_chars_and_fresh_each_call() {
+        let a = new_session_token().unwrap();
+        let b = new_session_token().unwrap();
+        assert_eq!(a.len(), 64, "256 bits = 64 hex chars");
+        assert!(a.bytes().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b, "each session gets a distinct token");
+    }
+
+    #[test]
+    fn token_guard_accepts_exact_and_rejects_wrong_or_missing() {
+        let tok = "deadbeef";
+        assert!(token_ok(tok, Some("deadbeef")));
+        assert!(!token_ok(tok, Some("deadbeff")), "one byte off → reject");
+        assert!(!token_ok(tok, Some("deadbe")), "wrong length → reject");
+        assert!(!token_ok(tok, None), "missing header → reject");
+        assert!(!token_ok("", Some("")), "empty session token never matches");
+    }
+
+    #[test]
+    fn origin_guard_rejects_cross_site_requests() {
+        // Modern browsers: Sec-Fetch-Site is authoritative.
+        assert!(origin_ok(Some("same-origin"), None));
+        assert!(origin_ok(Some("none"), None));
+        assert!(!origin_ok(Some("cross-site"), None), "a random web page is cross-site");
+        assert!(!origin_ok(Some("same-site"), None), "another local port is not same-origin");
+        // Fallback to Origin when Sec-Fetch-Site is absent.
+        assert!(origin_ok(None, Some("http://127.0.0.1:7777")));
+        assert!(origin_ok(None, Some("http://localhost:7777")));
+        assert!(!origin_ok(None, Some("https://attacker.example")));
+        // Neither header (curl / non-browser) → allowed here; token still gates.
+        assert!(origin_ok(None, None));
+    }
+
+    #[test]
+    fn index_serves_token_in_place_of_placeholder() {
+        // The shipped index.html carries the placeholder the server substitutes.
+        assert!(INDEX_HTML.contains(TOKEN_PLACEHOLDER));
+        let served = INDEX_HTML.replace(TOKEN_PLACEHOLDER, "abc123");
+        assert!(served.contains("content=\"abc123\""));
+        assert!(!served.contains(TOKEN_PLACEHOLDER));
     }
 
     #[test]

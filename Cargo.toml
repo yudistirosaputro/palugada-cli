@@ -30,6 +30,7 @@ tree-sitter-kotlin-ng = "1.1"
 tree-sitter-rust = "0.24"
 tree-sitter-dart = "0.2"
 tiny_http = "0.12"
+getrandom = "0.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
