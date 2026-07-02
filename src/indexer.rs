@@ -260,25 +260,67 @@ struct SymbolDef {
 const SIG_CAP: usize = 160;
 
 /// Walk up to the nearest definition node.
-fn nearest_decl(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+/// Per-language tree-sitter node kinds used to enrich a captured symbol. Kotlin
+/// was the only language wired originally, so Rust/Dart symbols lost scope +
+/// signature (M7). `decl` = the nodes that count as a definition; `scope` = the
+/// enclosing-type nodes whose name becomes `scope`; `body` = the child at which
+/// a signature ends (so the body isn't included).
+struct NodeKinds {
+    decl: &'static [&'static str],
+    scope: &'static [&'static str],
+    body: &'static [&'static str],
+}
+
+fn node_kinds(lang: &str) -> NodeKinds {
+    match lang {
+        "kotlin" => NodeKinds {
+            decl: &["class_declaration", "object_declaration", "function_declaration", "property_declaration"],
+            scope: &["class_declaration", "object_declaration"],
+            body: &["function_body", "class_body", "enum_class_body"],
+        },
+        "rust" => NodeKinds {
+            decl: &[
+                "function_item", "function_signature_item", "struct_item", "enum_item", "union_item",
+                "trait_item", "impl_item", "const_item", "static_item", "type_item", "mod_item",
+                "macro_definition",
+            ],
+            // methods live in an `impl`/`trait` block; its `type`/`name` is the scope.
+            scope: &["impl_item", "trait_item"],
+            body: &["block", "declaration_list", "field_declaration_list", "enum_variant_list"],
+        },
+        "dart" => NodeKinds {
+            decl: &[
+                "class_declaration", "mixin_declaration", "extension_declaration", "enum_declaration",
+                "function_signature", "method_signature", "function_declaration",
+            ],
+            scope: &["class_declaration", "mixin_declaration", "extension_declaration"],
+            body: &["function_body", "block", "class_body"],
+        },
+        _ => NodeKinds { decl: &[], scope: &[], body: &[] },
+    }
+}
+
+fn nearest_decl<'a>(node: tree_sitter::Node<'a>, decl_kinds: &[&str]) -> Option<tree_sitter::Node<'a>> {
     let mut n = Some(node);
     while let Some(cur) = n {
-        match cur.kind() {
-            "class_declaration" | "object_declaration" | "function_declaration" | "property_declaration" => {
-                return Some(cur)
-            }
-            _ => n = cur.parent(),
+        if decl_kinds.contains(&cur.kind()) {
+            return Some(cur);
         }
+        n = cur.parent();
     }
     None
 }
 
 /// Name of the class/object enclosing `decl` (empty if top-level).
-fn enclosing_type_name(decl: tree_sitter::Node, bytes: &[u8]) -> String {
+fn enclosing_type_name(decl: tree_sitter::Node, bytes: &[u8], scope_kinds: &[&str]) -> String {
     let mut n = decl.parent();
     while let Some(cur) = n {
-        if matches!(cur.kind(), "class_declaration" | "object_declaration") {
-            if let Some(nm) = cur.child_by_field_name("name") {
+        if scope_kinds.contains(&cur.kind()) {
+            // Kotlin/Dart classes use a `name` field; a Rust `impl` names the
+            // receiving type in its `type` field (`impl Config { … }`).
+            if let Some(nm) =
+                cur.child_by_field_name("name").or_else(|| cur.child_by_field_name("type"))
+            {
                 return nm.utf8_text(bytes).unwrap_or("").to_string();
             }
         }
@@ -288,11 +330,11 @@ fn enclosing_type_name(decl: tree_sitter::Node, bytes: &[u8]) -> String {
 }
 
 /// Declaration header: source from the decl start to its body, whitespace-collapsed and capped.
-fn signature_of(decl: tree_sitter::Node, text: &str) -> String {
+fn signature_of(decl: tree_sitter::Node, text: &str, body_kinds: &[&str]) -> String {
     let mut end = decl.end_byte();
     let mut walk = decl.walk();
     for child in decl.children(&mut walk) {
-        if matches!(child.kind(), "function_body" | "class_body" | "enum_class_body") {
+        if body_kinds.contains(&child.kind()) {
             end = child.start_byte();
             break;
         }
@@ -332,6 +374,7 @@ fn extract_symbols(text: &str, rel: &str, lang_name: &str, out: &mut Vec<SymbolD
     };
     let names = query.capture_names();
     let bytes = text.as_bytes();
+    let nk = node_kinds(lang_name);
     let mut cur = tree_sitter::QueryCursor::new();
     let mut it = cur.matches(&query, tree.root_node(), bytes);
     while let Some(m) = it.next() {
@@ -341,8 +384,8 @@ fn extract_symbols(text: &str, rel: &str, lang_name: &str, out: &mut Vec<SymbolD
                 Ok(s) => s.to_string(),
                 Err(_) => continue,
             };
-            let decl = nearest_decl(c.node).unwrap_or(c.node);
-            let scope = enclosing_type_name(decl, bytes);
+            let decl = nearest_decl(c.node, nk.decl).unwrap_or(c.node);
+            let scope = enclosing_type_name(decl, bytes, nk.scope);
             let kind = if kind0 == "function" && !scope.is_empty() { "method" } else { kind0 };
             out.push(SymbolDef {
                 name,
@@ -350,7 +393,7 @@ fn extract_symbols(text: &str, rel: &str, lang_name: &str, out: &mut Vec<SymbolD
                 file: rel.to_string(),
                 line: c.node.start_position().row + 1,
                 scope,
-                signature: signature_of(decl, text),
+                signature: signature_of(decl, text, nk.body),
             });
         }
     }
@@ -828,6 +871,25 @@ mod tests {
         assert!(by("function", "run").is_some());
         assert!(by("trait", "Host").is_some());
         assert!(out.iter().all(|s| s.name != "ghost"), "comment fn must not be captured");
+    }
+
+    #[test]
+    fn rust_symbols_carry_signature_and_impl_scope(/* M7 */) {
+        let src = "pub fn run(x: u32) -> u32 { x }\nstruct Config;\nimpl Config { pub fn load(p: &str) -> Config { Config } }\n";
+        let mut out = Vec::new();
+        extract_symbols(src, "lib.rs", "rust", &mut out);
+        let by = |n: &str| out.iter().find(|s| s.name == n).cloned();
+        // Top-level fn: signature captured, no scope, kind stays `function`.
+        let run = by("run").expect("run");
+        assert_eq!(run.kind, "function");
+        assert_eq!(run.scope, "");
+        assert!(run.signature.contains("fn run(x: u32) -> u32"), "sig: {:?}", run.signature);
+        assert!(!run.signature.contains('{'), "signature must exclude the body: {:?}", run.signature);
+        // Method in `impl Config`: scope = Config, kind = method (was empty for Rust).
+        let load = by("load").expect("load");
+        assert_eq!(load.scope, "Config", "impl scope not resolved");
+        assert_eq!(load.kind, "method");
+        assert!(load.signature.contains("fn load(p: &str)"), "sig: {:?}", load.signature);
     }
 
     #[test]
