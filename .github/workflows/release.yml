@@ -43,6 +43,19 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      # Fail fast if the pushed tag doesn't match Cargo.toml — otherwise npm/the
+      # release would publish a version the binary doesn't report.
+      - name: Guard tag matches Cargo.toml version
+        shell: bash
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="v$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "tag=$TAG  cargo=$VER"
+          if [ "$TAG" != "$VER" ]; then
+            echo "::error::pushed tag $TAG != Cargo.toml version $VER — bump Cargo.toml first"
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -53,6 +66,21 @@ jobs:
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Never ship a binary we haven't run. Natively-runnable targets: --version
+      # + --help. The cross-compiled x86_64 macOS binary runs via Rosetta if
+      # present (best-effort — don't fail the release if Rosetta is absent).
+      - name: Smoke the built binary
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/palugada"
+          [ "${{ runner.os }}" = "Windows" ] && BIN="$BIN.exe"
+          "$BIN" --version
+          "$BIN" --help >/dev/null
+      - name: Smoke x86_64 macOS via Rosetta (best-effort)
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: arch -x86_64 target/x86_64-apple-darwin/release/palugada --version || echo "Rosetta unavailable — smoke skipped"
 
       # Stage the binary next to the knowledge/ profiles so the extracted archive
       # works out of the box: palugada finds knowledge/ by walking up from its

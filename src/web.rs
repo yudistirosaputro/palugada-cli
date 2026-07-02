@@ -238,7 +238,10 @@ pub fn run(port: u16, open: bool) -> Result<(), String> {
     let addr = format!("127.0.0.1:{port}");
     let server = tiny_http::Server::http(&addr).map_err(|e| format!("bind {addr}: {e}"))?;
     let token = new_session_token()?;
-    let url = format!("http://{addr}");
+    // Report the ACTUAL bound address — with `--port 0` the OS picks the port,
+    // and tests/tools read it from this line.
+    let bound = server.server_addr().to_ip().map(|a| a.to_string()).unwrap_or(addr);
+    let url = format!("http://{bound}");
     println!("palugada web → {url}   (Ctrl-C to stop)");
     if open {
         open_browser(&url);
