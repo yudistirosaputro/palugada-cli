@@ -630,19 +630,38 @@ project: __PROJECT__
 profile: __PROFILE__
 auth_profile: __AUTH__
 
-integrations: {}
-  # issue_tracker: { provider: jira,       base_url: "https://your.atlassian.net" }
-  # wiki:          { provider: confluence, base_url: "https://your.atlassian.net/wiki" }
-  # git_host:      { provider: gitlab,     base_url: "https://gitlab.com", repo: "owner/name" }
-  # design:        { provider: figma }
-  # ci:            { provider: jenkins,    base_url: "https://ci.example.com" }
-  # chat:          { provider: slack }
+# integrations:
+#   issue_tracker: { provider: jira,       base_url: "https://your.atlassian.net" }
+#   wiki:          { provider: confluence, base_url: "https://your.atlassian.net/wiki" }
+#   git_host:      { provider: gitlab,     base_url: "https://gitlab.com", repo: "owner/name" }
+#   design:        { provider: figma }
+#   ci:            { provider: jenkins,    base_url: "https://ci.example.com" }
+#   chat:          { provider: slack }
 "#;
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_config_parses_as_is_and_with_a_connector_uncommented() {
+        let yaml = config_skeleton("app", "rust-cli", "default");
+        // Fresh (all commented) → valid, empty integrations.
+        let pc: crate::config::ProjectConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(pc.integrations.issue_tracker.is_none());
+        // Following the template's own instruction (uncomment `integrations:` +
+        // one connector) must yield VALID yaml, not an inline-{}+block-children trap.
+        let uncommented = yaml
+            .replace("# integrations:", "integrations:")
+            .replace(
+                "#   issue_tracker: { provider: jira,       base_url: \"https://your.atlassian.net\" }",
+                "  issue_tracker: { provider: jira, base_url: \"https://your.atlassian.net\" }",
+            );
+        let pc2: crate::config::ProjectConfig = serde_yaml::from_str(&uncommented)
+            .expect("uncommenting a connector must produce valid YAML");
+        assert_eq!(pc2.integrations.issue_tracker.as_ref().unwrap().provider, "jira");
+    }
 
     #[test]
     fn detect_profile_maps_known_stacks_and_never_returns_web_react() {
