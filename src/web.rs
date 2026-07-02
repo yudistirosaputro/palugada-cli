@@ -329,7 +329,7 @@ fn api(route: Route, body: &str) -> (u16, String) {
         }),
         Route::Palette(id) => read(|| {
             let kn = knowledge_dir()?;
-            Ok(serde_json::to_value(crate::palette::palette(&kn, &id)?).map_err(|e| e.to_string())?)
+            serde_json::to_value(crate::palette::palette(&kn, &id)?).map_err(|e| e.to_string())
         }),
         Route::PaletteProfile(_id, other) => read(|| {
             let kn = knowledge_dir()?;
