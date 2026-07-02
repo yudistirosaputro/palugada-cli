@@ -48,7 +48,7 @@ impl Http {
         }
         let resp = req.call().map_err(|e| describe_ureq("GET", url, e))?;
         resp.into_json::<T>()
-            .map_err(|e| format!("failed to decode JSON from {url}: {e}"))
+            .map_err(|e| format!("failed to decode JSON from {} : {e}", redact_url(url)))
     }
 
     /// GET a URL and return the raw response body as a string.
@@ -59,7 +59,7 @@ impl Http {
         }
         let resp = req.call().map_err(|e| describe_ureq("GET", url, e))?;
         resp.into_string()
-            .map_err(|e| format!("failed to read body from {url}: {e}"))
+            .map_err(|e| format!("failed to read body from {} : {e}", redact_url(url)))
     }
 
     /// POST a JSON string body with arbitrary headers; return the raw response
@@ -76,12 +76,13 @@ impl Http {
         }
         let resp = req.send_string(body).map_err(|e| describe_ureq("POST", url, e))?;
         resp.into_string()
-            .map_err(|e| format!("failed to read body from {url}: {e}"))
+            .map_err(|e| format!("failed to read body from {} : {e}", redact_url(url)))
     }
 }
 
 /// Turn a ureq error into a readable message, surfacing method + URL + status.
 fn describe_ureq(method: &str, url: &str, e: ureq::Error) -> String {
+    let url = redact_url(url);
     match e {
         ureq::Error::Status(code, resp) => {
             let body = resp.into_string().unwrap_or_default();
@@ -89,6 +90,25 @@ fn describe_ureq(method: &str, url: &str, e: ureq::Error) -> String {
             format!("{method} {url} -> HTTP {code}: {snippet}")
         }
         ureq::Error::Transport(t) => format!("{method} {url}: transport error: {t}"),
+    }
+}
+
+/// Reduce a URL to `scheme://host[:port]/…` for safe inclusion in error
+/// messages. Some connectors carry the secret IN the URL — a Slack webhook is
+/// `https://hooks.slack.com/services/T…/B…/<secret>` — so the path, query, and
+/// any `user:pass@` userinfo are elided. The host + HTTP status + response body
+/// snippet still identify the failing call for debugging.
+pub fn redact_url(url: &str) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some(sr) => sr,
+        None => return "<redacted-url>".to_string(),
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    if rest.len() > authority.len() {
+        format!("{scheme}://{host}/…")
+    } else {
+        format!("{scheme}://{host}")
     }
 }
 
@@ -145,6 +165,22 @@ mod tests {
         assert_eq!(encode_segment("PROJ-123"), "PROJ-123");
         assert_eq!(encode_segment("a b/c?d"), "a%20b%2Fc%3Fd");
         assert_eq!(encode_segment("naïve"), "na%C3%AFve");
+    }
+
+    #[test]
+    fn redact_url_elides_secret_path_and_query() {
+        // Slack webhook: the whole path after the host is the secret.
+        assert_eq!(
+            redact_url("https://hooks.slack.com/services/T00/B00/XXXXsecret"),
+            "https://hooks.slack.com/…"
+        );
+        // Query strings and userinfo are dropped too.
+        assert_eq!(redact_url("https://api.example.com/x?token=abc"), "https://api.example.com/…");
+        assert_eq!(redact_url("https://user:pass@host.example/p"), "https://host.example/…");
+        // Bare host (no path) → no trailing marker.
+        assert_eq!(redact_url("https://api.github.com"), "https://api.github.com");
+        // Malformed input never echoes the raw string.
+        assert_eq!(redact_url("not-a-url"), "<redacted-url>");
     }
 
     #[test]

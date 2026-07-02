@@ -413,7 +413,11 @@ fn run(cli: Cli) -> Result<(), String> {
         return Err("neither HOME nor USERPROFILE is set — palugada needs one to locate ~/.palugada.yaml and ~/.palugada/secrets.yaml".into());
     }
     if cli.insecure {
-        eprintln!("warning: --insecure accepts ANY TLS certificate for every host this run");
+        eprintln!(
+            "warning: --insecure disables TLS certificate verification for EVERY host contacted \
+             this run (not just a self-signed corporate host), exposing tokens to MITM. Prefer \
+             pinning the corporate CA. Per-host scoping is planned."
+        );
     }
     let project = cli.project.as_deref();
     match cli.command {
