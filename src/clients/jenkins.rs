@@ -52,7 +52,7 @@ struct MeResp {
 fn job_path(job: &str) -> String {
     job.split('/')
         .filter(|s| !s.is_empty())
-        .map(|s| crate::http::encode_segment(s))
+        .map(crate::http::encode_segment)
         .collect::<Vec<_>>()
         .join("/job/")
 }

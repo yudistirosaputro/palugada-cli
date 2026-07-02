@@ -30,7 +30,17 @@ pub fn merged_verbs(
 ) -> Result<BTreeMap<String, (VerbSpec, &'static str)>, String> {
     let mut out: BTreeMap<String, (VerbSpec, &'static str)> = BTreeMap::new();
     if let Some(kn) = kn {
-        if !profile.is_empty() {
+        // The profile name can come from a repo's committed config; a value with
+        // path separators / `..` / an absolute prefix could steer this loader at
+        // an attacker-planted profile.yaml whose verbs would be tagged trusted
+        // ("profile") and bypass the exec trust gate. Reject those shapes.
+        let safe_id = !profile.is_empty()
+            && !profile.contains('/')
+            && !profile.contains('\\')
+            && profile != "."
+            && profile != ".."
+            && !Path::new(profile).is_absolute();
+        if safe_id {
             let pf_path = kn.join("profiles").join(profile).join("profile.yaml");
             if let Ok(raw) = fs::read_to_string(&pf_path) {
                 let pf: ProfileExec = serde_yaml::from_str(&raw)

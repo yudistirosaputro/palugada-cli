@@ -19,6 +19,7 @@ mod personal;
 mod profile;
 mod scaffold;
 mod skillmap;
+mod trust;
 mod web;
 
 use clap::{Parser, Subcommand};
@@ -243,6 +244,9 @@ enum Commands {
         /// Profile override.
         #[arg(long)]
         profile: Option<String>,
+        /// Approve a repo-defined verb without prompting (also PALUGADA_TRUST_REPO_EXEC=1).
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -413,7 +417,11 @@ fn run(cli: Cli) -> Result<(), String> {
         return Err("neither HOME nor USERPROFILE is set — palugada needs one to locate ~/.palugada.yaml and ~/.palugada/secrets.yaml".into());
     }
     if cli.insecure {
-        eprintln!("warning: --insecure accepts ANY TLS certificate for every host this run");
+        eprintln!(
+            "warning: --insecure disables TLS certificate verification for EVERY host contacted \
+             this run (not just a self-signed corporate host), exposing tokens to MITM. Prefer \
+             pinning the corporate CA. Per-host scoping is planned."
+        );
     }
     let project = cli.project.as_deref();
     match cli.command {
@@ -445,8 +453,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Prd { action } => cmd_prd(action, project, cli.insecure),
         Commands::Web { port, open } => web::run(port, open),
         Commands::Doctor { json } => cmd_doctor(json, project, cli.insecure),
-        Commands::Exec { verb, args, list, json, profile } => {
-            cmd_exec(verb, args, list, json, profile, project)
+        Commands::Exec { verb, args, list, json, profile, yes } => {
+            cmd_exec(verb, args, list, json, profile, yes, project)
         }
     }
 }
@@ -632,6 +640,7 @@ fn cmd_exec(
     list: bool,
     json: bool,
     profile: Option<String>,
+    yes: bool,
     project: Option<&str>,
 ) -> Result<(), String> {
     let global = GlobalConfig::load_or_default()?;
@@ -662,6 +671,12 @@ fn cmd_exec(
 
     let verb = verb.ok_or("specify a verb (e.g. `palugada exec build`) or use --list")?;
     let kv = exec::parse_kv_args(&args)?;
+    // Trust gate: a repo-defined verb runs a shell command from the checkout, so
+    // it must be approved before execution (profile-bundled verbs are trusted).
+    if let Some((spec, src)) = verbs.get(verb.as_str()) {
+        let joined = spec.commands().join(" && ");
+        trust::ensure_trusted(&repo, &verb, src, &joined, yes || trust::env_trust_optin())?;
+    }
     let outcome = exec::run_verb(&verbs, &repo, &exec::ExecRequest { verb: &verb, args: &kv, json })?;
     if json {
         println!("{}", serde_json::to_string_pretty(&outcome).map_err(|e| e.to_string())?);
@@ -696,6 +711,18 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
     // 1. tool checks: each command of the merged `doctor` verb
     let verbs = exec::merged_verbs(kn.as_deref(), &prof, &repo).unwrap_or_default();
     match verbs.get("doctor") {
+        // A repo-defined `doctor` verb runs shell from the checkout; doctor stays
+        // non-interactive, so an unapproved repo verb is SKIPPED (not prompted).
+        Some((spec, src))
+            if !trust::is_trusted(&repo, "doctor", src, &spec.commands().join(" && ")) =>
+        {
+            checks.push(Check {
+                name: "doctor verb".into(),
+                kind: "tool".into(),
+                ok: true,
+                detail: "(repo-defined `doctor` verb not approved — run `palugada exec doctor` to review; tool checks skipped)".into(),
+            });
+        }
         Some((spec, _)) => {
             for cmd_str in spec.commands() {
                 let mut buf = String::new();

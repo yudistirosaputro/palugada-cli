@@ -5,12 +5,15 @@
 #   curl -fsSL https://raw.githubusercontent.com/yudistirosaputro/palugada-cli/main/install.sh | sh
 #
 # Overridable: PALUGADA_INSTALL_DIR (default ~/.local/share/palugada),
-#              PALUGADA_BIN_DIR     (default ~/.local/bin).
+#              PALUGADA_BIN_DIR     (default ~/.local/bin),
+#              PALUGADA_VERSION     (default latest; pin e.g. v0.2.4),
+#              PALUGADA_SKIP_CHECKSUM (set to 1 to bypass verification — unsafe).
 set -eu
 
 REPO="yudistirosaputro/palugada-cli"
 INSTALL_DIR="${PALUGADA_INSTALL_DIR:-$HOME/.local/share/palugada}"
 BIN_DIR="${PALUGADA_BIN_DIR:-$HOME/.local/bin}"
+VERSION="${PALUGADA_VERSION:-latest}"
 
 os="$(uname -s)"
 arch="$(uname -m)"
@@ -36,19 +39,58 @@ case "$os" in
 esac
 
 asset="palugada-${target}.tar.gz"
-url="https://github.com/${REPO}/releases/latest/download/${asset}"
+if [ "$VERSION" = "latest" ]; then
+  base_url="https://github.com/${REPO}/releases/latest/download"
+else
+  base_url="https://github.com/${REPO}/releases/download/${VERSION}"
+fi
+
+# Download $1 (URL) → $2 (path). Fails the script (set -e) on HTTP/transport error.
+dl() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$2" "$1"
+  else
+    echo "Need curl or wget to download." >&2
+    exit 1
+  fi
+}
+
+# Verify $1 (file) against $2 (a `shasum -a 256`-style sidecar). Hard-fail on
+# mismatch; warn only when no checksum tool is available (can't verify).
+verify_sha256() {
+  _file="$1"; _sumfile="$2"
+  _expected="$(awk '{print $1}' "$_sumfile" | head -1)"
+  if command -v sha256sum >/dev/null 2>&1; then
+    _actual="$(sha256sum "$_file" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    _actual="$(shasum -a 256 "$_file" | awk '{print $1}')"
+  else
+    echo "Warning: no sha256sum/shasum found — cannot verify download integrity." >&2
+    return 0
+  fi
+  if [ -z "$_expected" ] || [ "$_expected" != "$_actual" ]; then
+    echo "ERROR: checksum mismatch for $_file" >&2
+    echo "  expected: $_expected" >&2
+    echo "  actual:   $_actual" >&2
+    exit 1
+  fi
+  echo "Checksum verified ($_actual)"
+}
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "Downloading ${asset} ..."
-if command -v curl >/dev/null 2>&1; then
-  curl -fSL "$url" -o "$tmp/$asset"
-elif command -v wget >/dev/null 2>&1; then
-  wget -qO "$tmp/$asset" "$url"
+echo "Downloading ${asset} (${VERSION}) ..."
+dl "$base_url/$asset" "$tmp/$asset"
+
+if [ "${PALUGADA_SKIP_CHECKSUM:-0}" = "1" ]; then
+  echo "Warning: PALUGADA_SKIP_CHECKSUM=1 — skipping integrity verification." >&2
 else
-  echo "Need curl or wget to download." >&2
-  exit 1
+  echo "Verifying checksum ..."
+  dl "$base_url/$asset.sha256" "$tmp/$asset.sha256"
+  verify_sha256 "$tmp/$asset" "$tmp/$asset.sha256"
 fi
 
 mkdir -p "$INSTALL_DIR"

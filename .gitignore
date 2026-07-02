@@ -1,5 +1,6 @@
 # Rust build artifacts
 /target
+/rust_out
 
 # macOS
 .DS_Store

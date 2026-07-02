@@ -5,8 +5,11 @@ const view = document.getElementById("view");
 const toastEl = document.getElementById("toast");
 
 // ── helpers ───────────────────────────────────────────────────────────────
+// Per-session CSRF token injected into index.html by the server; echoed on
+// every API call so the server can reject forged cross-origin requests.
+const CSRF_TOKEN = (document.querySelector('meta[name="palugada-token"]') || {}).content || "";
 async function api(path, method = "GET", body) {
-  const opt = { method, headers: {} };
+  const opt = { method, headers: { "X-Palugada-Token": CSRF_TOKEN } };
   if (body !== undefined) {
     opt.headers["Content-Type"] = "application/json";
     opt.body = JSON.stringify(body);
