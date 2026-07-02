@@ -48,6 +48,22 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
             .unwrap_or_else(|| "project".to_string())
     });
     let profile = opts.profile.clone().unwrap_or_else(|| detect_profile(&repo));
+    // Never scaffold a project bound to a profile that isn't on disk — that used
+    // to bind JS repos to a nonexistent `web-react` and then fail every command
+    // with a raw `os error 2` (P1). Validate up front with a clear message.
+    let mut global = GlobalConfig::load_or_default()?;
+    if let Ok(kn) = crate::knowledge::knowledge_dir(&global) {
+        if !kn.join("profiles").join(&profile).is_dir() {
+            let avail: Vec<String> =
+                crate::profile::list(&kn).unwrap_or_default().into_iter().map(|(id, _)| id).collect();
+            return Err(format!(
+                "profile '{}' does not exist under {}. Available: {}. Pass --profile <id>.",
+                profile,
+                kn.join("profiles").display(),
+                if avail.is_empty() { "(none)".to_string() } else { avail.join(", ") }
+            ));
+        }
+    }
     let auth = opts.auth.clone().unwrap_or_else(|| "default".to_string());
     let auto = opts.agents.is_empty() || (opts.agents.len() == 1 && opts.agents[0] == "auto");
     let agents = if auto { detect_agents(&repo) } else { opts.agents.clone() };
@@ -68,7 +84,6 @@ pub fn generate(opts: &InitOptions) -> Result<GenerateOutcome, String> {
             ));
         }
     }
-    let mut global = GlobalConfig::load_or_default()?;
     let pc = crate::config::ProjectConfig::load_from(&repo_str)?;
     let kinds = integration_kinds(&pc);
     for (rel, body) in skill_files(&profile, &kinds, &agents) {
@@ -145,10 +160,13 @@ fn detect_profile(repo: &Path) -> String {
     let has = |f: &str| repo.join(f).exists();
     if has("build.gradle") || has("build.gradle.kts") || has("settings.gradle") || has("settings.gradle.kts") {
         "android-mvvm".to_string()
-    } else if has("package.json") {
-        "web-react".to_string()
+    } else if has("Cargo.toml") {
+        "rust-cli".to_string()
+    } else if has("pubspec.yaml") {
+        "flutter-bloc".to_string()
     } else {
-        // android-mvvm is the only profile shipped with content today.
+        // No confident signal — default to android-mvvm (a bundled profile).
+        // `generate` validates the result exists before scaffolding.
         "android-mvvm".to_string()
     }
 }
@@ -600,6 +618,23 @@ integrations:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detect_profile_maps_known_stacks_and_never_returns_web_react() {
+        let d = tempfile::tempdir().unwrap();
+        // no signal → android-mvvm (a bundled profile), never the old ghost.
+        assert_eq!(detect_profile(d.path()), "android-mvvm");
+        // package.json alone must NOT map to web-react (P1).
+        std::fs::write(d.path().join("package.json"), "{}").unwrap();
+        assert_ne!(detect_profile(d.path()), "web-react");
+        // Rust / Flutter markers map to their bundled profiles.
+        let r = tempfile::tempdir().unwrap();
+        std::fs::write(r.path().join("Cargo.toml"), "").unwrap();
+        assert_eq!(detect_profile(r.path()), "rust-cli");
+        let f = tempfile::tempdir().unwrap();
+        std::fs::write(f.path().join("pubspec.yaml"), "").unwrap();
+        assert_eq!(detect_profile(f.path()), "flutter-bloc");
+    }
 
     #[test]
     fn upsert_marked_section_creates_appends_replaces() {
