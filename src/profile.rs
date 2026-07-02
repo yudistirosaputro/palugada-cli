@@ -3,18 +3,10 @@
 //! directory; the engine's own readers (`indexer::load_families`,
 //! `indexer::fact_families`) are reused so validation matches runtime behaviour.
 
-use serde::Deserialize;
+use crate::manifest::ProfileManifest;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-#[derive(Deserialize, Default)]
-struct ProfileId {
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    title: String,
-}
 
 /// (id, title) for every `kn/profiles/<dir>/` that has a `profile.yaml`, sorted.
 pub fn list(kn: &Path) -> Result<Vec<(String, String)>, String> {
@@ -30,10 +22,9 @@ pub fn list(kn: &Path) -> Result<Vec<(String, String)>, String> {
             continue;
         }
         let dir_id = entry.file_name().to_string_lossy().to_string();
-        let title = fs::read_to_string(&pf)
+        let title = ProfileManifest::load(kn, &dir_id)
             .ok()
-            .and_then(|raw| serde_yaml::from_str::<ProfileId>(&raw).ok())
-            .map(|p| if p.title.is_empty() { dir_id.clone() } else { p.title })
+            .map(|m| if m.title.is_empty() { dir_id.clone() } else { m.title })
             .unwrap_or_else(|| dir_id.clone());
         out.push((dir_id, title));
     }
@@ -72,17 +63,13 @@ pub fn validate(kn: &Path, id: &str) -> Vec<Check> {
     checks.push(Check { name: "profile dir".into(), ok: true, detail: dir.display().to_string() });
 
     // profile.yaml parses + has an id
-    let pf_path = dir.join("profile.yaml");
-    let pf_check = fs::read_to_string(&pf_path)
-        .map_err(|e| format!("read {}: {e}", pf_path.display()))
-        .and_then(|raw| serde_yaml::from_str::<ProfileId>(&raw).map_err(|e| format!("parse: {e}")))
-        .and_then(|p| {
-            if p.id.is_empty() {
-                Err("profile.yaml has no `id`".into())
-            } else {
-                Ok(format!("id = {}", p.id))
-            }
-        });
+    let pf_check = ProfileManifest::load(kn, id).and_then(|m| {
+        if m.id.is_empty() {
+            Err("profile.yaml missing or has no `id`".into())
+        } else {
+            Ok(format!("id = {}", m.id))
+        }
+    });
     checks.push(check("profile.yaml", pf_check));
 
     // extractors compile (regex + tree-sitter queries + .scm files + ids)

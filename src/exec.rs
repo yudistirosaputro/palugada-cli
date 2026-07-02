@@ -7,19 +7,13 @@
 //! code or the `--json` outcome.
 
 use crate::config::{ProjectConfig, VerbSpec};
-use serde::{Deserialize, Serialize};
+use crate::manifest::ProfileManifest;
+use serde::Serialize;
 use std::collections::BTreeMap;
-use std::fs;
 use std::io::Read as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-
-#[derive(Deserialize, Default)]
-struct ProfileExec {
-    #[serde(default)]
-    exec: BTreeMap<String, VerbSpec>,
-}
 
 /// Merge exec verbs: profile first, project `.palugada/config.yaml` overrides
 /// per-verb. `kn`/`profile` may be absent — project-only verbs still work.
@@ -46,13 +40,8 @@ pub fn merged_verbs(
             // (M4). All are tagged "profile" (bundled = trusted).
             let chain = crate::inherit::resolve_chain(kn, profile)?;
             for id in chain.iter().rev() {
-                let pf_path = kn.join("profiles").join(id).join("profile.yaml");
-                if let Ok(raw) = fs::read_to_string(&pf_path) {
-                    let pf: ProfileExec = serde_yaml::from_str(&raw)
-                        .map_err(|e| format!("parse {}: {e}", pf_path.display()))?;
-                    for (k, v) in pf.exec {
-                        out.insert(k, (v, "profile"));
-                    }
+                for (k, v) in ProfileManifest::load(kn, id)?.exec {
+                    out.insert(k, (v, "profile"));
                 }
             }
         }

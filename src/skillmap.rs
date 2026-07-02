@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::config::GlobalConfig;
 
@@ -108,18 +108,8 @@ pub struct SkillMap {
     pub warnings: Vec<String>,
 }
 
-#[derive(Deserialize, Default)]
-struct ProfileFlows {
-    #[serde(default)]
-    flows: BTreeMap<String, Vec<String>>,
-    #[serde(default)]
-    review_map: BTreeMap<String, Vec<String>>,
-}
-
-fn load_flows(kn: &Path, profile: &str) -> Result<ProfileFlows, String> {
-    let p = kn.join("profiles").join(profile).join("profile.yaml");
-    let raw = fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
-    serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", p.display()))
+fn load_flows(kn: &Path, profile: &str) -> Result<crate::manifest::ProfileManifest, String> {
+    crate::manifest::ProfileManifest::load(kn, profile)
 }
 
 fn custom_skill_names(kn: &Path, profile: &str) -> Vec<String> {
