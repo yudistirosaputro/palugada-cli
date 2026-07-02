@@ -209,18 +209,21 @@ fn run_one(
     let mut child = cmd.spawn().map_err(|e| format!("spawn `{cmd_str}`: {e}"))?;
     let mut readers = Vec::new();
     if capture {
+        // Read raw bytes + lossy-decode: `read_to_string` discards the ENTIRE
+        // buffer on the first invalid UTF-8 byte, losing the diagnostic tail
+        // exactly when a tool emits mangled/binary output (M6).
         if let Some(mut p) = child.stdout.take() {
             readers.push(std::thread::spawn(move || {
-                let mut b = String::new();
-                let _ = p.read_to_string(&mut b);
-                b
+                let mut b = Vec::new();
+                let _ = p.read_to_end(&mut b);
+                String::from_utf8_lossy(&b).into_owned()
             }));
         }
         if let Some(mut p) = child.stderr.take() {
             readers.push(std::thread::spawn(move || {
-                let mut b = String::new();
-                let _ = p.read_to_string(&mut b);
-                b
+                let mut b = Vec::new();
+                let _ = p.read_to_end(&mut b);
+                String::from_utf8_lossy(&b).into_owned()
             }));
         }
     }
@@ -340,6 +343,24 @@ mod tests {
         // unknown verb lists what exists
         let err = run_verb(&v, repo.path(), &ExecRequest { verb: "nope", args: &args, json: true }).unwrap_err();
         assert!(err.contains("fail, ok, seq"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_output_does_not_wipe_the_tail(/* M6 */) {
+        let repo = tempfile::tempdir().unwrap();
+        // printf emits two raw 0xFF bytes between readable text; the tail after
+        // them must survive.
+        let v = verbs("bad: 'printf \"before\\377\\377after IMPORTANT-ERROR\\n\"; exit 7'\n");
+        let args = BTreeMap::new();
+        let r = run_verb(&v, repo.path(), &ExecRequest { verb: "bad", args: &args, json: true })
+            .unwrap();
+        assert_eq!(r.exit_code, 7);
+        assert!(
+            r.tail.contains("after IMPORTANT-ERROR"),
+            "tail lost after a non-UTF8 byte: {:?}",
+            r.tail
+        );
     }
 
     #[test]
