@@ -62,6 +62,9 @@ enum Commands {
         /// Overwrite existing files.
         #[arg(long)]
         force: bool,
+        /// Skip building the local code index after scaffolding.
+        #[arg(long)]
+        no_index: bool,
     },
     /// Manage global config and credentials.
     Config {
@@ -425,8 +428,8 @@ fn run(cli: Cli) -> Result<(), String> {
     }
     let project = cli.project.as_deref();
     match cli.command {
-        Commands::Init { repo, name, profile, auth, agents, force } => {
-            cmd_init(repo, name, profile, auth, agents, force)
+        Commands::Init { repo, name, profile, auth, agents, force, no_index } => {
+            cmd_init(repo, name, profile, auth, agents, force, no_index)
         }
         Commands::Config { action } => cmd_config(action, project, cli.insecure),
         Commands::Query { topic, brief, list, profile } => cmd_query(topic, brief, list, profile, project),
@@ -461,6 +464,7 @@ fn run(cli: Cli) -> Result<(), String> {
 
 // ── init ─────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_init(
     repo: String,
     name: Option<String>,
@@ -468,13 +472,14 @@ fn cmd_init(
     auth: Option<String>,
     agents: String,
     force: bool,
+    no_index: bool,
 ) -> Result<(), String> {
     let agents: Vec<String> = agents
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    scaffold::run(scaffold::InitOptions { repo, name, profile, auth, agents, force })
+    scaffold::run(scaffold::InitOptions { repo, name, profile, auth, agents, force, no_index })
 }
 
 // ── knowledge: q / for / s ─────────────────────────────────────────────────

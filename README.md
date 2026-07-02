@@ -191,9 +191,10 @@ palugada config init
 # 2. put your tokens into ~/.palugada/secrets.yaml (see example below),
 #    or set them in the Connectors menu of `palugada web`
 
-# 3. scaffold your repo: per-project config + agent files + registration
+# 3. scaffold your repo: per-project config + agent files + registration,
+#    then build the local code index (offline) so `symbol`/`brief` work at once
 cd /Users/me/dev/my-app
-palugada init                    # auto-detects the stack profile
+palugada init                    # auto-detects the stack profile + indexes (--no-index to skip)
 
 # 4. test every configured connection
 palugada config verify
@@ -234,7 +235,9 @@ can't use the reserved `palugada-` prefix).
 
 The stack profile is auto-detected (Gradle files → `android-mvvm`,
 `package.json` → `web-react`); existing files are skipped unless `--force`.
-Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
+`init` also builds the local code index at the end (offline; `--no-index` to
+skip, or re-run `palugada index` anytime to refresh it). Everything is offline —
+tokens stay in `~/.palugada/secrets.yaml`.
 
 ## Commands
 

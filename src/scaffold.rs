@@ -16,6 +16,9 @@ pub struct InitOptions {
     pub auth: Option<String>,
     pub agents: Vec<String>,
     pub force: bool,
+    /// Skip the post-scaffold code index (default: index so `symbol`/`brief`
+    /// work immediately).
+    pub no_index: bool,
 }
 
 /// Result of generating a project's scaffold (files + registry), reusable by
@@ -149,11 +152,34 @@ pub fn run(opts: InitOptions) -> Result<(), String> {
         GlobalConfig::default_path().display(),
         if out.became_active { " (now active)" } else { "" }
     );
+    // Build the local symbol index now so `symbol`/`fact`/`brief` work on the
+    // first try. Local-only (no network) and best-effort — never fails init.
+    if !opts.no_index {
+        index_after_init(&opts.repo, &out.profile);
+    }
     println!("\nDone — 0 network calls. Next:");
     println!("  1. fill the integration base URLs in {}", out.config_path);
     println!("  2. add tokens to ~/.palugada/secrets.yaml under auth-profile '{}'", out.auth);
     println!("  3. run `palugada config verify`");
     Ok(())
+}
+
+/// Best-effort code index right after scaffolding. A profile without extractors,
+/// a missing grammar, or an unresolved knowledge dir just prints a note and
+/// leaves init succeeding — the user can always run `palugada index` later.
+fn index_after_init(repo: &str, profile: &str) {
+    let repo_path = match fs::canonicalize(expand_home(repo)) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let kn = match GlobalConfig::load_or_default().and_then(|g| crate::knowledge::knowledge_dir(&g)) {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+    match crate::indexer::run(&repo_path, &kn, profile) {
+        Ok(()) => {} // indexer::run prints "Indexed <repo> -> <out>"
+        Err(e) => println!("  (index skipped: {e} — run `palugada index` when ready)"),
+    }
 }
 
 fn detect_profile(repo: &Path) -> String {

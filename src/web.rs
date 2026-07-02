@@ -711,6 +711,8 @@ fn init_op(body: &str) -> Result<serde_json::Value, String> {
         auth: None,
         agents: req.agents,
         force: false,
+        // generate() never indexes; the web console stays non-blocking.
+        no_index: true,
     };
     let out = crate::scaffold::generate(&opts)?;
     Ok(json!({
