@@ -138,12 +138,31 @@ struct ProfileReview {
     review_map: BTreeMap<String, Vec<String>>,
 }
 
-/// The profile's `review_map` (family → convention ids) from its `profile.yaml`.
+/// The profile's OWN `review_map` (family → convention ids) from its
+/// `profile.yaml`, ignoring inheritance. See `chain_review_map` for the
+/// `extends`-aware version.
 pub fn profile_review_map(kn: &Path, profile: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
     let p = kn.join("profiles").join(profile).join("profile.yaml");
     let raw = std::fs::read_to_string(&p).map_err(|e| format!("read {}: {e}", p.display()))?;
     let pr: ProfileReview = serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", p.display()))?;
     Ok(pr.review_map)
+}
+
+/// The effective `review_map` folded across the profile's `extends` chain:
+/// parent first, each descendant replacing a family entry it redefines (mirrors
+/// how conventions merge). A flat profile resolves to just itself. Falls back to
+/// the profile's own map if the chain can't be resolved.
+pub fn chain_review_map(kn: &Path, profile: &str) -> BTreeMap<String, Vec<String>> {
+    let chain = crate::inherit::resolve_chain(kn, profile)
+        .unwrap_or_else(|_| vec![profile.to_string()]);
+    let mut acc: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // `resolve_chain` is child-first; fold parent→child so a child's entry wins.
+    for id in chain.iter().rev() {
+        for (family, convs) in profile_review_map(kn, id).unwrap_or_default() {
+            acc.insert(family, convs);
+        }
+    }
+    acc
 }
 
 /// Outline for a convention id, preferring the project overlay over the profile.
@@ -166,11 +185,14 @@ pub fn effective_rules(global: &crate::config::GlobalConfig, name: &str) -> Resu
     let pc = crate::config::ProjectConfig::load_from(&entry.repo_path)?;
     let profile = pc.profile.clone();
 
-    let profile_convs = crate::knowledge::conventions(&kn, &profile)?;
+    // Resolve conventions and review_map across the `extends` chain, not just
+    // the child's own layer — otherwise a project bound to a child profile sees
+    // nothing and every inherited review_map ref looks dangling (C1).
+    let profile_convs = crate::inherit::merged_conventions(&kn, &profile)?;
     let overlay_convs = crate::knowledge::conventions_in(&overlay_dir(&entry.repo_path))?;
     let conventions = merge_conventions(&profile_convs, &overlay_convs);
 
-    let prof_map = profile_review_map(&kn, &profile).unwrap_or_default();
+    let prof_map = chain_review_map(&kn, &profile);
     let review_map = merge_review_map(&prof_map, &pc.review_map);
 
     let known: BTreeSet<String> = conventions.iter().map(|c| c.id.clone()).collect();
@@ -296,5 +318,63 @@ mod tests {
         let vm = eff.review_map.iter().find(|e| e.family == "viewmodel").unwrap();
         assert_eq!(vm.conventions, vec!["ours".to_string()]);
         assert_eq!(vm.origin, Origin::Project);
+    }
+
+    /// C1: a project bound to a CHILD profile (`extends`) must see the parent's
+    /// conventions AND review_map — otherwise `project rules` / the web
+    /// Effective Rules card show zero conventions and emit a spurious
+    /// "references convention 'X' not found" warning for every inherited entry.
+    #[test]
+    fn effective_rules_resolves_the_extends_chain() {
+        let home = tempfile::tempdir().unwrap();
+        let kn = home.path().join("kn");
+        // base: defines `architecture` + a review_map entry pointing at it.
+        write(
+            &kn.join("profiles/base/profile.yaml"),
+            "id: base\nfact_families:\n  - { id: symbol, symbol: true }\nreview_map:\n  viewmodel: [architecture]\n",
+        );
+        write(&kn.join("profiles/base/extractors.yaml"), "families:\n  - id: symbol\n    regex: 'x'\n");
+        write(&kn.join("profiles/base/recipes/_index.json"), r#"{"recipes":[]}"#);
+        crate::knowledge::add_convention_in(
+            &kn.join("profiles/base/conventions"),
+            &crate::knowledge::ConventionSpec {
+                id: "architecture".into(), title: "Arch".into(), description: "d".into(),
+                tags: vec![], sections: vec![],
+            },
+        )
+        .unwrap();
+        // child: extends base, defines nothing of its own (pure inheritance).
+        write(&kn.join("profiles/child/profile.yaml"), "id: child\nextends: base\n");
+        write(&kn.join("profiles/child/extractors.yaml"), "families: []\n");
+        write(&kn.join("profiles/child/recipes/_index.json"), r#"{"recipes":[]}"#);
+        write(&kn.join("profiles/child/conventions/_index.json"), r#"{"topics":[]}"#);
+
+        let repo = home.path().join("repo");
+        let pc = ProjectConfig { project: "app".into(), profile: "child".into(), ..Default::default() };
+        pc.save_to(repo.to_str().unwrap()).unwrap();
+
+        let mut global = GlobalConfig::default();
+        global.engine.knowledge_path = kn.to_string_lossy().to_string();
+        global.projects.registered.insert(
+            "app".into(),
+            ProjectEntry { repo_path: repo.to_string_lossy().to_string(), workspace: String::new() },
+        );
+
+        let eff = effective_rules(&global, "app").unwrap();
+        // Inherited convention is visible…
+        assert!(
+            eff.conventions.iter().any(|c| c.id == "architecture"),
+            "child must inherit base's `architecture` convention, got {:?}",
+            eff.conventions.iter().map(|c| &c.id).collect::<Vec<_>>()
+        );
+        // …the inherited review_map entry is present…
+        let vm = eff.review_map.iter().find(|e| e.family == "viewmodel");
+        assert!(vm.is_some(), "child must inherit base's review_map `viewmodel`");
+        // …and there is NO spurious dangling warning (architecture IS known).
+        assert!(
+            eff.warnings.is_empty(),
+            "no dangling-ref warnings expected, got {:?}",
+            eff.warnings
+        );
     }
 }

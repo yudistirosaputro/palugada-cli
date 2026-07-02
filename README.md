@@ -71,7 +71,7 @@ palugada is four pieces behind one binary:
 
 1. **A knowledge layer** — stack conventions (`q`), task recipes (`for`), and
    keyword search (`s`) read from bundled profiles (`android-mvvm`,
-   `flutter-bloc`, `rust-cli`, `kmp`) with single-base **profile inheritance**
+   `flutter-bloc`, `rust-cli`) with single-base **profile inheritance**
    (`extends`) plus a committable per-project convention overlay.
 2. **A local code indexer** — `index` scans your repo into
    `<repo>/.palugada/index/` and builds a **generic symbol index** of every
@@ -191,9 +191,10 @@ palugada config init
 # 2. put your tokens into ~/.palugada/secrets.yaml (see example below),
 #    or set them in the Connectors menu of `palugada web`
 
-# 3. scaffold your repo: per-project config + agent files + registration
+# 3. scaffold your repo: per-project config + agent files + registration,
+#    then build the local code index (offline) so `symbol`/`brief` work at once
 cd /Users/me/dev/my-app
-palugada init                    # auto-detects the stack profile
+palugada init                    # auto-detects the stack profile + indexes (--no-index to skip)
 
 # 4. test every configured connection
 palugada config verify
@@ -234,7 +235,9 @@ can't use the reserved `palugada-` prefix).
 
 The stack profile is auto-detected (Gradle files → `android-mvvm`,
 `package.json` → `web-react`); existing files are skipped unless `--force`.
-Everything is offline — tokens stay in `~/.palugada/secrets.yaml`.
+`init` also builds the local code index at the end (offline; `--no-index` to
+skip, or re-run `palugada index` anytime to refresh it). Everything is offline —
+tokens stay in `~/.palugada/secrets.yaml`.
 
 ## Commands
 
@@ -309,7 +312,7 @@ overrides the profile's per verb. `{key}` placeholders are filled from `k=v` arg
 
 Every bundled profile ships sensible **`build` / `test` / `lint` / `run`** verbs
 for its stack — `rust-cli` → `cargo`, `flutter-bloc` → `flutter`, `android-mvvm`
-and `kmp` → `gradle` — so `palugada exec build` runs the right tool **according to
+→ `gradle` — so `palugada exec build` runs the right tool **according to
 the project's profile** out of the box. Override any verb per-repo in
 `.palugada/config.yaml` (e.g. point `build` at a melos workspace task).
 
@@ -434,7 +437,7 @@ src/
     ├── figma.rs                            DesignSource
     ├── jenkins.rs / github_actions.rs / gitlab_ci.rs   CiProvider
     └── slack.rs                            ChatNotify (webhook)
-knowledge/profiles/    bundled stack profiles (android-mvvm, flutter-bloc, rust-cli, kmp)
+knowledge/profiles/    bundled stack profiles (android-mvvm, flutter-bloc, rust-cli)
 ```
 
 ## Roadmap

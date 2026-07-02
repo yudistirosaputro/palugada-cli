@@ -38,6 +38,16 @@ jobs:
           ./target/release/palugada --help
           ./target/release/palugada q --list --profile rust-cli
 
+      # Every bundled profile must pass `profile validate` (render shape, flows,
+      # cross-refs, on-disk docs) so a broken/empty profile can't ship again.
+      - name: Validate bundled profiles (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          for p in android-mvvm flutter-bloc rust-cli; do
+            echo "validating $p"
+            ./target/release/palugada profile validate "$p"
+          done
+
       - name: Smoke test (Windows)
         if: runner.os == 'Windows'
         env:

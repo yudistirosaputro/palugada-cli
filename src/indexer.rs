@@ -44,12 +44,13 @@ struct Symbol {
     line: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Manifest {
     indexed_at: String,
     git_sha: String,
     total: usize,
     symbols: usize,
+    #[serde(default)]
     counts: BTreeMap<String, usize>,
 }
 
@@ -80,6 +81,14 @@ pub fn compile_families(cfg: &Extractors, profile_dir: &Path) -> Result<Vec<Comp
             return Err(format!(
                 "family id '{}' is invalid — use only [a-z0-9_-] (ids become index file names)",
                 f.id
+            ));
+        }
+        // `symbols`/`manifest` are the generic-index file names; a family with
+        // either id would overwrite them and serve wrong data (minor 4).
+        if f.id == "symbols" || f.id == "manifest" {
+            return Err(format!(
+                "family id '{}' is reserved (collides with the generic index file {}.json)",
+                f.id, f.id
             ));
         }
         let has_regex = !f.regex.is_empty();
@@ -432,10 +441,15 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
     let mut facts: Vec<Symbol> = Vec::new();
     let mut defs: Vec<SymbolDef> = Vec::new();
 
-    for entry in WalkDir::new(repo)
-        .into_iter()
-        .filter_entry(|e| !is_ignored(e, &ignore))
-    {
+    // Never index our own output dir, regardless of the profile's ignore_dirs
+    // (M3: a profile that omits `.palugada` would otherwise index the previous
+    // run's symbols.json into a feedback loop).
+    let self_dir = repo.join(".palugada");
+    for entry in WalkDir::new(repo).into_iter().filter_entry(|e| {
+        // Never filter the walk ROOT — a repo cloned into a dir named like an
+        // ignore entry (e.g. `build`/`target`) must still be scanned (M2).
+        e.depth() == 0 || (e.path() != self_dir && !is_ignored(e, &ignore))
+    }) {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
@@ -448,10 +462,17 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
             .extension()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let path_str = path.to_string_lossy();
+        // Match families on the REPO-RELATIVE path, not the absolute walk path —
+        // otherwise a `path_contains` rule can match a segment of the checkout's
+        // parent dirs (M1), and it also matches `brief`'s git-relative classify.
+        let rel = path
+            .strip_prefix(repo)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .to_string();
 
         let applicable: Vec<&CompiledFamily> =
-            families.iter().filter(|f| family_matches(f, &path_str, &ext)).collect();
+            families.iter().filter(|f| family_matches(f, &rel, &ext)).collect();
         let lang = language_for_ext(&ext).filter(|l| tags_query(l).is_some());
         if applicable.is_empty() && lang.is_none() {
             continue;
@@ -461,11 +482,6 @@ pub fn run(repo: &Path, kn: &Path, profile: &str) -> Result<(), String> {
             Ok(t) => t,
             Err(_) => continue, // skip binary / unreadable files
         };
-        let rel = path
-            .strip_prefix(repo)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .to_string();
 
         if !applicable.is_empty() {
             extract_file(&text, &rel, &applicable, &mut facts);
@@ -560,6 +576,49 @@ pub fn symbol_report(repo: &Path, query: &str, kind: Option<&str>) -> Result<Str
     Ok(out)
 }
 
+/// Symbols DEFINED IN a specific repo-relative file. Used when `brief`'s target
+/// is a path — name-matching a path string never hits, so `brief bugfix <file>`
+/// used to always show a dead symbol step (P5). Empty note if none/absent index.
+pub fn symbols_in_file(repo: &Path, file: &str) -> Result<String, String> {
+    let p = repo.join(".palugada").join("index").join("symbols.json");
+    let data = match fs::read_to_string(&p) {
+        Ok(d) => d,
+        Err(_) => return Ok(format!("(no index at {} — run `palugada index`)", p.display())),
+    };
+    let symbols: Vec<SymbolDef> =
+        serde_json::from_str(&data).map_err(|e| format!("parse {}: {e}", p.display()))?;
+    let norm = |s: &str| s.replace('\\', "/");
+    let target = norm(file);
+    // Prefer exact path matches; only fall back to suffix matching (target may
+    // carry an extra leading segment) when there is NO exact match — otherwise a
+    // sibling like `sub/src/a.rs` would leak into `src/a.rs`'s listing.
+    let has_exact = symbols.iter().any(|s| norm(&s.file) == target);
+    let matches = symbols.iter().filter(|s| {
+        let f = norm(&s.file);
+        if has_exact {
+            f == target
+        } else {
+            f.ends_with(&format!("/{target}")) || target.ends_with(&format!("/{f}"))
+        }
+    });
+    let mut out = String::new();
+    let mut hits = 0;
+    for s in matches {
+        let sig = if s.signature.is_empty() { s.name.clone() } else { s.signature.clone() };
+        let scope = if s.scope.is_empty() { String::new() } else { format!("{}  ·  ", s.scope) };
+        out.push_str(&format!("{:<9} {}  ·  {}{}\n", s.kind, sig, scope, s.line));
+        hits += 1;
+        if hits >= 40 {
+            out.push_str("… (more; open the file)\n");
+            break;
+        }
+    }
+    if hits == 0 {
+        out.push_str(&format!("(no indexed symbols in {file})"));
+    }
+    Ok(out)
+}
+
 /// Module prefix for a target: a file → its parent dir; anything else → itself.
 fn module_prefix(target: &str) -> String {
     let p = Path::new(target);
@@ -616,6 +675,65 @@ fn write_json<T: Serialize>(path: &Path, val: &T) -> Result<(), String> {
     fs::write(path, data).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+/// A one-line staleness note for the repo's index, or `None` when it is fresh
+/// (or absent). Primary signal is the git commit: if the checkout's HEAD differs
+/// from the sha recorded at index time, the index is behind. When git is
+/// unavailable, falls back to age vs `stale_days` (0 disables the time check).
+/// This is why `palugada symbol/fact/brief` can warn that line numbers may be
+/// stale instead of silently serving them (P3).
+pub fn staleness_note(repo: &Path, stale_days: u32) -> Option<String> {
+    let mpath = repo.join(".palugada").join("index").join("manifest.json");
+    let raw = fs::read_to_string(&mpath).ok()?;
+    let m: Manifest = serde_json::from_str(&raw).ok()?;
+
+    let head = git_sha(repo);
+    if !head.is_empty() && !m.git_sha.is_empty() {
+        if head == m.git_sha {
+            return None; // indexed at the current commit
+        }
+        let behind = commits_between(repo, &m.git_sha, &head);
+        return Some(match behind {
+            Some(n) if n > 0 => {
+                format!("index is {n} commit(s) behind HEAD — run `palugada index` to refresh")
+            }
+            _ => "index was built at a different commit — run `palugada index` to refresh"
+                .to_string(),
+        });
+    }
+
+    // No git: fall back to age of the index.
+    if stale_days > 0 {
+        if let Some(days) = index_age_days(&m.indexed_at) {
+            if days >= stale_days as i64 {
+                return Some(format!(
+                    "index is {days} day(s) old — run `palugada index` to refresh"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Number of commits in `from..to` (i.e. how far `to` is ahead of `from`).
+fn commits_between(repo: &Path, from: &str, to: &str) -> Option<usize> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-list", "--count", &format!("{from}..{to}")])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse::<usize>().ok()
+}
+
+/// Whole days between an RFC3339 `indexed_at` and now (None if unparseable).
+fn index_age_days(indexed_at: &str) -> Option<i64> {
+    let then = chrono::DateTime::parse_from_rfc3339(indexed_at).ok()?;
+    Some((chrono::Utc::now().signed_duration_since(then.with_timezone(&chrono::Utc))).num_days())
+}
+
 fn git_sha(repo: &Path) -> String {
     std::process::Command::new("git")
         .arg("-C")
@@ -645,6 +763,26 @@ mod tests {
         fs::write(prof.join("extractors.yaml"), extractors_yaml).unwrap();
         let repo = tempfile::tempdir().unwrap();
         (kn, repo)
+    }
+
+    #[test]
+    fn staleness_note_flags_old_index_and_absent_index(/* P3 */) {
+        let repo = tempfile::tempdir().unwrap();
+        // No index yet → no note (the "run index" hint is handled elsewhere).
+        assert_eq!(staleness_note(repo.path(), 7), None);
+
+        // Write a manifest with no git_sha and an old indexed_at → time fallback.
+        let idx = repo.path().join(".palugada").join("index");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(
+            idx.join("manifest.json"),
+            r#"{"indexed_at":"2000-01-01T00:00:00Z","git_sha":"","total":0,"symbols":0,"counts":{}}"#,
+        )
+        .unwrap();
+        let note = staleness_note(repo.path(), 7).expect("old index should warn");
+        assert!(note.contains("day(s) old"), "{note}");
+        // stale_days = 0 disables the time-based check.
+        assert_eq!(staleness_note(repo.path(), 0), None);
     }
 
     #[test]
@@ -782,6 +920,42 @@ mod tests {
     }
 
     #[test]
+    fn symbols_in_file_lists_only_that_files_defs(/* P5 */) {
+        let repo = tempfile::tempdir().unwrap();
+        let idx = repo.path().join(".palugada").join("index");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(
+            idx.join("symbols.json"),
+            r#"[{"name":"Foo","kind":"struct","file":"src/a.rs","line":3},
+                {"name":"Bar","kind":"struct","file":"src/b.rs","line":9}]"#,
+        )
+        .unwrap();
+        let out = symbols_in_file(repo.path(), "src/a.rs").unwrap();
+        assert!(out.contains("Foo"), "{out}");
+        assert!(!out.contains("Bar"), "other files must not leak: {out}");
+        // a file with no indexed symbols → a degraded note
+        assert!(symbols_in_file(repo.path(), "src/none.rs").unwrap().contains("no indexed symbols"));
+    }
+
+    #[test]
+    fn symbols_in_file_prefers_exact_over_sibling_suffix(/* review MEDIUM-2 */) {
+        // A monorepo with both `src/a.rs` and `sub/src/a.rs`: querying `src/a.rs`
+        // must return ONLY its symbols, not the nested sibling's.
+        let repo = tempfile::tempdir().unwrap();
+        let idx = repo.path().join(".palugada").join("index");
+        fs::create_dir_all(&idx).unwrap();
+        fs::write(
+            idx.join("symbols.json"),
+            r#"[{"name":"Foo","kind":"struct","file":"src/a.rs","line":1},
+                {"name":"Bar","kind":"struct","file":"sub/src/a.rs","line":2}]"#,
+        )
+        .unwrap();
+        let out = symbols_in_file(repo.path(), "src/a.rs").unwrap();
+        assert!(out.contains("Foo"), "{out}");
+        assert!(!out.contains("Bar"), "nested sibling `sub/src/a.rs` leaked: {out}");
+    }
+
+    #[test]
     fn module_report_needs_a_target() {
         let repo = tempfile::tempdir().unwrap();
         assert!(module_report(repo.path(), "").contains("needs a target"));
@@ -843,6 +1017,92 @@ mod tests {
         );
         let err = run(repo.path(), kn.path(), "p").unwrap_err();
         assert!(err.contains("../evil"), "{err}");
+    }
+
+    #[test]
+    fn rejects_reserved_family_id_symbols() {
+        // A family named `symbols` would overwrite the generic index (minor 4).
+        let cfg: Extractors = serde_yaml::from_str(
+            "families:\n  - id: symbols\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        )
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let err = compile_families(&cfg, dir.path()).unwrap_err();
+        assert!(err.contains("reserved"), "{err}");
+    }
+
+    #[test]
+    fn family_path_contains_matches_repo_relative_not_absolute(/* M1 */) {
+        // Repo rooted at a dir whose name contains "myvalues"; a file at the repo
+        // ROOT must NOT match `path_contains: myvalues` (only the absolute path
+        // does). The family should produce no fact for it.
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(&prof).unwrap();
+        fs::write(
+            prof.join("extractors.yaml"),
+            "families:\n  - id: special\n    path_contains: myvalues\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        )
+        .unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let repo = base.path().join("myvalues");
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("A.kt"), "class Foo {}\n").unwrap();
+
+        run(&repo, kn.path(), "p").unwrap();
+        let special = repo.join(".palugada/index/special.json");
+        assert!(
+            !special.exists(),
+            "root file matched path_contains via the absolute path (M1 regression)"
+        );
+    }
+
+    #[test]
+    fn walk_root_named_like_ignore_dir_is_still_scanned(/* M2 */) {
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(&prof).unwrap();
+        fs::write(
+            prof.join("extractors.yaml"),
+            "ignore_dirs: [build]\nfamilies:\n  - id: t\n    ext: [kt]\n    regex: 'class\\s+(?P<name>\\w+)'\n",
+        )
+        .unwrap();
+        let base = tempfile::tempdir().unwrap();
+        let repo = base.path().join("build"); // repo cloned into a `build/` dir
+        fs::create_dir_all(&repo).unwrap();
+        fs::write(repo.join("A.kt"), "class Foo {}\n").unwrap();
+
+        run(&repo, kn.path(), "p").unwrap();
+        let syms = fs::read_to_string(repo.join(".palugada/index/symbols.json")).unwrap();
+        assert!(syms.contains("Foo"), "walk root `build` was wrongly ignored (M2): {syms}");
+    }
+
+    #[test]
+    fn does_not_index_its_own_output_dir(/* M3 */) {
+        // A profile that omits `.palugada` from ignore_dirs must still not eat its
+        // own previous output on the next run.
+        let kn = tempfile::tempdir().unwrap();
+        let prof = kn.path().join("profiles").join("p");
+        fs::create_dir_all(&prof).unwrap();
+        fs::write(
+            prof.join("extractors.yaml"),
+            // no ignore_dirs; `leak` (no ext) would scan symbols.json's JSON text.
+            "families:\n  - id: leak\n    regex: '\"name\":\"(?P<name>\\w+)\"'\n",
+        )
+        .unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(repo.path().join("A.kt"), "class Foo {}\n").unwrap();
+
+        run(repo.path(), kn.path(), "p").unwrap(); // run 1 writes symbols.json (has "name":"Foo")
+        run(repo.path(), kn.path(), "p").unwrap(); // run 2 must not scan .palugada/index
+        let leak = repo.path().join(".palugada/index/leak.json");
+        if leak.exists() {
+            let body = fs::read_to_string(&leak).unwrap();
+            assert!(
+                !body.contains(".palugada"),
+                "indexed its own output dir (M3 self-index loop): {body}"
+            );
+        }
     }
 
     #[test]

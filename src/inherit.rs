@@ -9,19 +9,55 @@ use std::path::Path;
 /// Maximum length of an `extends` chain (cycle/runaway backstop).
 pub const MAX_DEPTH: usize = 8;
 
-/// Read just the `extends:` scalar from `<id>/profile.yaml` (None if absent,
-/// empty, unreadable, or unparseable — a malformed parent simply ends the chain
-/// and is surfaced separately by `profile validate`).
-pub fn read_extends(kn: &Path, id: &str) -> Option<String> {
+/// Read the `extends:` scalar from `<id>/profile.yaml`, distinguishing "no
+/// extends" from "profile.yaml is broken". `Ok(None)` when the file is absent or
+/// has no (non-empty) `extends`; `Err` when the file exists but can't be read or
+/// parsed, or when `extends` is the wrong YAML type (e.g. a list). This is what
+/// lets a mistyped `extends` FAIL `profile validate` instead of silently
+/// disabling inheritance (M5).
+pub fn read_extends_strict(kn: &Path, id: &str) -> Result<Option<String>, String> {
     #[derive(serde::Deserialize)]
     struct E {
         #[serde(default)]
         extends: Option<String>,
     }
     let p = kn.join("profiles").join(id).join("profile.yaml");
-    let raw = std::fs::read_to_string(&p).ok()?;
-    let e: E = serde_yaml::from_str(&raw).ok()?;
-    e.extends.filter(|s| !s.is_empty())
+    let raw = match std::fs::read_to_string(&p) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("read {}: {e}", p.display())),
+    };
+    let e: E = serde_yaml::from_str(&raw).map_err(|err| format!("parse {}: {err}", p.display()))?;
+    Ok(e.extends.filter(|s| !s.is_empty()))
+}
+
+/// Tolerant view of `extends` for display paths (returns `None` on any error).
+/// Prefer `read_extends_strict` where a broken manifest should surface.
+pub fn read_extends(kn: &Path, id: &str) -> Option<String> {
+    read_extends_strict(kn, id).ok().flatten()
+}
+
+/// The `flows:` map folded across `id`'s `extends` chain (parent→child, a child
+/// entry replacing a parent's). Mirrors how conventions/recipes inherit, so
+/// `brief` sees inherited flows (M4). A flat profile yields just its own flows.
+pub fn chain_flows(kn: &Path, profile: &str) -> Result<BTreeMap<String, Vec<String>>, String> {
+    #[derive(serde::Deserialize, Default)]
+    struct F {
+        #[serde(default)]
+        flows: BTreeMap<String, Vec<String>>,
+    }
+    let chain = resolve_chain(kn, profile)?;
+    let mut acc: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for id in chain.iter().rev() {
+        let p = kn.join("profiles").join(id).join("profile.yaml");
+        if let Ok(raw) = std::fs::read_to_string(&p) {
+            let f: F = serde_yaml::from_str(&raw).map_err(|e| format!("parse {}: {e}", p.display()))?;
+            for (k, v) in f.flows {
+                acc.insert(k, v);
+            }
+        }
+    }
+    Ok(acc)
 }
 
 /// The `extends` chain for `id`, most-derived first: `[id, parent, ...]`.
@@ -62,7 +98,7 @@ pub fn resolve_chain(kn: &Path, id: &str) -> Result<Vec<String>, String> {
                 "inheritance chain too deep (> {MAX_DEPTH}) starting at '{id}'"
             ));
         }
-        match read_extends(kn, &cur) {
+        match read_extends_strict(kn, &cur)? {
             Some(parent) => cur = parent,
             None => break,
         }
@@ -485,6 +521,43 @@ mod tests {
                 "android-base".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn mistyped_extends_errors_instead_of_silently_disabling(/* M5 */) {
+        let kn = tempfile::tempdir().unwrap();
+        let dir = kn.path().join("profiles").join("child");
+        std::fs::create_dir_all(&dir).unwrap();
+        // `extends` as a LIST (the natural-but-wrong style) → must be an error,
+        // not a silent "no extends".
+        std::fs::write(dir.join("profile.yaml"), "id: child\nextends:\n  - base\n").unwrap();
+        let err = resolve_chain(kn.path(), "child").unwrap_err();
+        assert!(err.contains("parse"), "expected a parse error, got: {err}");
+        // read_extends_strict surfaces it; the tolerant read_extends hides it.
+        assert!(read_extends_strict(kn.path(), "child").is_err());
+        assert_eq!(read_extends(kn.path(), "child"), None);
+    }
+
+    #[test]
+    fn chain_flows_folds_parent_then_child(/* M4 */) {
+        let kn = tempfile::tempdir().unwrap();
+        let base = kn.path().join("profiles/base");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(
+            base.join("profile.yaml"),
+            "id: base\nflows:\n  bugfix: [code.recent]\n  review: [diff.scan]\n",
+        )
+        .unwrap();
+        let child = kn.path().join("profiles/child");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(
+            child.join("profile.yaml"),
+            "id: child\nextends: base\nflows:\n  review: [symbol.find]\n",
+        )
+        .unwrap();
+        let flows = chain_flows(kn.path(), "child").unwrap();
+        assert_eq!(flows["bugfix"], vec!["code.recent".to_string()]); // inherited
+        assert_eq!(flows["review"], vec!["symbol.find".to_string()]); // child overrides
     }
 
     #[test]

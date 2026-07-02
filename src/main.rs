@@ -62,6 +62,9 @@ enum Commands {
         /// Overwrite existing files.
         #[arg(long)]
         force: bool,
+        /// Skip building the local code index after scaffolding.
+        #[arg(long)]
+        no_index: bool,
     },
     /// Manage global config and credentials.
     Config {
@@ -425,8 +428,8 @@ fn run(cli: Cli) -> Result<(), String> {
     }
     let project = cli.project.as_deref();
     match cli.command {
-        Commands::Init { repo, name, profile, auth, agents, force } => {
-            cmd_init(repo, name, profile, auth, agents, force)
+        Commands::Init { repo, name, profile, auth, agents, force, no_index } => {
+            cmd_init(repo, name, profile, auth, agents, force, no_index)
         }
         Commands::Config { action } => cmd_config(action, project, cli.insecure),
         Commands::Query { topic, brief, list, profile } => cmd_query(topic, brief, list, profile, project),
@@ -461,6 +464,7 @@ fn run(cli: Cli) -> Result<(), String> {
 
 // ── init ─────────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_init(
     repo: String,
     name: Option<String>,
@@ -468,13 +472,14 @@ fn cmd_init(
     auth: Option<String>,
     agents: String,
     force: bool,
+    no_index: bool,
 ) -> Result<(), String> {
     let agents: Vec<String> = agents
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    scaffold::run(scaffold::InitOptions { repo, name, profile, auth, agents, force })
+    scaffold::run(scaffold::InitOptions { repo, name, profile, auth, agents, force, no_index })
 }
 
 // ── knowledge: q / for / s ─────────────────────────────────────────────────
@@ -566,6 +571,14 @@ fn cmd_index(repo: Option<String>, profile: Option<String>, project: Option<&str
     indexer::run(&repo_path, &kn, &prof)
 }
 
+/// Print a one-line staleness warning to stderr (stdout stays clean for agents)
+/// when the repo's index is behind the checkout.
+fn warn_if_stale(global: &GlobalConfig, repo: &std::path::Path) {
+    if let Some(note) = indexer::staleness_note(repo, global.defaults.stale_warning_days) {
+        eprintln!("warning: {note}");
+    }
+}
+
 fn cmd_symbol(
     query: String,
     kind: Option<String>,
@@ -575,6 +588,7 @@ fn cmd_symbol(
     let global = GlobalConfig::load_or_default()?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo_path = config::resolve_repo(&global, project, repo, &cwd)?;
+    warn_if_stale(&global, &repo_path);
     indexer::symbol_search(&repo_path, &query, kind.as_deref())
 }
 
@@ -589,6 +603,7 @@ fn cmd_fact(
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    warn_if_stale(&global, &repo);
     let report = indexer::fact_report(&repo, &kn, &prof, &family, name.as_deref())?;
     println!("{}", report.trim_end());
     Ok(())
@@ -610,12 +625,19 @@ fn cmd_brief(
     let prof = resolve_profile(&global, project, profile.as_deref(), &kn)?;
     let cwd = std::env::current_dir().map_err(|e| format!("can't determine current dir: {e}"))?;
     let repo = config::resolve_repo(&global, project, None, &cwd)?;
+    warn_if_stale(&global, &repo);
     // Best-effort: brief works without a project (local steps); only prd.context needs this.
     let connectors = Secrets::load_or_default()
         .ok()
         .and_then(|s| config::resolve_project(&global, &s, project).ok())
         .map(|(_n, pc, auth)| brief::BriefConnectors { pc, auth, insecure });
-    brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json }, connectors.as_ref())
+    let degraded =
+        brief::run(&kn, &repo, &prof, &brief::BriefOptions { flow, target, budget, json }, connectors.as_ref())?;
+    if degraded {
+        // Distinct exit code so agents/CI can branch on "got nothing useful".
+        std::process::exit(3);
+    }
+    Ok(())
 }
 
 // ── exec: profile-declared execution toolbelt ──────────────────────────────
@@ -692,12 +714,31 @@ fn cmd_exec(
 
 // ── doctor ────────────────────────────────────────────────────────────────
 
+/// A connector slot is present but lacks what its provider needs to be reachable
+/// (a scaffold stub) → doctor SKIPs rather than FAILs it. Returns false = "not
+/// ready, skip".
+fn connector_ready(provider: &str, base_url: &str, repo: &str) -> bool {
+    match provider.trim() {
+        "" | "(none)" => false,
+        // self-hosted: need an explicit base_url
+        "jira" | "confluence" | "gitlab" | "jenkins" => !base_url.trim().is_empty(),
+        // GitHub family: default host, but need a repo
+        "github" | "github_issues" | "github_actions" => !repo.trim().is_empty(),
+        "gitlab_ci" => !base_url.trim().is_empty() && !repo.trim().is_empty(),
+        // token/webhook/default-host providers: presence is enough to try
+        _ => true,
+    }
+}
+
 fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), String> {
     #[derive(serde::Serialize)]
     struct Check {
         name: String,
         kind: String, // "tool" | "connector"
         ok: bool,
+        /// Present but not configured → neither pass nor fail (exit stays 0).
+        #[serde(default)]
+        skipped: bool,
         detail: String,
     }
 
@@ -720,6 +761,7 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
                 name: "doctor verb".into(),
                 kind: "tool".into(),
                 ok: true,
+                skipped: true,
                 detail: "(repo-defined `doctor` verb not approved — run `palugada exec doctor` to review; tool checks skipped)".into(),
             });
         }
@@ -737,6 +779,7 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
                     name: cmd_str.clone(),
                     kind: "tool".into(),
                     ok: matches!(code, Ok(0)),
+                    skipped: false,
                     detail: first,
                 });
             }
@@ -745,51 +788,69 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
             name: "doctor verb".into(),
             kind: "tool".into(),
             ok: true,
+            skipped: true,
             detail: "(no `doctor` verb defined — tool checks skipped)".into(),
         }),
     }
 
-    // 2. connector checks (only what's configured; skipped without a project)
+    // 2. connector checks. Only CONFIGURED connectors are verified; a present
+    // slot that isn't reachable yet (scaffold stub — e.g. empty base_url) is
+    // SKIPped, not FAILed, so a fresh `init` + `doctor` exits 0 (P4).
     let secrets = Secrets::load_or_default().unwrap_or_default();
     match resolve_project(&global, &secrets, project) {
         Ok((_n, pc, auth)) => {
-            let mut conns: Vec<(&str, Result<String, String>)> = Vec::new();
-            if pc.integrations.issue_tracker.is_some() {
-                conns.push(("issue", clients::issue_tracker(&pc, &auth, insecure).and_then(|c| c.verify())));
-            }
-            if pc.integrations.wiki.is_some() {
-                conns.push(("wiki", clients::doc_source(&pc, &auth, insecure).and_then(|c| c.verify())));
-            }
-            if pc.integrations.git_host.is_some() {
-                conns.push(("git", clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify())));
-            }
-            if pc.integrations.design.is_some() {
-                conns.push(("design", clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify())));
-            }
-            if pc.integrations.ci.is_some() {
-                conns.push(("ci", clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify())));
-            }
-            if pc.integrations.chat.is_some() {
-                conns.push(("chat", clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify())));
-            }
-            for (tag, r) in conns {
-                checks.push(Check {
-                    name: tag.into(),
-                    kind: "connector".into(),
-                    ok: r.is_ok(),
-                    detail: r.unwrap_or_else(|e| e),
-                });
-            }
+            let add = |checks: &mut Vec<Check>,
+                       tag: &str,
+                       slot: &Option<crate::config::Provider>,
+                       result: Option<Result<String, String>>| {
+                match (slot.as_ref(), result) {
+                    (Some(p), None) => checks.push(Check {
+                        name: tag.into(),
+                        kind: "connector".into(),
+                        ok: true,
+                        skipped: true,
+                        detail: format!(
+                            "(provider '{}' not configured — set base_url/repo to verify; skipped)",
+                            p.provider
+                        ),
+                    }),
+                    (Some(_), Some(r)) => checks.push(Check {
+                        name: tag.into(),
+                        kind: "connector".into(),
+                        ok: r.is_ok(),
+                        skipped: false,
+                        detail: r.unwrap_or_else(|e| e),
+                    }),
+                    (None, _) => {}
+                }
+            };
+            let ready = |slot: &Option<crate::config::Provider>| {
+                slot.as_ref().is_some_and(|p| connector_ready(&p.provider, &p.base_url, &p.repo))
+            };
+            let ints = &pc.integrations;
+            add(&mut checks, "issue", &ints.issue_tracker,
+                ready(&ints.issue_tracker).then(|| clients::issue_tracker(&pc, &auth, insecure).and_then(|c| c.verify())));
+            add(&mut checks, "wiki", &ints.wiki,
+                ready(&ints.wiki).then(|| clients::doc_source(&pc, &auth, insecure).and_then(|c| c.verify())));
+            add(&mut checks, "git", &ints.git_host,
+                ready(&ints.git_host).then(|| clients::git_host(&pc, &auth, insecure).and_then(|c| c.verify())));
+            add(&mut checks, "design", &ints.design,
+                ready(&ints.design).then(|| clients::design_source(&pc, &auth, insecure).and_then(|c| c.verify())));
+            add(&mut checks, "ci", &ints.ci,
+                ready(&ints.ci).then(|| clients::ci_provider(&pc, &auth, insecure).and_then(|c| c.verify())));
+            add(&mut checks, "chat", &ints.chat,
+                ready(&ints.chat).then(|| clients::chat_notify(&pc, &auth, insecure).and_then(|c| c.verify())));
         }
         Err(_) => checks.push(Check {
             name: "project".into(),
             kind: "connector".into(),
             ok: true,
+            skipped: true,
             detail: "(no project configured — connector checks skipped)".into(),
         }),
     }
 
-    let failed = checks.iter().filter(|c| !c.ok).count();
+    let failed = checks.iter().filter(|c| !c.ok && !c.skipped).count();
     if json {
         println!(
             "{}",
@@ -803,13 +864,8 @@ fn cmd_doctor(json: bool, project: Option<&str>, insecure: bool) -> Result<(), S
             if prof.is_empty() { "—" } else { prof.as_str() }
         );
         for c in &checks {
-            println!(
-                "  [{}] {:<9} {} — {}",
-                if c.ok { "PASS" } else { "FAIL" },
-                c.kind,
-                c.name,
-                c.detail
-            );
+            let tag = if c.skipped { "SKIP" } else if c.ok { "PASS" } else { "FAIL" };
+            println!("  [{}] {:<9} {} — {}", tag, c.kind, c.name, c.detail);
         }
     }
     if failed > 0 {
@@ -1436,4 +1492,28 @@ fn cmd_notify(message: String, project: Option<&str>, insecure: bool) -> Result<
     let status = chat.notify(&message)?;
     println!("notify: {status}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::connector_ready;
+
+    #[test]
+    fn connector_ready_skips_stub_slots() {
+        // self-hosted providers need a base_url
+        assert!(!connector_ready("jira", "", ""));
+        assert!(connector_ready("jira", "https://x.atlassian.net", ""));
+        assert!(!connector_ready("gitlab", "  ", ""));
+        // GitHub family needs a repo (default host)
+        assert!(!connector_ready("github_issues", "", ""));
+        assert!(connector_ready("github_issues", "", "owner/name"));
+        assert!(!connector_ready("gitlab_ci", "https://gl", "")); // needs both
+        assert!(connector_ready("gitlab_ci", "https://gl", "o/n"));
+        // token/webhook providers are ready by presence
+        assert!(connector_ready("slack", "", ""));
+        assert!(connector_ready("figma", "", ""));
+        // empty / none is never ready
+        assert!(!connector_ready("", "", ""));
+        assert!(!connector_ready("(none)", "https://x", "o/n"));
+    }
 }
