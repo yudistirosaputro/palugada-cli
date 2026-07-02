@@ -1,22 +1,22 @@
 ---
 id: r8-analyzer
 title: R8 Analyzer
-description: ""
+description: "Audit and tune R8/ProGuard: check config, analyze keep rules, remove redundant ones, and report."
 sections:
   - { id: step-1-setup-and-configuration-check, title: Step 1. Setup and configuration check, tokens: 118, code: false }
   - { id: step-2-analysis-path-selection, title: Step 2. Analysis path selection, tokens: 397, code: false }
   - { id: step-3-report-generation, title: Step 3. Report generation, tokens: 162, code: false }
   - { id: constraints, title: Constraints, tokens: 101, code: false }
-tags: []
+tags: [android, r8, proguard, optimization, release]
 ---
 
 # R8 Analyzer
 ## Step 1. Setup and configuration check {#step-1-setup-and-configuration-check}
 
 - Inspect `build.gradle`, `build.gradle.kts`, and `gradle.properties`.
-- Use [references/CONFIGURATION.md](references/CONFIGURATION.md) to identify missing optimizations.
-- **AGP** : If \< 9.0, suggest migration to 9.0 for [build time improvement
-  performance](references/android/topic/performance/app-optimization/enable-app-optimization.md)
+- Use references/CONFIGURATION.md to identify missing optimizations.
+- **AGP** : If \< 9.0, suggest migration to 9.0 for build time improvement
+  performance
 - **Full Mode** : Verify `android.enableR8.fullMode=false` is removed from gradle.properties.
 
 ## Step 2. Analysis path selection {#step-2-analysis-path-selection}
@@ -31,7 +31,7 @@ tags: []
 ### Path A: Quantitative data generation (R8 \>= 9.3.7-dev)
 
 - **Check requirements** : Python and `protobuf` package are mandatory.
-- **Generate and analyze** : You MUST run the shell commands described in [references/CONFIGURATION-ANALYZER.md](references/CONFIGURATION-ANALYZER.md) to generate the proto file using R8 configuration analyzer, convert it to json and analyze the result.
+- **Generate and analyze** : You MUST run the shell commands described in references/CONFIGURATION-ANALYZER.md to generate the proto file using R8 configuration analyzer, convert it to json and analyze the result.
 - **Report** : Rely entirely on the generated file `analysis.txt` for scores and rule impact metrics. Proceed to Step 3.
 
 ### Path B: Heuristic evaluation and recommendation (R8 \< 9.3.7-dev)
@@ -39,15 +39,15 @@ tags: []
 *(Use ONLY if quantitative data generation is not possible)*
 
 - **Manual evaluation** : Inspect `proguard-rules.pro`.
-- **Library check** : Compare rules against [references/REDUNDANT-RULES.md](references/REDUNDANT-RULES.md). Suggest **Remove** for bundled rules.
-- **Custom rule check** : Use [references/KEEP-RULES-IMPACT-HIERARCHY.md](references/KEEP-RULES-IMPACT-HIERARCHY.md) and [references/REFLECTION-GUIDE.md](references/REFLECTION-GUIDE.md) to prioritize and evaluate. Suggest **Refine** for broad rules (for example, package-wide).
-- **Validation** : Suggest Macrobenchmark tests using [UI Automator](references/android/training/testing/other-components/ui-automator.md) for any proposed changes. Proceed to Step 3.
+- **Library check** : Compare rules against references/REDUNDANT-RULES.md. Suggest **Remove** for bundled rules.
+- **Custom rule check** : Use references/KEEP-RULES-IMPACT-HIERARCHY.md and references/REFLECTION-GUIDE.md to prioritize and evaluate. Suggest **Refine** for broad rules (for example, package-wide).
+- **Validation** : Suggest Macrobenchmark tests using UI Automator for any proposed changes. Proceed to Step 3.
 
 ## Step 3. Report generation {#step-3-report-generation}
 
-- **Format** : Follow [references/REPORT_FORMAT.md](references/REPORT_FORMAT.md) strictly.
+- **Format** : Follow references/REPORT_FORMAT.md strictly.
 - **Input**: Extract metrics (Scores, Impacts, Example Classes) directly from generated file analysis.txt if using Path A, or from manual findings if using Path B.
-- **Output** : Output ONLY the raw Markdown report in the chat. Do NOT output conversational filler (for example, "Here is your report..."). Do NOT provide recommendations, next steps, or any other text outside of the sections defined in [references/REPORT_FORMAT.md](references/REPORT_FORMAT.md) Do NOT mention the path used for analysis of the configuration
+- **Output** : Output ONLY the raw Markdown report in the chat. Do NOT output conversational filler (for example, "Here is your report..."). Do NOT provide recommendations, next steps, or any other text outside of the sections defined in references/REPORT_FORMAT.md Do NOT mention the path used for analysis of the configuration
 
 ## Constraints {#constraints}
 

@@ -71,7 +71,7 @@ palugada is four pieces behind one binary:
 
 1. **A knowledge layer** — stack conventions (`q`), task recipes (`for`), and
    keyword search (`s`) read from bundled profiles (`android-mvvm`,
-   `flutter-bloc`, `rust-cli`, `kmp`) with single-base **profile inheritance**
+   `flutter-bloc`, `rust-cli`) with single-base **profile inheritance**
    (`extends`) plus a committable per-project convention overlay.
 2. **A local code indexer** — `index` scans your repo into
    `<repo>/.palugada/index/` and builds a **generic symbol index** of every
@@ -309,7 +309,7 @@ overrides the profile's per verb. `{key}` placeholders are filled from `k=v` arg
 
 Every bundled profile ships sensible **`build` / `test` / `lint` / `run`** verbs
 for its stack — `rust-cli` → `cargo`, `flutter-bloc` → `flutter`, `android-mvvm`
-and `kmp` → `gradle` — so `palugada exec build` runs the right tool **according to
+→ `gradle` — so `palugada exec build` runs the right tool **according to
 the project's profile** out of the box. Override any verb per-repo in
 `.palugada/config.yaml` (e.g. point `build` at a melos workspace task).
 
@@ -434,7 +434,7 @@ src/
     ├── figma.rs                            DesignSource
     ├── jenkins.rs / github_actions.rs / gitlab_ci.rs   CiProvider
     └── slack.rs                            ChatNotify (webhook)
-knowledge/profiles/    bundled stack profiles (android-mvvm, flutter-bloc, rust-cli, kmp)
+knowledge/profiles/    bundled stack profiles (android-mvvm, flutter-bloc, rust-cli)
 ```
 
 ## Roadmap
